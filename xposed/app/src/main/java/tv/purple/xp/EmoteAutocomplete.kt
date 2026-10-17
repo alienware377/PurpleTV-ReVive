@@ -220,6 +220,13 @@ object EmoteAutocomplete {
         }.onFailure { log("AC insert error: $it") }
     }
 
+    /** Lay the suggestions out as a scrollable vertical list above the keyboard, the way the
+     *  original PurpleTV did, instead of a single horizontal strip. */
+    const val KEY_VERTICAL = "suggest_vertical"
+
+    /** Tallest the vertical list may grow before it starts scrolling. */
+    private const val VERTICAL_MAX_DP = 220f
+
     private fun dp(ctx: Context, v: Float): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
 
@@ -227,8 +234,9 @@ object EmoteAutocomplete {
     private fun showStrip(
         input: EditText, ctx: Context, sugs: List<EmoteRepo.Sug>, onPick: (String) -> Unit
     ): PopupWindow {
+        val vertical = Settings.get(KEY_VERTICAL, false)
         val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
             setPadding(dp(ctx, 4f), dp(ctx, 4f), dp(ctx, 4f), dp(ctx, 4f))
         }
         val imgPx = dp(ctx, 26f)
@@ -274,14 +282,29 @@ object EmoteAutocomplete {
                 setTextColor(Color.WHITE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             })
-            row.addView(chip)
+            if (vertical) row.addView(chip, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            else row.addView(chip)
         }
-        val scroll = HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            setBackgroundColor(Color.parseColor("#FF1F1925"))
-            addView(row)
+        val scroll: ViewGroup = if (vertical) {
+            android.widget.ScrollView(ctx).apply {
+                isVerticalScrollBarEnabled = true
+                setBackgroundColor(Color.parseColor("#FF1F1925"))
+                addView(row)
+            }
+        } else {
+            HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false
+                setBackgroundColor(Color.parseColor("#FF1F1925"))
+                addView(row)
+            }
         }
-        val stripH = dp(ctx, 44f)
+        // Horizontal is a fixed bar. Vertical grows with the number of suggestions and then
+        // stops and scrolls, so a long match list cannot swallow the screen.
+        val stripH = if (vertical) {
+            val rowH = imgPx + dp(ctx, 6f)
+            (sugs.size * rowH + dp(ctx, 8f)).coerceAtMost(dp(ctx, VERTICAL_MAX_DP))
+        } else dp(ctx, 44f)
         val pw = PopupWindow(
             scroll, ViewGroup.LayoutParams.MATCH_PARENT, stripH, false
         ).apply {
