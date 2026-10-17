@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import java.lang.ref.WeakReference
 
@@ -66,7 +67,8 @@ object PickerFavorites {
                 row.post { runCatching { rebuild(row) } }
             }
         }
-        log("PF favorites picker hook installed (global-layout anchor)")
+        installDialogHook()
+        log("PF favorites picker hook installed (global-layout + dialog anchor)")
     }
 
     /** Roots we've already attached a global-layout listener to (one per chat window). */
@@ -91,6 +93,11 @@ object PickerFavorites {
                     val cached = lastContainer?.get()
                     if (cached != null && cached.isAttachedToWindow && INJECTED.contains(cached)) return@addOnGlobalLayoutListener
                     val container = findByEntry(root, "emote_picker") as? ViewGroup ?: return@addOnGlobalLayoutListener
+                    // From 31.x a legacy emote_picker container is still inflated in the activity
+                    // but never shown, while the real picker is a Compose sheet in its own window.
+                    // Injecting into the hidden one looked like success and showed the user nothing.
+                    if (!container.isShown || container.width == 0 || container.height == 0)
+                        return@addOnGlobalLayoutListener
                     lastContainer = WeakReference(container)
                     onPaletteReady(container)
                 }.onFailure { log("PF layout scan error: $it") }
@@ -171,6 +178,151 @@ object PickerFavorites {
             override fun onViewDetachedFromWindow(v: View) {}
         })
         log("PF favorites strip injected into emote_picker")
+    }
+
+    // ---------------------------------------------------------------- newer picker (dialog)
+    //
+    // From Twitch 31.x the emote picker is a Jetpack Compose bottom sheet in its OWN dialog
+    // window, so the activity-root layout listener above can never see it, and the emote_picker /
+    // emote_palette view ids no longer exist at runtime at all. Confirmed on device: the sheet's
+    // whole subtree is a single androidx.compose.ui.platform.ComposeView.
+    //
+    // What IS still a real view with a real id is the Material sheet container itself,
+    // design_bottom_sheet. We reach it by hooking android.app.Dialog.show(), which is framework
+    // and so cannot be obfuscated.
+
+    @Volatile private var dialogHooked = false
+
+    private fun installDialogHook() {
+        if (dialogHooked) return
+        dialogHooked = true
+        runCatching {
+            // Anchored on ViewGroup.addView rather than Dialog.show: the picker sheet never came
+            // through Dialog.show on device, and addView is the moment the sheet container is
+            // actually put into its window. Cost is one int compare per addView, which is rare
+            // enough not to matter, and the id is resolved once.
+            XposedBridge.hookAllMethods(ViewGroup::class.java, "addView", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    val child = param.args.getOrNull(0) as? View ?: return
+                    val id = child.id
+                    if (id == View.NO_ID) return
+                    val want = sheetId(child)
+                    if (want == 0 || id != want) return
+                    log("PF sheet container added to window")
+                    val sheet = child as? ViewGroup ?: return
+                    // Compose fills the sheet a frame or two later, so the tab labels we match on
+                    // do not exist yet at this point.
+                    sheet.post { runCatching { tryInjectSheet(sheet) }
+                        .onFailure { log("PF sheet inject error: $it") } }
+                }
+            })
+        }.onFailure { log("PF dialog hook failed: $it") }
+    }
+
+    @Volatile private var sheetIdCache = -1
+
+    private fun sheetId(v: View): Int {
+        if (sheetIdCache >= 0) return sheetIdCache
+        sheetIdCache = runCatching {
+            v.resources.getIdentifier("design_bottom_sheet", "id", v.context.packageName)
+        }.getOrDefault(0)
+        return sheetIdCache
+    }
+
+    private fun tryInjectSheet(sheet: ViewGroup) {
+        if (INJECTED.contains(sheet)) { curRow?.get()?.let { rebuild(it) }; return }
+        if (!isEmotePickerSheet(sheet)) return
+        injectIntoSheet(sheet)
+    }
+
+    /**
+     * Tell the emote picker apart from every other bottom sheet in the app.
+     *
+     * design_bottom_sheet is a generic Material id, so matching it alone would put a favorites
+     * strip on chat settings and everything else. The picker is identified by its own tab labels,
+     * read from the app's string table so this still holds in any language.
+     */
+    private fun isEmotePickerSheet(sheet: ViewGroup): Boolean {
+        val res = sheet.resources ?: return false
+        val pkg = sheet.context?.packageName ?: return false
+        val wanted = listOf("giphy_tab_emotes", "giphy_tab_gifs").mapNotNull { name ->
+            runCatching {
+                val id = res.getIdentifier(name, "string", pkg)
+                if (id == 0) null else res.getString(id)
+            }.getOrNull()
+        }
+        if (wanted.isEmpty()) return false
+        var hit = false
+        walk(sheet) { v ->
+            if (!hit && v is TextView) {
+                val t = runCatching { v.text?.toString() }.getOrNull()
+                if (t != null && wanted.any { it.equals(t, ignoreCase = true) }) hit = true
+            }
+        }
+        return hit
+    }
+
+    private inline fun walk(root: View, action: (View) -> Unit) {
+        val stack = ArrayDeque<View>()
+        stack.addLast(root)
+        while (stack.isNotEmpty()) {
+            val v = stack.removeLast()
+            action(v)
+            if (v is ViewGroup) for (i in 0 until v.childCount) stack.addLast(v.getChildAt(i))
+        }
+    }
+
+    private fun injectIntoSheet(sheet: ViewGroup) {
+        if (!INJECTED.add(sheet)) return
+        val ctx = sheet.context ?: return
+        val stripH = dp(ctx, 50f)
+        val (strip, row) = buildStrip(ctx)
+
+        sheet.addView(strip, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, stripH, Gravity.TOP
+        ))
+        // Push the composed picker down rather than letting the strip sit over it. A margin is
+        // used instead of padding because the sheet is a FrameLayout and Compose lays its own
+        // content out inside whatever box it is given.
+        for (i in 0 until sheet.childCount) {
+            val child = sheet.getChildAt(i) ?: continue
+            if (child === strip) continue
+            val lp = child.layoutParams as? ViewGroup.MarginLayoutParams ?: continue
+            if (lp.topMargin < stripH) { lp.topMargin = stripH; child.layoutParams = lp }
+        }
+
+        curRow = WeakReference(row)
+        curCtx = WeakReference(ctx)
+        rebuild(row)
+        log("PF favorites strip injected into the picker bottom sheet")
+    }
+
+    /** The strip itself, shared by both the old in-layout picker and the newer sheet. */
+    private fun buildStrip(ctx: Context): Pair<LinearLayout, LinearLayout> {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val scroll = HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }
+        val star = TextView(ctx).apply {
+            text = "★"
+            setTextColor(Color.parseColor("#FFD24A"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding(dp(ctx, 10f), 0, dp(ctx, 8f), 0)
+        }
+        val strip = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#FF18141D"))
+            addView(star, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT
+            ).apply { gravity = Gravity.CENTER_VERTICAL })
+            addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
+        return strip to row
     }
 
     /** Repopulate the chip row from the persisted favorites list. */
