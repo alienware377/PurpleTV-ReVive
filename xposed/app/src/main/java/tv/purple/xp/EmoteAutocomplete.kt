@@ -38,8 +38,14 @@ object EmoteAutocomplete {
     private const val INPUT_CLASS = "android.widget.MultiAutoCompleteTextView"
     private const val MIN_LEN = 2
 
-    /** Auto-dismiss the suggestion strip this long after the last keystroke. */
-    private const val STRIP_TIMEOUT_MS = 4000L
+    /** How long the suggestion strip stays up after the last keystroke, in seconds. Four was too
+     *  short in practice: emote images are fetched asynchronously, so the strip could vanish
+     *  before the pictures it was meant to show had even arrived. */
+    const val KEY_TIMEOUT = "suggest_timeout_s"
+    const val TIMEOUT_DEFAULT = 12
+
+    private fun stripTimeoutMs(): Long =
+        Settings.getInt(KEY_TIMEOUT, TIMEOUT_DEFAULT).coerceIn(2, 30) * 1000L
 
     /** Per-name cache of fresh animated drawables for the strip, so we don't re-decode ~30
      *  AnimatedImageDrawables on every keystroke. Each chip ImageView is its own view, but a
@@ -187,7 +193,7 @@ object EmoteAutocomplete {
                     popup = showStrip(input, ctx, sugs) { name ->
                         replaceWord(input, start, end, name)
                     }
-                    handler.postDelayed(autoDismiss, STRIP_TIMEOUT_MS)
+                    handler.postDelayed(autoDismiss, stripTimeoutMs())
                 }.onFailure { log("AC text error: $it") }
             }
         })
