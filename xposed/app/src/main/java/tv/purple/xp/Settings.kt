@@ -60,6 +60,9 @@ object Settings {
      *  default it gets before the module has finished starting up. */
     fun isReady() = appCtx != null
 
+    /** The host app context, for the few features that need a system service. */
+    fun ctx(): Context? = appCtx
+
     /**
      * Bumped whenever anything is written. Readers on hot paths cache their value and re-read only
      * when this changes -- [get] and friends hit SharedPreferences every call, which is fine for a

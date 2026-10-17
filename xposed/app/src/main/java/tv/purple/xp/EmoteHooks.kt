@@ -90,6 +90,8 @@ object EmoteHooks {
                 }
                 // LAST: the deleted-message carrier captures the finished body, and rides a slot
                 // that ChatIdentity rewrites wholesale, so anything earlier would be dropped.
+                runCatching { Mentions.onLine(param.args) }
+                    .onFailure { log("mention buzz error: $it") }
                 runCatching { ChatLineStyle.plantOriginal(param.result) }
                     .onFailure { log("carrier plant error: $it") }
             }

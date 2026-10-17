@@ -91,6 +91,15 @@ internal object ChatTokens {
         return out
     }
 
+    private val MSG_ID = Regex("messageId=([^,)]*)")
+
+    /** The message's own id, read from its toString label. Used to tell a genuinely new message
+     *  apart from the same one being re-assembled on a rebind. */
+    fun messageId(msg: Any): String? {
+        val s = runCatching { msg.toString() }.getOrNull() ?: return null
+        return MSG_ID.find(s)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+    }
+
     private const val EMOTE = "EmoteToken("
     private const val URL = "UrlToken("
     private val LABELLED_TEXT = Regex("text=([^,)]*)")
