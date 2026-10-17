@@ -8,26 +8,29 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  * R8 full-mode renames classes/methods every Twitch release, so the obfuscated
  * anchors below are pinned to a known-good version and MUST be re-fingerprinted
  * when bumping. The readable `tv.twitch.android.shared.chat.pub.messages.data.*`
- * model classes are R8-kept and stable across releases — those are referenced by
+ * model classes are R8-kept and stable across releases, so those are referenced by
  * their real names and are the load-bearing part of the design.
  *
- * Verified chain on Twitch 28.6.1:
+ * Verified chain on Twitch 31.1.2:
  *   kn5.a(String, List): List<MessageToken>     // tokenizer  -> inject here
  *     -> ao5.a(...)                             // MessageToken -> khm UI model
- *       -> ckm.j(..., khm, ...): SpannableString// renders the emote span
+ *       -> e86.j(..., khm, ...): SpannableString// renders the emote span
  *         -> az6.y(az6, Context, String, float): gv0   // builds CDN url -> redirect here
  *           gv0.a:String  = the emote image URL
  */
 object Names {
-    // --- pinned obfuscated anchors for the LIVE chat render path (Twitch 28.6.1) ---
-    // Live chain (proven on device): ik5.b -> ckm.g -> ckm.j -> az6.y.
-    // ik5.b returns the per-chat-line model `hn5`; field .e is the message body.
-    //   hn5.a=timestamp  hn5.c="username: "  hn5.e=body  hn5.f=bool
-    const val ASSEMBLER = "ik5"           // ik5.b(...) -> hn5 (chat line model)
+    // --- pinned obfuscated anchors for the LIVE chat render path (Twitch 31.1.2) ---
+    // Live chain: v46.b -> e86.b -> the rendered line. Re-fingerprinted for 31.1.2 by finding the
+    // only static method returning the line model that also takes the LiveChatMessage. The slot
+    // letters below are carried over from 28.6.1, where the model had an identical field shape;
+    // they are not yet confirmed on device for this version.
+    // v46.b returns the per-chat-line model `f86`; field .e is the message body.
+    //   f86.a=timestamp  f86.c="username: "  f86.e=body  f86.f=bool
+    const val ASSEMBLER = "v46"           // v46.b(...) -> f86 (chat line model)
     const val ASSEMBLER_METHOD = "b"
-    const val BODY_FIELD = "e"            // hn5.e : CharSequence = the message body
-    const val NAME_FIELD = "c"            // hn5.c : CharSequence = "username: " (badges/pronouns)
-    const val TIME_FIELD = "a"            // hn5.a : CharSequence = timestamp, e.g. "2:42 "
+    const val BODY_FIELD = "e"            // f86.e : CharSequence = the message body
+    const val NAME_FIELD = "c"            // f86.c : CharSequence = "username: " (badges/pronouns)
+    const val TIME_FIELD = "a"            // f86.a : CharSequence = timestamp, e.g. "2:42 "
 
     // --- (legacy/unused) stable readable model classes ---
     const val PKG = "tv.twitch.android.shared.chat.pub.messages.data"
@@ -45,7 +48,7 @@ object Names {
     fun cls(lp: LoadPackageParam, name: String): Class<*>? = try {
         lp.classLoader.loadClass(name)
     } catch (t: Throwable) {
-        log("MISSING anchor class '$name' — obfuscation pin is stale, re-fingerprint needed")
+        log("MISSING anchor class '$name': obfuscation pin is stale, re-fingerprint needed")
         null
     }
 }

@@ -121,6 +121,9 @@ No, and it never will. See [What this module will never do](#what-this-module-wi
 **Does it unlock subs, Bits, Turbo or anything paid?**
 No. There are no money-related mods of any kind, deliberately.
 
+**Why doesn't my passkey work?**
+A passkey is tied to the app's signing certificate, and a patched build is re-signed with a different key, so the saved credential no longer matches. Sign in with your password, or with the Google, Amazon or Apple buttons. This affects any patched build and cannot be fixed on our side.
+
 **How do I get the normal Twitch app back?**
 Turn off **PurpleTV enabled** at the top of the module's settings and restart Twitch. See [Turning it off](#turning-it-off).
 
