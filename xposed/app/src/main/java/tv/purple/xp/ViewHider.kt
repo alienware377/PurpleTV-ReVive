@@ -50,7 +50,11 @@ object ViewHider {
         Rule("hide_unfollow_button", listOf("unfollow_button")),
         // "Follow/Subscribe" is one setting covering both buttons in the player metadata bar.
         Rule("hide_fsb", listOf("follow_button", "subscribe_button",
-            "extended_follow_button_container", "extended_subscribe_button_container")),
+            "extended_follow_button_container", "extended_subscribe_button_container",
+            // Twitch 31.x: the visible Follow and Subscribe live in one Compose strip in the chat
+            // header, and the ids above are never shown there. That strip also carries Get Bits,
+            // which cannot be separated from it, so it goes too.
+            "chat_header_buttons_container")),
         Rule("hide_player_create_clip_button", listOf("create_clip_button_compose_view",
             "create_clip_text_button", "create_clip_panel")),
         Rule("hide_player_live_share_button", listOf("share_button")),
@@ -265,6 +269,8 @@ object ViewHider {
         // Report whenever the enabled set CHANGES rather than once ever. A one-shot log fired on
         // the first layout pass and then went stale, which made it report "(none)" while a rule
         // was in fact switched on -- a diagnostic that lies is worse than none at all.
+        runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) }
+
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")
         if (sig != lastActiveSig) {
@@ -321,6 +327,50 @@ object ViewHider {
             }
         }
         anyHidden = hidAny
+    }
+
+    private const val KEY_HYPE = "disable_hype_train"
+
+    /** Highlight containers currently hidden because a hype train was in them. */
+    private val HYPE_HIDDEN = java.util.WeakHashMap<View, Boolean>()
+
+    /**
+     * Hide the hype train banner on Twitch 31.x.
+     *
+     * The hype_train ids the rule above names are never on screen any more. A hype train is now
+     * shown as a community highlight, in the same banner slot that polls, predictions and raids
+     * use, so hiding that slot outright would take all of those with it. Instead it is hidden only
+     * while a hype train is actually in it: the "level" id belongs exclusively to the hype train
+     * layouts, so its presence is the test.
+     *
+     * Checked by the level view's own visibility rather than isShown, because once the container
+     * is hidden nothing inside it counts as shown, and the next pass would put it straight back.
+     */
+    private fun applyHypeTrain(root: View, on: Boolean) {
+        if (!on && HYPE_HIDDEN.isEmpty()) return
+        walk(root) { v ->
+            if (entryOf(v) != "community_highlight_container") return@walk
+            val train = on && v is ViewGroup && containsVisibleEntry(v, "level")
+            if (train) {
+                if (v.visibility != View.GONE) {
+                    v.visibility = View.GONE
+                    log("VH hid hype train banner")
+                }
+                HYPE_HIDDEN[v] = true
+            } else if (HYPE_HIDDEN.remove(v) != null && v.visibility != View.VISIBLE) {
+                v.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    private fun entryOf(v: View): String? =
+        if (v.id == View.NO_ID) null
+        else runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+
+    private fun containsVisibleEntry(root: ViewGroup, entry: String): Boolean {
+        var hit = false
+        walk(root) { v -> if (!hit && v.visibility == View.VISIBLE && entryOf(v) == entry) hit = true }
+        return hit
     }
 
     /** Views this module set GONE, so a toggle-off restores exactly those and nothing else. */
