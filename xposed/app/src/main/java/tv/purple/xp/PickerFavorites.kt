@@ -201,6 +201,33 @@ object PickerFavorites {
             // through Dialog.show on device, and addView is the moment the sheet container is
             // actually put into its window. Cost is one int compare per addView, which is rare
             // enough not to matter, and the id is resolved once.
+            // Note when the chat input's emote button is tapped. The Compose picker draws its
+            // tab labels without any real views, so the sheet cannot be recognised by its
+            // contents; "a bottom sheet that opens right after the emote button was tapped" can.
+            XposedBridge.hookAllMethods(View::class.java, "performClick", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val v = param.thisObject as? View ?: return
+                    val id = v.id
+                    if (id == View.NO_ID) return
+                    if (id == emoteButtonId(v)) pickerTappedAt = android.os.SystemClock.uptimeMillis()
+                }
+            })
+            // Long-press an emote in the picker to favorite it. Promised by the strip's hint and
+            // the README from the start but never actually wired. Each picker cell is a real
+            // ImageView with the emote_icon id whose description is the emote's name, so this
+            // needs nothing obfuscated. Only Twitch and sub emotes can be favorites; anything
+            // else is passed through untouched so Twitch's own long-press still works there.
+            XposedBridge.hookAllMethods(View::class.java, "performLongClick", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val v = param.thisObject as? View ?: return
+                    if (v.id == View.NO_ID || v.id != emoteIconId(v)) return
+                    val name = v.contentDescription?.toString()?.trim().orEmpty()
+                    if (name.isEmpty() || !Favorites.isFavoritable(name)) return
+                    val now = Favorites.toggle(name)
+                    toast(v.context, if (now) "★ Favorited $name" else "Removed $name")
+                    param.result = true
+                }
+            })
             XposedBridge.hookAllMethods(ViewGroup::class.java, "addView", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val child = param.args.getOrNull(0) as? View ?: return
@@ -220,6 +247,29 @@ object PickerFavorites {
     }
 
     @Volatile private var sheetIdCache = -1
+    @Volatile private var emoteBtnIdCache = -1
+    @Volatile private var pickerTappedAt = 0L
+
+    @Volatile private var emoteIconIdCache = -1
+
+    private fun emoteIconId(v: View): Int {
+        if (emoteIconIdCache >= 0) return emoteIconIdCache
+        emoteIconIdCache = runCatching {
+            v.resources.getIdentifier("emote_icon", "id", v.context.packageName)
+        }.getOrDefault(0)
+        return emoteIconIdCache
+    }
+
+    private fun emoteButtonId(v: View): Int {
+        if (emoteBtnIdCache >= 0) return emoteBtnIdCache
+        emoteBtnIdCache = runCatching {
+            v.resources.getIdentifier("emoticon_picker", "id", v.context.packageName)
+        }.getOrDefault(0)
+        return emoteBtnIdCache
+    }
+
+    /** A sheet that opens within this long of the emote button being tapped is the picker. */
+    private const val TAP_WINDOW_MS = 3000L
 
     private fun sheetId(v: View): Int {
         if (sheetIdCache >= 0) return sheetIdCache
@@ -231,7 +281,8 @@ object PickerFavorites {
 
     private fun tryInjectSheet(sheet: ViewGroup) {
         if (INJECTED.contains(sheet)) { curRow?.get()?.let { rebuild(it) }; return }
-        if (!isEmotePickerSheet(sheet)) return
+        val tapped = android.os.SystemClock.uptimeMillis() - pickerTappedAt < TAP_WINDOW_MS
+        if (!tapped && !isEmotePickerSheet(sheet)) return
         injectIntoSheet(sheet)
     }
 
