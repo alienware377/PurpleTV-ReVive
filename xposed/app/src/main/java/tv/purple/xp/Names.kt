@@ -30,6 +30,7 @@ object Names {
     const val ASSEMBLER_METHOD = "b"
     const val BODY_FIELD = "e"            // f86.e : CharSequence = the message body
     const val NAME_FIELD = "c"            // f86.c : CharSequence = "username: " (badges/pronouns)
+    const val BADGE_FIELD = "b"           // f86.b : CharSequence = Twitch's own badges
     const val TIME_FIELD = "a"            // f86.a : CharSequence = timestamp, e.g. "2:42 "
 
     // --- (legacy/unused) stable readable model classes ---

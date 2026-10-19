@@ -60,6 +60,9 @@ object ChatLineStyle {
     /** Marks a line we've already styled -- Twitch re-assembles each line several times. */
     private object Marker
 
+    /** Marks a time we prepended to the username slot, so it is never added twice. */
+    private object TimeMark
+
     fun apply(model: Any?, args: Array<Any?>?) {
         model ?: return
         val tsMode = Settings.getInt(KEY_TIMESTAMP, 0)
@@ -79,15 +82,15 @@ object ChatLineStyle {
     /**
      * Rewrite the timestamp slot from the message's own epoch seconds.
      *
-     * Left alone when Twitch rendered no timestamp at all -- that means the user has timestamps
-     * switched off in Twitch's own settings, and this option is a FORMAT choice, not a way to
-     * force them back on.
+     * Shown whenever a format is picked, including when Twitch's own timestamps are off.
      */
     private fun applyTimestamp(model: Any, msg: Any, mode: Int) {
         val pattern = TIME_PATTERNS.getOrNull(mode) ?: return
         if (pattern.isEmpty()) return
-        val existing = XposedHelpers.getObjectField(model, Names.TIME_FIELD) as? CharSequence ?: return
-        if (existing.isEmpty()) return
+        // Shown even when Twitch's own chat timestamps are switched off. Picking a format here
+        // used to do nothing at all in that case, since there was nothing to reformat, which is
+        // indistinguishable from the setting being broken. The original PurpleTV showed them.
+        val existing = XposedHelpers.getObjectField(model, Names.TIME_FIELD) as? CharSequence
         val seconds = Fields.timestampSeconds(msg) ?: return
         val text = runCatching {
             java.text.SimpleDateFormat(pattern, java.util.Locale.getDefault())
@@ -95,8 +98,27 @@ object ChatLineStyle {
         }.getOrNull() ?: return
         // Twitch's own slot carries a trailing space that separates it from the badges.
         val out = "$text "
-        if (out == existing.toString()) return
-        XposedHelpers.setObjectField(model, Names.TIME_FIELD, out)
+        if (existing != null && existing.isNotEmpty()) {
+            if (out == existing.toString()) return
+            XposedHelpers.setObjectField(model, Names.TIME_FIELD, out)
+            return
+        }
+        // Twitch's own timestamps are off. Its line builder then leaves the time slot out of the
+        // line altogether (confirmed on device: writing it changed nothing on screen), so the time
+        // leads the username slot instead, which is always drawn. Muted, like Twitch's own.
+        // Lead whichever slot is drawn first: Twitch's badge slot when the sender has badges,
+        // otherwise the username. Matches where Twitch puts its own time, before the badges.
+        val badges = runCatching {
+            XposedHelpers.getObjectField(model, Names.BADGE_FIELD) as? CharSequence
+        }.getOrNull()
+        val field = if (badges != null && badges.isNotEmpty()) Names.BADGE_FIELD else Names.NAME_FIELD
+        val slot = XposedHelpers.getObjectField(model, field) as? CharSequence ?: return
+        if (slot is Spanned && slot.getSpans(0, slot.length, TimeMark::class.java).isNotEmpty()) return
+        val sb = SpannableStringBuilder(out)
+        sb.setSpan(ForegroundColorSpan(GREY), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.setSpan(TimeMark, 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.append(slot)
+        XposedHelpers.setObjectField(model, field, sb)
     }
 
     /**
