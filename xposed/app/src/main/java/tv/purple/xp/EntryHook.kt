@@ -52,6 +52,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         }.getOrDefault(false)
         if (disabled) { log("DISABLED via purplexp_disable=1 — no features wired"); return }
         runCatching { Settings.init(ctx) }.onFailure { log("settings init failed: $it") }
+        runCatching { DevBridge.install(ctx) }.onFailure { log("dev bridge failed: $it") }
 
         // Master switch. Off means the app must behave like stock Twitch, so nothing below is
         // wired -- but the settings entry still is, otherwise the only way back would be to

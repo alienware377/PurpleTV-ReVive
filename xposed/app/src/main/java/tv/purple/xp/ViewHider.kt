@@ -85,6 +85,9 @@ object ViewHider {
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     @Volatile private var lastActivity: java.lang.ref.WeakReference<Activity>? = null
 
+    /** The activity most recently resumed, for the dev probe. */
+    fun currentActivity(): Activity? = lastActivity?.get()
+
     fun install(lp: LoadPackageParam) {
         val hook = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
@@ -197,17 +200,28 @@ object ViewHider {
         b.getLocationInWindow(pos); val bCentre = pos[0] + b.width / 2
         c.getLocationInWindow(pos); val cCentre = pos[0] + c.width / 2
 
+        // Only ever correct for the case this exists for: Browse hidden, on a horizontal bar.
+        // Otherwise the target is no correction at all. On a tablet the nav can be a vertical
+        // rail, where comparing x centres means nothing, and with Browse showing the button
+        // already sits on its cell.
+        val horizontal = kotlin.math.abs(b.height - c.height) < c.height &&
+            c.width > c.height
         val miss = bCentre - cCentre
-        // Gate on the miss actually mattering. Writing every pass would schedule another layout
-        // from inside one, which never settles.
-        if (kotlin.math.abs(miss) <= 2) return
+        val target = if (!Settings.get(KEY_BROWSE, false) || !horizontal) 0
+            else if (kotlin.math.abs(miss) <= 2) (NUDGED[b] ?: lp.rightMargin)
+            // A larger right margin pulls a centre-aligned child left, so the correction is
+            // additive. It cannot go negative, so a button already left of its cell is left be.
+            else ((NUDGED[b] ?: 0) + miss).coerceAtLeast(0)
 
-        // A larger right margin pulls a centre-aligned child left, so the correction is additive.
-        val applied = (NUDGED[b] ?: 0) + miss
-        lp.rightMargin = applied.coerceAtLeast(0)
+        // Write only when the margin actually changes. Setting layoutParams requests a layout,
+        // and doing that from inside every layout pass never settles. That is exactly what
+        // happened on the tablet: the clamp kept producing the same 0, which was written back
+        // anyway, forever.
+        if (target == lp.rightMargin) { NUDGED[b] = target; return }
+        lp.rightMargin = target
         b.layoutParams = lp
-        NUDGED[b] = lp.rightMargin
-        log("VH create button off by $miss, right margin now ${lp.rightMargin}")
+        NUDGED[b] = target
+        log("VH create button right margin now $target (miss was $miss)")
     }
 
     /** Last reported bottom-bar geometry, so a change is logged once instead of every pass. */
