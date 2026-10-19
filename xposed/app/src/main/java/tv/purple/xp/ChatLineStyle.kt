@@ -263,8 +263,17 @@ object ChatLineStyle {
     fun plantOriginal(model: Any?) {
         model ?: return
         if (delMode() == DEL_DEFAULT) return
-        val body = XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence ?: return
+        var body = XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence ?: return
         if (body.isEmpty()) return
+        // A message that was ALREADY deleted when it arrived (backlog on joining a channel) has its
+        // placeholder in place by now, so saving the body would just save "<message deleted>"
+        // again. On that path Twitch parks the real text on its tap-to-reveal span, for everyone,
+        // so take that instead. Ordinary bodies only carry link and mention spans, which have no
+        // SpannedString field, so this cannot misfire on a normal line.
+        (body as? Spanned)?.let { sp ->
+            sp.getSpans(0, sp.length, android.text.style.ClickableSpan::class.java)
+                .firstNotNullOfOrNull { originalOf(it) }?.let { body = it }
+        }
         val name = XposedHelpers.getObjectField(model, Names.NAME_FIELD) as? CharSequence ?: return
         if (name.isEmpty()) return
         // Copied so the badge, pronoun and colour spans already on the slot survive.
