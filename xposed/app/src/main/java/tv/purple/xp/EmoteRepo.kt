@@ -10,6 +10,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import java.nio.ByteBuffer
+import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,6 +19,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -97,10 +99,92 @@ object EmoteRepo {
     // Target emote height in px; set once we know screen density.
     @Volatile private var emoteHeightPx = 56
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+    /**
+     * Built lazily so it can find the app's cache directory, which does not exist yet when this
+     * object is first touched.
+     *
+     * Images go through a disk cache. Before this, every emote picture was downloaded again on
+     * every launch, so a big channel spent minutes re-fetching hundreds of images it already had,
+     * and on a slow connection the later ones were simply never ready.
+     */
+    private val http: OkHttpClient by lazy {
+        val b = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+        Settings.ctx()?.cacheDir?.let { dir ->
+            // 512MB, measured rather than guessed: a logged in account's suggestion emotes plus a
+            // big channel's set came to over 130MB, so a 128MB cap was evicting emotes as fast as
+            // it saved them and many were missing again on the next launch. It is the app's cache
+            // directory, which Android reclaims by itself when the device runs low on space.
+            runCatching { b.cache(Cache(File(dir, "ptv-img"), 512L * 1024 * 1024)) }
+            // The emote CDNs do not all send caching headers, and an uncacheable response is
+            // never written to disk. Image responses are marked cacheable for a week, which is
+            // safe because an emote's url changes whenever its picture does.
+            b.addNetworkInterceptor { chain ->
+                val r = chain.proceed(chain.request())
+                val type = r.header("Content-Type").orEmpty()
+                if (r.isSuccessful && type.startsWith("image/"))
+                    r.newBuilder().header("Cache-Control", "public, max-age=604800")
+                        .removeHeader("Pragma").build()
+                else r
+            }
+        }
+        b.build()
+    }
+
+    /**
+     * Image downloads run several at a time instead of one after another. A large channel has
+     * close to a thousand emotes, and fetching them in a single line meant the last ones could
+     * take many minutes to appear.
+     */
+    private val imgPool = Executors.newFixedThreadPool(6) { r ->
+        Thread(r, "ptv-img").apply { isDaemon = true }
+    }
+
+    /** Suggestion and favorites pictures get their own lane. There can be thousands of them (a
+     *  logged in account's whole emote list), and sharing a queue with chat meant chat emotes
+     *  waited behind every one of them before a single picture appeared in chat. */
+    private val sugPool = Executors.newFixedThreadPool(3) { r ->
+        Thread(r, "ptv-img-sug").apply { isDaemon = true }
+    }
+
+    /** A separate small lane for emotes chat is using right now, so they do not queue behind
+     *  the thousand-odd background downloads a big channel kicks off. */
+    private val hotPool = Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "ptv-img-hot").apply { isDaemon = true }
+    }
+
+    /** Names whose download has actually STARTED. A task that is merely queued is not in here,
+     *  which is what lets the fast lane overtake it. */
+    private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Download and decode one emote, unless it is already here or already downloading. A queued
+     *  background task re-checks at start, so if the fast lane got there first it just skips. */
+    private fun fetch(name: String) {
+        if (drawables.containsKey(name)) return
+        val url = map[name] ?: return
+        if (!inflight.add(name)) return
+        try {
+            val d = buildDrawable(name, getBytes(url), Resources.getSystem())
+            if (d != null) { drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
+        } catch (t: Throwable) {
+            log("img fail '$name': $t")
+        } finally {
+            inflight.remove(name)
+        }
+    }
+
+    /**
+     * Make sure this emote's picture is on its way, at high priority.
+     *
+     * Called when chat actually uses an emote that has no picture yet, which is also what makes a
+     * failed download recoverable. Previously a fetch that timed out was never tried again, so one
+     * slow response left that emote as plain text for the rest of the session.
+     */
+    fun ensure(name: String) {
+        if (drawables.containsKey(name) || inflight.contains(name) || !map.containsKey(name)) return
+        hotPool.execute { fetch(name) }
+    }
 
     /**
      * Drop every cached emote and re-run the loaders. Called when the quality dropdown changes,
@@ -410,10 +494,17 @@ object EmoteRepo {
         for ((name, url) in twitch) {
             if (guard != null && activeChannel != guard) return
             if (suggestDrawables.containsKey(name)) continue
-            runCatching {
-                val d = buildDrawable(name, getBytes(url), res) ?: error("decode failed")
-                suggestDrawables[name] = d
-            }.onFailure { log("sug img fail '$name': $it") }
+            if (!inflight.add("sug:$name")) continue
+            sugPool.execute {
+                try {
+                    val d = buildDrawable(name, getBytes(url), res)
+                    if (d != null) suggestDrawables[name] = d
+                } catch (t: Throwable) {
+                    log("sug img fail '$name': $t")
+                } finally {
+                    inflight.remove("sug:$name")
+                }
+            }
         }
     }
 
@@ -611,16 +702,26 @@ object EmoteRepo {
     /** Download + decode every emote image into a bounds-set Drawable. Best-effort.
      *  If [guard] is non-null, aborts as soon as [activeChannel] != guard (user switched away). */
     private fun prefetchDrawables(guard: String? = null) {
-        val res = Resources.getSystem()
-        for ((name, url) in map) {
-            if (guard != null && activeChannel != guard) return
-            if (drawables.containsKey(name)) continue
-            runCatching {
-                val d = buildDrawable(name, getBytes(url), res) ?: error("decode failed")
-                drawables[name] = d
-                suggestDrawables[name] = d
-            }.onFailure { log("img fail '$name': $it") }
+        // Callers rely on this returning only once the batch is done: the global set is
+        // snapshotted straight afterwards, and that snapshot is what every channel switch restores
+        // from. So the downloads run in parallel, but this still waits for them.
+        val names = map.keys.filter { !drawables.containsKey(it) }
+        if (names.isEmpty()) return
+        val started = System.currentTimeMillis()
+        val latch = java.util.concurrent.CountDownLatch(names.size)
+        for (name in names) imgPool.execute {
+            try {
+                if (guard == null || activeChannel == guard) fetch(name)
+            } finally {
+                latch.countDown()
+            }
         }
+        latch.await(10, TimeUnit.MINUTES)
+        val c = runCatching { http.cache }.getOrNull()
+        log("img batch: ${names.count { drawables.containsKey(it) }}/${names.size} ready in " +
+            "${(System.currentTimeMillis() - started) / 1000}s" +
+            (if (c != null) " (cache hits ${c.hitCount()}, network ${c.networkCount()}, " +
+                "stored ${c.size() / 1024}KB)" else " (no cache)"))
     }
 
     /** Shared HTTP for sibling repos (BadgeRepo, Pronouns) so the module keeps ONE OkHttpClient
