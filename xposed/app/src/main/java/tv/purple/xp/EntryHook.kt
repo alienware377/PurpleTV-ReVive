@@ -82,5 +82,6 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { HomeTabs.install(lpparam) }.onFailure { log("home tabs failed: $it") }
         runCatching { ChatAppearance.install(lpparam) }.onFailure { log("chat appearance failed: $it") }
         runCatching { LinkDisclaimer.install(lpparam) }.onFailure { log("link disclaimer failed: $it") }
+        runCatching { PlayerGestures.install(lpparam) }.onFailure { log("player gestures failed: $it") }
     }
 }

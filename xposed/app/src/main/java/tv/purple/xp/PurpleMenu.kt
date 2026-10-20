@@ -283,11 +283,11 @@ object PurpleMenu {
 
     private val GESTURES = listOf(
         Toggle("Volume gesture control",
-            "Enable control of volume levels through gestures, allowing you to adjust the volume by swiping on the screen",
-            "volume_gesture_v2"),
+            "Swipe up or down on the right half of the landscape player to change the volume",
+            PlayerGestures.KEY_VOLUME, done = true),
         Toggle("Brightness gesture control",
-            "Enable control of brightness levels through gestures, allowing you to adjust the brightness by swiping on the screen",
-            "brightness_gesture_v2")
+            "Swipe up or down on the left half of the landscape player to change the brightness",
+            PlayerGestures.KEY_BRIGHTNESS, done = true)
     )
 
     private val VIEW = listOf(
