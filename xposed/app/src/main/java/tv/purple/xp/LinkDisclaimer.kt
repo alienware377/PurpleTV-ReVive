@@ -48,9 +48,17 @@ object LinkDisclaimer {
             dimAmount = 0f
         }
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        val clicked = ok.performClick()
+        val clicked = clickable(ok)?.performClick() ?: false
         if (dialog.isShowing) runCatching { dialog.dismiss() }
         log("link disclaimer skipped (click=$clicked)")
+    }
+
+    /** Twitch's Button is a wrapper that hands its listener to an inner MaterialButton, so press
+     *  whichever view in the subtree actually has a listener. */
+    private fun clickable(v: View): View? {
+        if (v.hasOnClickListeners()) return v
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) clickable(v.getChildAt(i))?.let { return it }
+        return null
     }
 
     private fun find(root: View, ctx: Context, name: String): View? {

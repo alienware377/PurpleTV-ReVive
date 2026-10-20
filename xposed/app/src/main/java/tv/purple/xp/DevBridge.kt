@@ -25,6 +25,7 @@ object DevBridge {
     private const val ACTION_DUMP = "tv.purple.xp.DEV_DUMP"
     private const val ACTION_PROBE = "tv.purple.xp.DEV_PROBE"
     private const val ACTION_ORIENT = "tv.purple.xp.DEV_ORIENT"
+    private const val ACTION_FIND = "tv.purple.xp.DEV_FIND"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -43,13 +44,15 @@ object DevBridge {
                         ACTION_DUMP -> dump(app)
                         ACTION_PROBE -> probe(i.getStringExtra("id").orEmpty())
                         ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
+                        ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
+                            i.getStringExtra("url"))
                     }
                 }.onFailure { log("DEV error: $it") }
             }
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -112,6 +115,60 @@ object DevBridge {
                 if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
             }
             log("DEV probe $entry: ${out.size} -> ${out.joinToString(" | ")}")
+        }
+    }
+
+    /**
+     * Log every shown TextView whose text matches [re], with its centre on screen. With [click],
+     * the first match that carries a link has that link's own onClick run, which is exactly
+     * what a tap on the link does, so link handling can be tested without hunting for pixels.
+     */
+    private fun find(re: String, click: Boolean, url: String?) {
+        val act = top?.get() ?: ViewHider.currentActivity() ?: return
+        val rx = runCatching { Regex(re) }.getOrNull() ?: return
+        act.runOnUiThread {
+            val root = act.window?.decorView ?: return@runOnUiThread
+            val stack = ArrayDeque<android.view.View>(); stack.add(root)
+            var n = 0; var clicked = false
+            while (stack.isNotEmpty()) {
+                val v = stack.removeLast()
+                if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
+                val tv = v as? android.widget.TextView ?: continue
+                if (!tv.isShown) continue
+                val t = tv.text ?: continue
+                if (!rx.containsMatchIn(t)) continue
+                val loc = IntArray(2).also { tv.getLocationOnScreen(it) }
+                log("DEV find: (${loc[0] + tv.width / 2},${loc[1] + tv.height / 2}) ${t.toString().take(120)}")
+                n++
+                if (click && !clicked && t is android.text.Spanned) {
+                    // The span that covers the matched text, not the first one (that is the name).
+                    val link = t.getSpans(0, t.length, android.text.style.ClickableSpan::class.java)
+                        .firstOrNull { "URL" in it.javaClass.name &&
+                            rx.containsMatchIn(t.subSequence(t.getSpanStart(it), t.getSpanEnd(it))) }
+                        ?: continue
+                    // Test aid: point the link somewhere else first, by rewriting whichever
+                    // String field of the span holds a URL.
+                    if (url != null) {
+                        var c: Class<*>? = link.javaClass
+                        while (c != null && c != Any::class.java) {
+                            for (f in c.declaredFields) {
+                                f.isAccessible = true
+                                val cur = runCatching { f.get(link) }.getOrNull() ?: continue
+                                log("DEV find: field ${f.name}:${f.type.simpleName}=${cur.toString().take(80)}")
+                                if (f.type == String::class.java && (cur as String).startsWith("http")) {
+                                    f.set(link, url); log("DEV find: url ${f.name} -> $url")
+                                } else if (f.type == android.net.Uri::class.java) {
+                                    f.set(link, android.net.Uri.parse(url)); log("DEV find: uri ${f.name} -> $url")
+                                }
+                            }
+                            c = c.superclass
+                        }
+                    }
+                    link.onClick(tv); clicked = true
+                    log("DEV find: clicked ${link.javaClass.name}")
+                }
+            }
+            log("DEV find '$re': $n match(es)")
         }
     }
 
