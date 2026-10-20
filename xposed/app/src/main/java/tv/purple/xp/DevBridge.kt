@@ -89,6 +89,8 @@ object DevBridge {
         runCatching { ViewHider.reapply() }
         runCatching { ChatAppearance.reapply() }
         runCatching { HomeTabs.reapply() }
+        if (key == EmoteQuality.KEY || key == EmoteQuality.KEY_BTTV_WEBP || key == EmoteRepo.KEY_HOMIES)
+            EmoteRepo.refetch()
     }
 
     private fun dump(ctx: Context) {
