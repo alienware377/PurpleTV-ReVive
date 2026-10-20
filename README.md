@@ -45,7 +45,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Remove the Live and Clips tabs to land on Following, and hide the Browse tab. |
-| **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner and the create button. |
+| **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
 
 Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
 
