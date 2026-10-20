@@ -40,6 +40,12 @@ import java.lang.ref.WeakReference
  */
 object PickerFavorites {
 
+    /** The "Favorite emotes" toggle. It was in the menu and marked working but nothing read it,
+     *  so the strip appeared regardless. */
+    const val KEY_ENABLED = "picker_favorites"
+
+    private fun enabled() = Settings.get(KEY_ENABLED, true)
+
     /** emote_picker containers we've already injected into. */
     private val INJECTED = java.util.Collections.newSetFromMap(
         java.util.WeakHashMap<ViewGroup, Boolean>()
@@ -119,6 +125,7 @@ object PickerFavorites {
     }
 
     private fun onPaletteReady(container: ViewGroup) {
+        if (!enabled()) return
         if (!INJECTED.add(container)) { // already injected; just refresh contents
             curRow?.get()?.let { rebuild(it) }
             return
@@ -219,6 +226,7 @@ object PickerFavorites {
             // else is passed through untouched so Twitch's own long-press still works there.
             XposedBridge.hookAllMethods(View::class.java, "performLongClick", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!enabled()) return
                     val v = param.thisObject as? View ?: return
                     if (v.id == View.NO_ID || v.id != emoteIconId(v)) return
                     val name = v.contentDescription?.toString()?.trim().orEmpty()
@@ -324,6 +332,7 @@ object PickerFavorites {
     }
 
     private fun injectIntoSheet(sheet: ViewGroup) {
+        if (!enabled()) return
         if (!INJECTED.add(sheet)) return
         val ctx = sheet.context ?: return
         val stripH = dp(ctx, 50f)

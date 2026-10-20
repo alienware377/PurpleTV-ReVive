@@ -120,7 +120,7 @@ object PurpleMenu {
             Settings.KEY_SRC_TWITCH, def = true, done = true),
         Toggle("Favorite emotes",
             "Pin Twitch and sub emotes to a bar in the emote picker. Long-press an emote to add it",
-            "picker_favorites", def = true, done = true),
+            PickerFavorites.KEY_ENABLED, def = true, done = true),
         Drop("Emotes quality",
             "Adjust the quality of displayed emotes in the chat, which may impact performance",
             EmoteQuality.KEY, listOf("Low", "Medium", "Large"),
