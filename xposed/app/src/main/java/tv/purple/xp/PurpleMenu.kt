@@ -27,7 +27,8 @@ import android.widget.TextView
  * Labels and summaries mirror the original PurpleTV menu verbatim so the layout is familiar.
  * Entries whose feature isn't implemented yet are marked `done = false`: they still render, but
  * greyed out and inert, so the menu doubles as a visible roadmap. Ad-blocking entries are
- * deliberately omitted entirely.
+ * deliberately omitted entirely, and so is anything that gets around paying: the original's ad
+ * proxy and VODHunter (sub-only and deleted VODs) were removed for that reason.
  */
 object PurpleMenu {
 
@@ -248,16 +249,12 @@ object PurpleMenu {
         Drop("Player implementation",
             "Choose between the default Twitch player (TwitchCore) and the optimized Google player (ExoPlayer) for media playback",
             "player_impl", listOf("Default", "TwitchCore", "ExoPlayer")),
-        Drop("Proxy server",
-            "Please note that using a proxy server may affect broadcast latency and the availability of advertisements while watching streams",
-            "proxy_v3", listOf("Disabled", "Custom")),
         Toggle("Hide \"Mature content\"",
             "Enabling this option removes the UI elements associated with the mature content warning",
             "disable_mature_content"),
         Toggle("Disable low latency",
             "Turn off the low latency feature, which may result in slightly higher latency but can improve overall stability.",
             "disable_fast_bread"),
-        Toggle("VODHunter", "I See Dead VODs", "vodhunter"),
         Toggle("Turn off autoplay", "Disable autoplay of the next video", "disable_theatre_autoplay"),
         Toggle("Force ExoPlayer for VODs",
             "Set ExoPlayer as the default player for VODs, overriding other player options",
