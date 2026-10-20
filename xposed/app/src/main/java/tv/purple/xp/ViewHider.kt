@@ -39,7 +39,9 @@ object ViewHider {
         Rule("hide_chat_header", listOf("chat_header_container", "chat_header")),
         Rule("hide_leaderboards", listOf("leaderboards_container", "leaderboards_condensed_view")),
         Rule("disable_hype_train", listOf("hype_train", "shared_hype_train_visibility_group")),
-        Rule("hide_bits_button", listOf("bits_button")),
+        // bit_picker is the Bits button beside the chat input on Twitch 31.x; bits_button is the
+        // older name, kept for older builds.
+        Rule("hide_bits_button", listOf("bits_button", "bit_picker")),
         Rule("hide_message_input", listOf("chat_message_input_view_container",
             "message_input_view_container")),
         // Same targets as above, but only while the device is in landscape.
