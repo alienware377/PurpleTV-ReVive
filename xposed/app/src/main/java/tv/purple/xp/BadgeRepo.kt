@@ -250,6 +250,7 @@ object BadgeRepo {
 
     private val lazyPool = java.util.concurrent.Executors.newFixedThreadPool(2)
     private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val lazyReady = java.util.concurrent.atomic.AtomicInteger()
 
     /** One background download per image, ever; a failure is not retried this session. */
     private fun fetchLater(url: String) {
@@ -258,6 +259,8 @@ object BadgeRepo {
             runCatching {
                 static[url] = build(url, EmoteRepo.httpBytes(url), Resources.getSystem())
                     ?: error("decode failed")
+                val n = lazyReady.incrementAndGet()
+                if (n <= 3 || n % 50 == 0) log("BADGE lazy image ready #$n")
             }.onFailure { log("BADGE img fail '$url': $it") }
         }
     }
