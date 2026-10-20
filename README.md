@@ -27,18 +27,21 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **7TV emotes** | Global and per-channel 7TV emotes render inline in chat, including animated WEBP. |
 | **BetterTTV (BTTV) emotes** | Global and channel BTTV emotes, animated GIF support. |
 | **FrankerFaceZ (FFZ) emotes** | Global and channel FFZ emote sets. |
-| **Emote autocomplete** | Start typing an emote name — no leading colon required — and pick it from an inline suggestion strip. |
-| **Favorites bar** | Pin your most-used Twitch and subscriber emotes to a bar inside the native emote picker. Persists across channels and restarts. |
+| **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a suggestion strip above the input. Optional vertical list that scrolls, and an adjustable time before it clears. |
+| **Favorites bar** | Long-press any Twitch or subscriber emote in the picker to pin it to a bar at the top of the picker. Persists across channels and restarts. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
 | **Third-party badges** | FFZ, Chatterino, DankChat and Chatsen badges shown next to usernames. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
-| **Timestamps** | Nine timestamp formats, including seconds, which Twitch itself cannot show. |
-| **Deleted messages** | Show what a deleted message actually said, struck through, greyed, or plain. Works as an ordinary viewer, not only as a moderator. |
+| **Timestamps** | Nine timestamp formats, including seconds, which Twitch itself cannot show. Shown even if Twitch's own chat timestamps are off. |
+| **Deleted messages** | Show what a deleted message actually said, struck through, greyed, or plain. Works as an ordinary viewer, not only as a moderator, including messages already deleted before you joined. |
 | **Highlighter** | Tint a whole chat row when it contains a word, or comes from a given user. Separate colour for `@mentions` of you. |
 | **Blacklist** | Hide matching chat messages completely, with no gap left behind. |
 | **`/me` styling** | Italic, coloured, or both. |
+| **Username display style** | For people whose display name differs from their login: show both, the international name only, or the login only. |
+| **Vibrate on mention** | Buzz when someone `@mentions` you, with an adjustable duration. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Remove the Live and Clips tabs to land on Following, and hide the Browse tab. |
+| **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner and the create button. |
 
 Everything is opt-in and individually toggleable — and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
 
