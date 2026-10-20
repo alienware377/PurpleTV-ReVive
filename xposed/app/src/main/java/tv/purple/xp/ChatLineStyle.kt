@@ -60,6 +60,46 @@ object ChatLineStyle {
     /** Marks a line we've already styled -- Twitch re-assembles each line several times. */
     private object Marker
 
+    /** "Username display style": Twitch's own "Name (login)", the international name alone, or
+     *  the login alone. Only differs from Twitch for people whose display name is not their
+     *  login, which is mostly anyone with a non-Latin display name. */
+    const val KEY_NAME_STYLE = "display_name"
+    private const val NAME_BOTH = 0
+    private const val NAME_INTL = 1
+    private const val NAME_LOGIN = 2
+
+    /**
+     * Rewrite "DisplayName (login)" in the username slot.
+     *
+     * Found by the login, which is read off the message, rather than by pattern alone, so a
+     * bracketed word in a display name cannot be mistaken for it. Display names cannot contain
+     * spaces, so the name is the unbroken run just before the brackets; badges ride in front of
+     * it on non-breaking spaces and image placeholders, which end the run.
+     *
+     * Edited in place on a copy so the name's own colour span survives.
+     */
+    private fun applyNameStyle(model: Any, args: Array<Any?>?, mode: Int) {
+        val login = ChatIdentity.Sender.of(args)?.login?.takeIf { it.isNotBlank() } ?: return
+        val slot = XposedHelpers.getObjectField(model, Names.NAME_FIELD) as? CharSequence ?: return
+        val text = slot.toString()
+        val tag = " ($login)"
+        val at = text.indexOf(tag, ignoreCase = true)
+        if (at <= 0) return
+        val out = SpannableStringBuilder(slot)
+        if (mode == NAME_INTL) {
+            out.delete(at, at + tag.length)
+        } else {
+            var start = at
+            while (start > 0) {
+                val c = text[start - 1]
+                if (c.isWhitespace() || c == ' ' || c == '￼') break
+                start--
+            }
+            out.replace(start, at + tag.length, login)
+        }
+        XposedHelpers.setObjectField(model, Names.NAME_FIELD, out)
+    }
+
     /** Marks a time we prepended to the username slot, so it is never added twice. */
     private object TimeMark
 
@@ -67,6 +107,9 @@ object ChatLineStyle {
         model ?: return
         val tsMode = Settings.getInt(KEY_TIMESTAMP, 0)
         val meMode = Settings.getInt(KEY_ME_STYLE, 0)
+        val nameMode = Settings.getInt(KEY_NAME_STYLE, NAME_BOTH)
+        if (nameMode != NAME_BOTH)
+            runCatching { applyNameStyle(model, args, nameMode) }.onFailure { log("CLS name: $it") }
         // Deleted messages are deliberately not consulted here: they are handled at the TextView,
         // so this hook has nothing to do for them.
         if (tsMode == 0 && meMode == ME_DISABLED) return

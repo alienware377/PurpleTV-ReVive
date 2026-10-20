@@ -206,8 +206,9 @@ object PurpleMenu {
             ), done = true),
         Drop("Username display style",
             "Change how usernames are displayed in chat when users have an international display name set",
-            "display_name",
-            listOf("International Name (Username)", "International Name", "Username")),
+            ChatLineStyle.KEY_NAME_STYLE,
+            listOf("International Name (Username)", "International Name", "Username"),
+            done = true),
         Drop("/me Style", "", ChatLineStyle.KEY_ME_STYLE,
             listOf("Disabled", "Colored", "Italic", "Italic + Colored"), done = true),
         // Unlike its neighbours this one is applied at the TextView rather than on the chat-line
