@@ -37,6 +37,7 @@ object PlayerGestures {
 
     const val KEY_VOLUME = "volume_gesture_v2"
     const val KEY_BRIGHTNESS = "brightness_gesture_v2"
+    private const val DEV_PORTRAIT = "dev_gestures_portrait"
 
     private enum class Mode { NONE, BRIGHTNESS, VOLUME }
 
@@ -47,6 +48,8 @@ object PlayerGestures {
     private var lastY = 0f
     private var startLeft = false
     private var height = 1
+    /** Where the player sat when the gesture began, so the label can be centred on it. */
+    private val player = Rect()
     /** Volume moves in whole steps, so fractions of a step are carried between move events. */
     private var volCarry = 0f
     private var bubble: WeakReference<TextView>? = null
@@ -83,8 +86,10 @@ object PlayerGestures {
             MotionEvent.ACTION_DOWN -> {
                 mode = Mode.NONE; tracking = false
                 if (!enabledAny()) return false
-                if (a.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) return false
-                val player = playerRect(a) ?: return false
+                // DEV_PORTRAIT is a hidden switch for testing on a device locked to portrait.
+                if (a.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE &&
+                    !Settings.get(DEV_PORTRAIT, false)) return false
+                player.set(playerRect(a) ?: return false)
                 if (!player.contains(ev.rawX.toInt(), ev.rawY.toInt())) return false
                 // Keep clear of the system gesture strips at the very top and bottom.
                 val edge = (24 * a.resources.displayMetrics.density).toInt()
@@ -194,6 +199,10 @@ object PlayerGestures {
         }
         tv.text = text
         tv.visibility = View.VISIBLE
+        // Centre on the player, not the screen: in portrait the player is only the top part.
+        val loc = IntArray(2).also { decor.getLocationOnScreen(it) }
+        tv.translationX = (player.centerX() - loc[0] - decor.width / 2).toFloat()
+        tv.translationY = (player.centerY() - loc[1] - decor.height / 2).toFloat()
         tv.bringToFront()
         tv.removeCallbacks(hideBubble)
         tv.postDelayed(hideBubble, 900)
