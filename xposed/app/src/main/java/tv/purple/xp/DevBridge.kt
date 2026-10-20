@@ -24,6 +24,7 @@ object DevBridge {
     private const val ACTION_SET = "tv.purple.xp.DEV_SET"
     private const val ACTION_DUMP = "tv.purple.xp.DEV_DUMP"
     private const val ACTION_PROBE = "tv.purple.xp.DEV_PROBE"
+    private const val ACTION_ORIENT = "tv.purple.xp.DEV_ORIENT"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -41,12 +42,14 @@ object DevBridge {
                         ACTION_SET -> set(i)
                         ACTION_DUMP -> dump(app)
                         ACTION_PROBE -> probe(i.getStringExtra("id").orEmpty())
+                        ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
                     }
                 }.onFailure { log("DEV error: $it") }
             }
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
+            addAction(ACTION_ORIENT)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -109,6 +112,23 @@ object DevBridge {
                 if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
             }
             log("DEV probe $entry: ${out.size} -> ${out.joinToString(" | ")}")
+        }
+    }
+
+    /**
+     * Ask the current Twitch screen for an orientation: 0 landscape, 1 portrait, -1 back to
+     * normal. An in-app request on this activity only, so the device's own rotation settings are
+     * left alone, and the landscape-only features can be tested without touching them.
+     */
+    private fun orient(o: Int) {
+        val act = top?.get() ?: ViewHider.currentActivity() ?: return
+        act.runOnUiThread {
+            act.requestedOrientation = when (o) {
+                0 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                1 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+            log("DEV orientation request $o")
         }
     }
 }

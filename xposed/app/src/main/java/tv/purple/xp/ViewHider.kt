@@ -270,6 +270,7 @@ object ViewHider {
         // the first layout pass and then went stale, which made it report "(none)" while a rule
         // was in fact switched on -- a diagnostic that lies is worse than none at all.
         runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) }
+        runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")
@@ -330,6 +331,39 @@ object ViewHider {
     }
 
     private const val KEY_HYPE = "disable_hype_train"
+    private const val KEY_UNFOLLOW = "hide_unfollow_button"
+
+    /** Follow buttons currently hidden because they were in the "following" state. */
+    private val UNFOLLOW_HIDDEN = java.util.WeakHashMap<View, Boolean>()
+    @Volatile private var unfollowLabel: String? = null
+
+    /**
+     * Hide the unfollow button on Twitch 31.x.
+     *
+     * There is no separate unfollow button any more: it is the same follow_button, which reads
+     * "Following. Tap to unfollow" when you follow the channel. So it is hidden only in that state,
+     * recognised by that exact description read from the app's own strings, so it holds in any
+     * language. When you do not follow, the button is the ordinary Follow and is left alone.
+     */
+    private fun applyUnfollow(root: View, on: Boolean) {
+        if (!on && UNFOLLOW_HIDDEN.isEmpty()) return
+        val label = unfollowLabel ?: runCatching {
+            val res = root.resources
+            val id = res.getIdentifier("unfollow_talkback", "string", root.context.packageName)
+            if (id == 0) null else res.getString(id)
+        }.getOrNull()?.also { unfollowLabel = it }
+        walk(root) { v ->
+            if (entryOf(v) != "follow_button") return@walk
+            val following = on && label != null &&
+                v.contentDescription?.toString() == label
+            if (following) {
+                if (v.visibility != View.GONE) { v.visibility = View.GONE; log("VH hid unfollow button") }
+                UNFOLLOW_HIDDEN[v] = true
+            } else if (UNFOLLOW_HIDDEN.remove(v) != null && v.visibility != View.VISIBLE) {
+                v.visibility = View.VISIBLE
+            }
+        }
+    }
 
     /** Highlight containers currently hidden because a hype train was in them. */
     private val HYPE_HIDDEN = java.util.WeakHashMap<View, Boolean>()
