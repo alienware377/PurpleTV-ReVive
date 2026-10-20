@@ -1,8 +1,8 @@
-# PurpleTV ReVive — Continuation of the great work
+# PurpleTV ReVive - Continuation of the great work
 
 **An Xposed / LSPosed module that brings third-party emotes, badges, pronouns and a pile of chat quality-of-life tweaks to the official Twitch app for Android.**
 
-If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually render in Twitch mobile chat instead of showing up as plain text, this module does that — without replacing the Twitch app and without touching your login.
+If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually render in Twitch mobile chat instead of showing up as plain text, this module does that, without replacing the Twitch app and without touching your login.
 
 [![Latest release](https://img.shields.io/github/v/release/alienware377/purpletv-revive?label=download&style=flat-square)](https://github.com/alienware377/purpletv-revive/releases/latest)
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square)](#requirements)
@@ -12,13 +12,13 @@ If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually rende
 
 ## What this module will never do
 
-**There is no ad blocking, and there are no money-related mods of any kind.** That is a deliberate design decision, not a missing feature — and pull requests adding either will be declined.
+**There is no ad blocking, and there are no money-related mods of any kind.** That is a deliberate design decision, not a missing feature, and pull requests adding either will be declined.
 
 - **No ad blocking.** Ads are how Twitch and the streamers on it get paid.
 - **No Bits, subscription, Turbo or payment workarounds.** Nothing here touches money, anywhere.
 - **No view-botting, auto-chatting, or faked engagement.**
 
-We fully support Twitch and the people who make a living on it. This module is about the *chat reading* experience — emotes, badges, and readability — and it is not interested in taking anything away from the platform or from creators.
+We fully support Twitch and the people who make a living on it. This module is about the *chat reading* experience (emotes, badges, and readability), and it is not interested in taking anything away from the platform or from creators.
 
 ## Features
 
@@ -27,10 +27,12 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **7TV emotes** | Global and per-channel 7TV emotes render inline in chat, including animated WEBP. |
 | **BetterTTV (BTTV) emotes** | Global and channel BTTV emotes, animated GIF support. |
 | **FrankerFaceZ (FFZ) emotes** | Global and channel FFZ emote sets. |
+| **Homies emotes** | Global and channel Chatterino Homies emotes. Off by default. |
+| **BTTV WEBP** | Optionally load BTTV emotes in WEBP format instead of GIF or PNG. |
 | **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a suggestion strip above the input. Optional vertical list that scrolls, and an adjustable time before it clears. |
 | **Favorites bar** | Long-press any Twitch or subscriber emote in the picker to pin it to a bar at the top of the picker. Persists across channels and restarts. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
-| **Third-party badges** | FFZ, Chatterino, DankChat and Chatsen badges shown next to usernames. |
+| **Third-party badges** | FFZ, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
 | **Timestamps** | Nine timestamp formats, including seconds, which Twitch itself cannot show. Shown even if Twitch's own chat timestamps are off. |
 | **Deleted messages** | Show what a deleted message actually said, struck through, greyed, or plain. Works as an ordinary viewer, not only as a moderator, including messages already deleted before you joined. |
@@ -39,11 +41,13 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **`/me` styling** | Italic, coloured, or both. |
 | **Username display style** | For people whose display name differs from their login: show both, the international name only, or the login only. |
 | **Vibrate on mention** | Buzz when someone `@mentions` you, with an adjustable duration. |
+| **Skip link warning** | Open chat links straight away, without Twitch's "this link will take you to" confirmation. |
+| **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Remove the Live and Clips tabs to land on Following, and hide the Browse tab. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner and the create button. |
 
-Everything is opt-in and individually toggleable — and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
+Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
 
 ## Screenshots
 
@@ -57,7 +61,7 @@ Everything is opt-in and individually toggleable — and the whole module can be
 
 ## Installation
 
-### Rooted — LSPosed
+### Rooted: LSPosed
 
 1. Download `purpletv-xp.apk` from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
 2. Install it like a normal app.
@@ -65,7 +69,7 @@ Everything is opt-in and individually toggleable — and the whole module can be
 4. In the module's scope list, tick **Twitch**.
 5. Force-stop and reopen Twitch.
 
-### Non-rooted — LSPatch
+### Non-rooted: LSPatch
 
 1. Download `purpletv-xp.apk` from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
 2. In LSPatch, select your installed Twitch app, choose **Integrated** patch mode, and add `purpletv-xp.apk` as an embedded module.
@@ -77,14 +81,14 @@ Everything is opt-in and individually toggleable — and the whole module can be
 
 Open Twitch and start watching any channel. Third-party emotes load automatically for that channel.
 
-- **Emote autocomplete** — just start typing an emote name in the chat box.
-- **Add a favorite** — long-press any Twitch or subscriber emote in the native emote picker.
-- **Remove a favorite** — long-press it in the favorites bar.
-- **Settings** — open Twitch's own **Settings** screen; **PurpleTV** is the first row.
+- **Emote autocomplete:** just start typing an emote name in the chat box.
+- **Add a favorite:** long-press any Twitch or subscriber emote in the native emote picker.
+- **Remove a favorite:** long-press it in the favorites bar.
+- **Settings:** open Twitch's own **Settings** screen; **PurpleTV** is the first row.
 
 ## Turning it off
 
-The first row of the PurpleTV settings screen is **PurpleTV enabled**. Turn it off and restart the Twitch app, and you get the stock Twitch app back — no hooks are installed at all.
+The first row of the PurpleTV settings screen is **PurpleTV enabled**. Turn it off and restart the Twitch app, and you get the stock Twitch app back, with no hooks installed at all.
 
 The settings row itself stays put while the module is switched off, showing just that one switch, so you can always turn it back on. Your other settings are remembered while it is off. **A restart of the Twitch app is required either way**, because the module installs its hooks once, when the app starts.
 
@@ -100,10 +104,10 @@ The unsigned APK lands in `app/build/outputs/apk/release/`. Sign it with any key
 
 ## How it works
 
-The Twitch Android app is obfuscated with R8, and class and method names change on every release — which is why most Twitch mods break within weeks of an update. This module deliberately avoids naming obfuscated classes. Instead it anchors on things R8 cannot rename:
+The Twitch Android app is obfuscated with R8, and class and method names change on every release, which is why most Twitch mods break within weeks of an update. This module deliberately avoids naming obfuscated classes. Instead it anchors on things R8 cannot rename:
 
 - **Android framework classes** (`Activity`, `EditText`, `ViewGroup`) hooked directly.
-- **Resource entry names** (`getResourceEntryName`) — resource IDs survive obfuscation and are package-independent.
+- **Resource entry names** (`getResourceEntryName`): resource IDs survive obfuscation and are package-independent.
 - **Kept public model packages** such as `tv.twitch.android.shared.chat.pub.messages.data`, which R8 preserves.
 - **Twitch's own GraphQL gateway** for channel points, rather than the UI layer.
 
@@ -116,7 +120,7 @@ Tested against recent Twitch Android releases. Because the module avoids obfusca
 ## FAQ
 
 **Does this get my account banned?**
-The module reads third-party emote APIs and uses Twitch's own GraphQL endpoints with your existing session. It does not automate chat messages or viewing. That said, any client modification is against Twitch's Terms of Service — use it at your own risk.
+The module reads third-party emote APIs and uses Twitch's own GraphQL endpoints with your existing session. It does not automate chat messages or viewing. That said, any client modification is against Twitch's Terms of Service, so use it at your own risk.
 
 **Does it block ads?**
 No, and it never will. See [What this module will never do](#what-this-module-will-never-do). Ads pay Twitch and the streamers; blocking them takes money out of creators' pockets.
@@ -146,7 +150,7 @@ Emote data is provided by the [7TV](https://7tv.app), [BetterTTV](https://better
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
 
 ---
 
