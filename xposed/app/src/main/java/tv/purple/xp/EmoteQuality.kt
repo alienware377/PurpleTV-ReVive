@@ -16,13 +16,15 @@ object EmoteQuality {
     const val KEY = "emote_quality"
     /** 0 = Low, 1 = Medium, 2 = Large. Medium matches the sizes used before this was configurable. */
     const val DEFAULT = 1
+    /** Ask BTTV for its WEBP rendition instead of the original GIF/PNG. */
+    const val KEY_BTTV_WEBP = "bttv_webp"
 
     private fun level() = Settings.getInt(KEY, DEFAULT).coerceIn(0, 2)
 
     /** cdn.7tv.app/emote/<id>/<size>.webp */
     val sevenTv: String get() = SEVENTV[level()]
-    /** cdn.betterttv.net/emote/<id>/<size> */
-    val bttv: String get() = BTTV[level()]
+    /** cdn.betterttv.net/emote/<id>/<size>, or <size>.webp when [KEY_BTTV_WEBP] is on. */
+    val bttv: String get() = BTTV[level()] + if (Settings.get(KEY_BTTV_WEBP, false)) ".webp" else ""
     /** static-cdn.jtvnw.net/emoticons/v2/<id>/default/dark/<size> */
     val twitch: String get() = TWITCH[level()]
     /** FrankerFaceZ `urls` object keys. FFZ publishes 1/2/4 — there is no 3. */

@@ -108,7 +108,7 @@ object PurpleMenu {
             Settings.KEY_SRC_BTTV, def = true, done = true),
         Toggle("Support for BTTV WEBP emotes",
             "Enable compatibility for displaying BTTV emotes in WEBP format in the chat",
-            "bttv_webp"),
+            EmoteQuality.KEY_BTTV_WEBP, done = true),
         Toggle("FFZ emotes", "Enable support for FrankerFaceZ (FFZ) emotes in the chat",
             Settings.KEY_SRC_FFZ, def = true, done = true),
         Toggle("7TV emotes", "Enable support for 7TV emotes in the chat",
@@ -135,7 +135,8 @@ object PurpleMenu {
             BadgeRepo.KEY_FFZ, def = true, done = true),
         Toggle("Chatterino badges", "Enable support for Chatterino badges in the chat",
             BadgeRepo.KEY_CHA, def = true, done = true),
-        Toggle("Homies badges", "Enable support for Homies badges in the chat", "homies_badges"),
+        Toggle("Homies badges", "Enable support for Homies badges in the chat",
+            BadgeRepo.KEY_HOMIES, done = true),
         Toggle("BTTV Badges", "Enable support for BetterTTV (BTTV) badges in the chat", "bttv_badges"),
         Toggle("DankChat badges", "Enable support for DankChat badges in the chat",
             BadgeRepo.KEY_DANK, def = true, done = true),
@@ -441,6 +442,8 @@ object PurpleMenu {
                                    else "PurpleTV off — restart the Twitch app")
                         return@setOnCheckedChangeListener
                     }
+                    // The format is baked into each BTTV url at fetch time, like quality is.
+                    if (item.key == EmoteQuality.KEY_BTTV_WEBP) EmoteRepo.refetch()
                     // Both take effect on the live chat behind the menu.
                     ViewHider.reapply()
                     ChatAppearance.reapply()

@@ -13,7 +13,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Third-party chat badges (FFZ / Chatterino / DankChat / Chatsen).
+ * Third-party chat badges (FFZ / Chatterino / DankChat / Chatsen / Homies).
  *
  * Every supported provider ships a GLOBAL manifest keyed by numeric Twitch user id, so this is
  * fetch-once-at-startup: there is never a per-message or per-user HTTP call. That is the whole
@@ -24,6 +24,11 @@ import java.util.concurrent.ConcurrentHashMap
  *   Chatterino api.chatterino.com/badges            { badges:[{tooltip,image2,users:["uid",..]}] }
  *   DankChat   flxrs.com/api/badges                 [ {type,url,users:["uid",..]} ]
  *   Chatsen    raw.githubusercontent.com/chatsen/…  { badges:[{name,image}], users:[{id,badges:[{badgeName}]}] }
+ *   Homies     chatterinohomies.com/api/badges/list { badges:[{userId,tooltip,image1,image2,..}] } (2026-10-19)
+ *
+ * Homies is the odd one out: almost every badge is a personal one (about 9.6k users, 9.6k
+ * images), so its images are NOT prefetched. The first message from a Homies user starts a
+ * download of just that user's image, and the badge shows from their next message on.
  *
  * NOT supported, deliberately:
  *   BTTV  — its badge images are SVG, which neither ImageDecoder nor BitmapFactory can decode.
@@ -40,9 +45,13 @@ object BadgeRepo {
     const val KEY_CHA = "cha_badges"
     const val KEY_DANK = "dankchat_badges"
     const val KEY_CHATSEN = "chatsen_badges"
+    const val KEY_HOMIES = "homies_badges"
 
     private val ALL_SRC = listOf("ffz" to KEY_FFZ, "cha" to KEY_CHA,
-        "dank" to KEY_DANK, "chatsen" to KEY_CHATSEN)
+        "dank" to KEY_DANK, "chatsen" to KEY_CHATSEN, "homies" to KEY_HOMIES)
+
+    /** Sources whose images are fetched on first sight instead of up front. */
+    private val LAZY = setOf("homies")
 
     /** A badge a user owns. [url] doubles as the image cache key. */
     class Badge(val src: String, val title: String, val url: String)
@@ -71,6 +80,7 @@ object BadgeRepo {
         "cha" -> Settings.get(KEY_CHA, true)
         "dank" -> Settings.get(KEY_DANK, true)
         "chatsen" -> Settings.get(KEY_CHATSEN, true)
+        "homies" -> Settings.get(KEY_HOMIES, false)
         else -> false
     }
 
@@ -89,7 +99,9 @@ object BadgeRepo {
         val snapshot = synchronized(list) { list.toList() }
         for (b in snapshot) {
             if (!enabled(b.src)) continue
-            out.add(makeAnimated(b.url) ?: static[b.url] ?: continue)
+            val d = makeAnimated(b.url) ?: static[b.url]
+            if (d == null) { if (b.src in LAZY) fetchLater(b.url); continue }
+            out.add(d)
         }
         return out
     }
@@ -109,6 +121,7 @@ object BadgeRepo {
                         "cha" -> loadChatterino()
                         "dank" -> loadDankChat()
                         "chatsen" -> loadChatsen()
+                        "homies" -> loadHomies()
                     }
                 }.onFailure { loaded.remove(src); log("BADGE $src manifest failed: $it") }
             }
@@ -221,6 +234,34 @@ object BadgeRepo {
         log("BADGE chatsen: ${meta.size} badges, $n assignments")
     }
 
+    // { "badges":[ {userId, tooltip, image1, image2, image3, badgeFileType} ] }, one per user.
+    private fun loadHomies() {
+        val arr = JSONObject(EmoteRepo.httpGet("https://chatterinohomies.com/api/badges/list"))
+            .optJSONArray("badges") ?: return
+        var n = 0
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val url = e.optString("image2").ifEmpty { e.optString("image1") }
+            if (url.isEmpty()) continue
+            add(e.optString("userId"), Badge("homies", e.optString("tooltip"), url)); n++
+        }
+        log("BADGE homies: $n assignments")
+    }
+
+    private val lazyPool = java.util.concurrent.Executors.newFixedThreadPool(2)
+    private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** One background download per image, ever; a failure is not retried this session. */
+    private fun fetchLater(url: String) {
+        if (!inflight.add(url)) return
+        lazyPool.execute {
+            runCatching {
+                static[url] = build(url, EmoteRepo.httpBytes(url), Resources.getSystem())
+                    ?: error("decode failed")
+            }.onFailure { log("BADGE img fail '$url': $it") }
+        }
+    }
+
     /** Download + decode each DISTINCT badge image once. Small: all four providers together use
      *  well under a hundred images, however many users they cover. */
     private fun prefetch() {
@@ -229,7 +270,8 @@ object BadgeRepo {
         for (list in byUser.values) {
             val snapshot = synchronized(list) { list.toList() }
             for (b in snapshot) {
-                if (!enabled(b.src) || !seen.add(b.url) || static.containsKey(b.url)) continue
+                if (!enabled(b.src) || b.src in LAZY) continue
+                if (!seen.add(b.url) || static.containsKey(b.url)) continue
                 runCatching {
                     static[b.url] = build(b.url, EmoteRepo.httpBytes(b.url), res)
                         ?: error("decode failed")
