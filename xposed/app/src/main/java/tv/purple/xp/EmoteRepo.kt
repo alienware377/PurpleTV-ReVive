@@ -161,6 +161,14 @@ object EmoteRepo {
         Thread(r, "ptv-img-hot").apply { isDaemon = true }
     }
 
+    /** Image urls the CDN says no longer exist (404/410): an emote deleted upstream but still
+     *  listed in a set. Never retried, since every chat line using it would otherwise refetch,
+     *  and left out of suggestions, where it could only ever show as bare text. */
+    private val gone: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    private fun isGone(t: Throwable) =
+        t.message?.let { it.startsWith("HTTP 404") || it.startsWith("HTTP 410") } == true
+
     /** Names whose download has actually STARTED. A task that is merely queued is not in here,
      *  which is what lets the fast lane overtake it. */
     private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -170,11 +178,13 @@ object EmoteRepo {
     private fun fetch(name: String) {
         if (drawables.containsKey(name)) return
         val url = map[name] ?: return
+        if (url in gone) return
         if (!inflight.add(name)) return
         try {
             val d = buildDrawable(name, getBytes(url), Resources.getSystem())
             if (d != null) { drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
         } catch (t: Throwable) {
+            if (isGone(t)) gone.add(url)
             log("img fail '$name': $t")
         } finally {
             inflight.remove(name)
@@ -483,8 +493,8 @@ object EmoteRepo {
         val onTwitch = Settings.get(Settings.KEY_SRC_TWITCH)
         val starts = LinkedHashSet<String>()
         val contains = LinkedHashSet<String>()
-        for (name in map.keys) {
-            if (!enabled(name)) continue
+        for ((name, url) in map) {
+            if (!enabled(name) || url in gone) continue
             val l = name.lowercase()
             if (l.startsWith(p)) starts.add(name) else if (l.contains(p)) contains.add(name)
         }
