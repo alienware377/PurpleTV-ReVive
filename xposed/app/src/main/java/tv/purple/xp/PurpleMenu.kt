@@ -115,7 +115,8 @@ object PurpleMenu {
             Settings.KEY_SRC_SEVENTV, def = true, done = true),
         Toggle("7TV global emotes", "Enable support for 7TV global emotes in the chat",
             EmoteRepo.KEY_STV_GLOBAL, def = true, done = true),
-        Toggle("Homies emotes", "Enable support for Homies emotes in the chat", "homies_emotes"),
+        Toggle("Homies emotes", "Enable support for Homies emotes in the chat",
+            EmoteRepo.KEY_HOMIES, done = true),
         Toggle("Twitch emotes in suggestions",
             "Include your own Twitch and subscriber emotes in the autocomplete strip",
             Settings.KEY_SRC_TWITCH, def = true, done = true),
@@ -443,7 +444,8 @@ object PurpleMenu {
                         return@setOnCheckedChangeListener
                     }
                     // The format is baked into each BTTV url at fetch time, like quality is.
-                    if (item.key == EmoteQuality.KEY_BTTV_WEBP) EmoteRepo.refetch()
+                    if (item.key == EmoteQuality.KEY_BTTV_WEBP || item.key == EmoteRepo.KEY_HOMIES)
+                        EmoteRepo.refetch()
                     // Both take effect on the live chat behind the menu.
                     ViewHider.reapply()
                     ChatAppearance.reapply()

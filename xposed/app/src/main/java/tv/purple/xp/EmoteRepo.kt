@@ -41,6 +41,10 @@ object EmoteRepo {
     val stvGlobal: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     const val KEY_STV_GLOBAL = "stv_global_emotes"
+    const val KEY_HOMIES = "homies_emotes"
+
+    /** Parsed Homies list. One small file holds the globals AND every channel's set. */
+    @Volatile private var homies: JSONObject? = null
 
     /**
      * Whether [name] should render at all, given the per-source toggles.
@@ -54,6 +58,7 @@ object EmoteRepo {
             (name !in stvGlobal || Settings.get(KEY_STV_GLOBAL, true))
         "bttv" -> Settings.get(Settings.KEY_SRC_BTTV)
         "ffz" -> Settings.get(Settings.KEY_SRC_FFZ)
+        "homies" -> Settings.get(KEY_HOMIES, false)
         else -> true
     }
 
@@ -92,6 +97,8 @@ object EmoteRepo {
     private val gSuggestDraw = ConcurrentHashMap<String, Drawable>()
     /** Numeric id of the channel whose emotes are currently merged into the live maps. */
     @Volatile private var activeChannel: String? = null
+    /** Login of [activeChannel], kept so [refetch] can reload the same channel. */
+    @Volatile private var activeName: String? = null
 
     @Volatile private var globalsLoaded = false
     @Volatile private var twitchLoaded = false
@@ -188,19 +195,24 @@ object EmoteRepo {
 
     /**
      * Drop every cached emote and re-run the loaders. Called when the quality dropdown changes,
-     * since the size is baked into each CDN url at fetch time. The current channel's set is
-     * restored afterwards by [loadChannelAsync], which the caller re-triggers.
+     * since the size is baked into each CDN url at fetch time. The globals are reloaded first,
+     * then the channel the user is in, which the channel dedup would otherwise skip and leave
+     * with no channel emotes until the next channel switch.
      */
     fun refetch() {
         Thread({
             runCatching {
+                val ch = activeChannel; val chName = activeName
+                activeChannel = null
                 map.clear(); srcOf.clear(); stvGlobal.clear()
                 gMap.clear(); gSrc.clear()
-                drawables.clear(); gDraw.clear()
+                drawables.clear(); gDraw.clear(); gSuggestDraw.clear()
                 animBytes.clear(); suggestDrawables.clear()
-                globalsLoaded = false
-                loadGlobalsAsync()
+                homies = null
+                globalsLoaded = true
                 log("emote cache cleared; refetching at quality=${Settings.getInt(EmoteQuality.KEY, EmoteQuality.DEFAULT)}")
+                loadGlobalsNow()
+                if (ch != null && activeChannel == null) loadChannelAsync(ch, chName)
             }.onFailure { log("refetch failed: $it") }
         }, "ptv-emote-refetch").apply { isDaemon = true }.start()
     }
@@ -208,11 +220,17 @@ object EmoteRepo {
     fun loadGlobalsAsync() {
         if (globalsLoaded) return
         globalsLoaded = true
+        Thread({ loadGlobalsNow() }, "ptv-emote-fetch").start()
+    }
+
+    private fun loadGlobalsNow() {
         emoteHeightPx = (28f * Resources.getSystem().displayMetrics.density).toInt().coerceAtLeast(36)
-        Thread({
+        run {
             runCatching { loadSevenTvGlobal() }.onFailure { log("7TV global failed: $it") }
             runCatching { loadBttvGlobal() }.onFailure { log("BTTV global failed: $it") }
             runCatching { loadFfzGlobal() }.onFailure { log("FFZ global failed: $it") }
+            if (Settings.get(KEY_HOMIES, false))
+                runCatching { loadHomies(null, map, srcOf) }.onFailure { log("Homies global failed: $it") }
             // Snapshot the global NAMES now (before any channel can merge in) so a later
             // channel switch can restore exactly the global-only set.
             gMap.putAll(map); gSrc.putAll(srcOf)
@@ -220,7 +238,7 @@ object EmoteRepo {
             prefetchDrawables()
             gDraw.putAll(drawables); gSuggestDraw.putAll(suggestDrawables)
             log("emote drawables ready: ${drawables.size}/${map.size}")
-        }, "ptv-emote-fetch").start()
+        }
     }
 
     /**
@@ -527,6 +545,7 @@ object EmoteRepo {
         if (channelId.isBlank()) return
         if (channelId == activeChannel) return // same channel (ctor burst / no switch) — ignore
         activeChannel = channelId
+        activeName = channelName
         Thread({
             val myId = channelId
             // Build this channel's set in LOCAL maps — no writes to the live maps yet.
@@ -536,6 +555,8 @@ object EmoteRepo {
             runCatching { loadSevenTvChannel(myId, cMap, cSrc) }.onFailure { log("7TV ch failed: $it") }
             runCatching { loadBttvChannel(myId, cMap, cSrc) }.onFailure { log("BTTV ch failed: $it") }
             runCatching { loadFfzChannel(myId, cMap, cSrc) }.onFailure { log("FFZ ch failed: $it") }
+            if (Settings.get(KEY_HOMIES, false))
+                runCatching { loadHomies(myId, cMap, cSrc) }.onFailure { log("Homies ch failed: $it") }
             if (!channelName.isNullOrBlank())
                 runCatching { loadTwitchChannel(channelName, cTwitch) }.onFailure { log("twitch ch failed: $it") }
             if (activeChannel != myId) { log("ch $myId superseded before publish — discarded"); return@Thread }
@@ -741,6 +762,25 @@ object EmoteRepo {
             if (!r.isSuccessful) error("HTTP ${r.code} for $url")
             return r.body?.string() ?: error("empty body for $url")
         }
+    }
+
+    // Homies: https://itzalex.github.io/emotes -> { data:{ global_emotes:[{id,name}],
+    //   channel_emotes:{ "<twitch id>":{ emotes:[{id,name}] } } } }. The ids are 7TV emote ids.
+    // [channelId] null loads the globals.
+    private fun loadHomies(channelId: String?, out: MutableMap<String, String>, src: MutableMap<String, String>) {
+        val data = homies ?: JSONObject(get("https://itzalex.github.io/emotes"))
+            .optJSONObject("data")?.also { homies = it } ?: return
+        val arr = if (channelId == null) data.optJSONArray("global_emotes")
+            else data.optJSONObject("channel_emotes")?.optJSONObject(channelId)?.optJSONArray("emotes")
+        arr ?: return
+        var n = 0
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val name = e.optString("name"); val id = e.optString("id")
+            if (name.isEmpty() || id.isEmpty() || out.containsKey(name)) continue
+            out[name] = "https://cdn.7tv.app/emote/$id/${EmoteQuality.sevenTv}.webp"; src[name] = "homies"; n++
+        }
+        log("Homies ${channelId ?: "global"}: $n")
     }
 
     // 7TV: https://7tv.io/v3/emote-sets/global -> { emotes:[ {name,id} ] }
