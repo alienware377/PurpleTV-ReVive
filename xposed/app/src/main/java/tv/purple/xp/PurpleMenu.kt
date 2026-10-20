@@ -255,7 +255,7 @@ object PurpleMenu {
             "player_impl", listOf("Default", "TwitchCore", "ExoPlayer")),
         Toggle("Hide \"Mature content\"",
             "Enabling this option removes the UI elements associated with the mature content warning",
-            "disable_mature_content"),
+            ViewHider.KEY_MATURE, done = true),
         Toggle("Disable low latency",
             "Turn off the low latency feature, which may result in slightly higher latency but can improve overall stability.",
             "disable_fast_bread"),

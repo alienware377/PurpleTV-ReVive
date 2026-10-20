@@ -193,7 +193,10 @@ object ChatLineStyle {
 
         out.setSpan(Marker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
         XposedHelpers.setObjectField(model, Names.BODY_FIELD, out)
+        if (meSeen++ < 3) log("CLS /me styled (mode $meMode): ${body.take(40)}")
     }
+
+    private var meSeen = 0
 
     /**
      * Put a deleted message's original text back, at the moment the line reaches its TextView.

@@ -61,6 +61,9 @@ object ViewHider {
             "create_clip_text_button", "create_clip_panel")),
         Rule("hide_player_live_share_button", listOf("share_button")),
         Rule("disable_cast", listOf("cast_button")),
+        // The "Intended for certain audiences" chip on the player. The full-screen warning in
+        // front of a mature stream is a button press, not a view to hide; see applyStopSign.
+        Rule(KEY_MATURE, listOf("mature_disclosure")),
 
         // --- View ---
         // Entry names verified against the live 28.x view tree. The names taken from the older
@@ -260,6 +263,39 @@ object ViewHider {
         if (sig != lastNavSig) { lastNavSig = sig; log(sig) }
     }
 
+    const val KEY_MATURE = "disable_mature_content"
+
+    /** Stop-sign views already answered, so one warning is never pressed twice. */
+    private val STOP_DONE = java.util.Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
+
+    /**
+     * Answer the mature-content warning in front of a stream with its own "Start watching" button,
+     * the same as a tap. Left alone whenever Twitch asks for age verification instead, so this
+     * never gets anyone past a gate that is about more than a content preference.
+     */
+    private fun applyStopSign(root: View) {
+        val ctx = root.context
+        fun byName(n: String): View? {
+            val id = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+            return if (id == 0) null else root.findViewById(id)
+        }
+        for (suffix in arrayOf("", "_horizontal")) {
+            if (byName("stop_sign_button_age_verify$suffix")?.isShown == true) return
+            val ok = byName("stop_sign_button_affirmative$suffix") ?: continue
+            if (!ok.isShown || !STOP_DONE.add(ok)) continue
+            val target = clickTarget(ok) ?: continue
+            log("VH mature warning answered (click=${target.performClick()})")
+            return
+        }
+    }
+
+    /** Twitch's Button hands its listener to an inner view; press whichever one has it. */
+    private fun clickTarget(v: View): View? {
+        if (v.hasOnClickListeners()) return v
+        if (v is ViewGroup) for (i in 0 until v.childCount) clickTarget(v.getChildAt(i))?.let { return it }
+        return null
+    }
+
     private fun apply(act: Activity) {
         // Cheap exit: if nothing is switched on there's no reason to walk the tree at all.
         val active = RULES.filter { Settings.get(it.key, false) }
@@ -273,6 +309,7 @@ object ViewHider {
         // was in fact switched on -- a diagnostic that lies is worse than none at all.
         runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) }
         runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) }
+        runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")
