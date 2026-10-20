@@ -43,6 +43,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Vibrate on mention** | Buzz when someone `@mentions` you, with an adjustable duration. |
 | **Skip link warning** | Open chat links straight away, without Twitch's "this link will take you to" confirmation. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
+| **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Remove the Live and Clips tabs to land on Following, and hide the Browse tab. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |

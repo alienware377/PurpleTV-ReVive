@@ -310,6 +310,7 @@ object ViewHider {
         runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) }
         runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) }
         runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) }
+        runCatching { SleepTimer.attach(root) }.onFailure { log("sleep timer: $it") }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")

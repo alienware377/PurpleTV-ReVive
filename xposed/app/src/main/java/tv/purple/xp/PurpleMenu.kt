@@ -303,7 +303,8 @@ object PurpleMenu {
         Toggle("Hide \"Recent Watching\"", "", "hide_resume_watching_section"),
         Toggle("Hide \"Offline Channels\"", "", "hide_offline_channel_section"),
         Toggle("Hide \"Featured Clips\"", "", "hide_featured_clips_section"),
-        Toggle("Show timer button", "", "show_timer_button"),
+        Toggle("Show timer button", "A sleep timer in the player controls that pauses the stream after a chosen time",
+            SleepTimer.KEY, done = true),
         Toggle("Hide \"Create\" button", "", "hide_create_button", done = true),
         Toggle("Force toolbar search button", "", "force_toolbar_search_button"),
         Toggle("Force Tablet UI", "", "force_tablet_mode")

@@ -26,6 +26,7 @@ object DevBridge {
     private const val ACTION_PROBE = "tv.purple.xp.DEV_PROBE"
     private const val ACTION_ORIENT = "tv.purple.xp.DEV_ORIENT"
     private const val ACTION_FIND = "tv.purple.xp.DEV_FIND"
+    private const val ACTION_TIMER = "tv.purple.xp.DEV_TIMER"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -44,6 +45,7 @@ object DevBridge {
                         ACTION_DUMP -> dump(app)
                         ACTION_PROBE -> probe(i.getStringExtra("id").orEmpty())
                         ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
+                        ACTION_TIMER -> SleepTimer.start(app, i.getIntExtra("s", 10) * 1000L)
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
                     }
@@ -52,7 +54,7 @@ object DevBridge {
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT); addAction(ACTION_FIND)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
