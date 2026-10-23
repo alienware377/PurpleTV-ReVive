@@ -29,6 +29,8 @@ object PushFix {
     /** SHA-1 of the certificate the official Twitch app is signed with (CN=Alec Lee, O=Twitch). */
     private const val TWITCH_CERT_SHA1 = "8C68C13822723A2B1FA844BED340031BEB1F9463"
 
+    @Volatile private var reported = false
+
     private val IMPL_CLASSES = arrayOf(
         "com.android.okhttp.internal.huc.HttpURLConnectionImpl",
         "com.android.okhttp.internal.huc.HttpsURLConnectionImpl")
@@ -52,6 +54,19 @@ object PushFix {
             val c = runCatching { Class.forName(cn) }.getOrNull() ?: continue
             for (m in arrayOf("setRequestProperty", "addRequestProperty"))
                 runCatching { n += XposedBridge.hookAllMethods(c, m, hook).size }
+        }
+        // Report Firebase's answer once per start, so a refused registration is visible in the log.
+        val answer = object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                val conn = param.thisObject as? URLConnection ?: return
+                if (conn.url?.host != HOST || reported) return
+                reported = true
+                log("push fix: Firebase registration answered ${param.result} (fix ${if (Settings.get(KEY, true)) "on" else "off"})")
+            }
+        }
+        for (cn in IMPL_CLASSES) {
+            val c = runCatching { Class.forName(cn) }.getOrNull() ?: continue
+            runCatching { n += XposedBridge.hookAllMethods(c, "getResponseCode", answer).size }
         }
         log("push fix hooks: $n")
     }
