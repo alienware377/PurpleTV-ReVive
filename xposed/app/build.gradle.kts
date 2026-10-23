@@ -8,11 +8,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "tv.purple.xp"
+        applicationId = "io.github.alienware377.purpletvrevive"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.6.1-twitch31.1.2"
+        versionCode = 9
+        versionName = "0.6.2-twitch31.1.2"
     }
 
     buildTypes {

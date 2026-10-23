@@ -66,7 +66,7 @@ Everything is opt-in and individually toggleable, and the whole module can be sw
 
 1. Download `purpletv-xp.apk` from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
 2. Install it like a normal app.
-3. Open LSPosed → **Modules** → enable **PurpleTV XP**.
+3. Open LSPosed → **Modules** → enable **PurpleTV ReVive**.
 4. In the module's scope list, tick **Twitch**.
 5. Force-stop and reopen Twitch.
 

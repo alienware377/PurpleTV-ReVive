@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
-        android:label="PurpleXposed"
+        android:label="PurpleTV ReVive"
         android:supportsRtl="true">
 
         <meta-data
@@ -10,7 +10,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Non-root Twitch mod: 7TV/BTTV/FFZ emotes, auto channel points, chat options" />
+            android:value="7TV, BTTV and FFZ emotes, badges, emote autocomplete and chat tweaks for the official Twitch app. No ad blocking." />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
