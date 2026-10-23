@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://alienware377.github.io/purpletv-revive/sitemap.xml

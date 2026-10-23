@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PurpleTV ReVive: 7TV, BTTV and FFZ emotes for the Twitch Android app</title>
+<meta name="description" content="PurpleTV ReVive brings 7TV, BetterTTV (BTTV) and FrankerFaceZ (FFZ) emotes, badges, emote autocomplete and chat tweaks to the official Twitch app for Android. An open source continuation of PurpleTV and bttv-android for LSPosed and LSPatch. No ad blocking.">
+<meta name="keywords" content="PurpleTV, PurpleTV ReVive, bttv android, bttv-android, 7tv android, BetterTTV android, FrankerFaceZ android, twitch emotes android, twitch mod, xposed twitch, lsposed twitch, lspatch twitch, twitch chat emotes mobile">
+<link rel="canonical" href="https://alienware377.github.io/purpletv-revive/">
+<meta name="theme-color" content="#7c3aed">
+<meta property="og:type" content="website">
+<meta property="og:title" content="PurpleTV ReVive: 7TV, BTTV and FFZ emotes for Twitch on Android">
+<meta property="og:description" content="Third-party emotes, badges, autocomplete and chat tweaks for the official Twitch Android app. Open source, LSPosed and LSPatch. No ad blocking.">
+<meta property="og:url" content="https://alienware377.github.io/purpletv-revive/">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%237c3aed'/%3E%3Cpath d='M18 14h20a12 12 0 0 1 0 24H28v12H18z M28 22v8h9a4 4 0 0 0 0-8z' fill='white'/%3E%3C/svg%3E">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "PurpleTV ReVive",
+  "alternateName": ["PurpleTV ReVive Xposed module", "PurpleTV continuation"],
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Android 8.0+",
+  "description": "An Xposed / LSPosed / LSPatch module that adds 7TV, BetterTTV and FrankerFaceZ emotes, third-party badges, emote autocomplete, a favorites bar and chat quality-of-life tweaks to the official Twitch Android app.",
+  "url": "https://alienware377.github.io/purpletv-revive/",
+  "downloadUrl": "https://github.com/alienware377/purpletv-revive/releases/latest",
+  "codeRepository": "https://github.com/alienware377/purpletv-revive",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type": "Question", "name": "Is PurpleTV ReVive a replacement for PurpleTV or bttv-android?",
+     "acceptedAnswer": {"@type": "Answer", "text": "It brings the chat side of PurpleTV and bttv-android (7TV, BTTV and FFZ emotes, badges and chat tweaks) for the current official Twitch app. It deliberately does not block ads."}},
+    {"@type": "Question", "name": "Do I need root?",
+     "acceptedAnswer": {"@type": "Answer", "text": "No. Rooted phones can use LSPosed, and phones without root can use LSPatch or the ready to install patched Twitch APK from the releases page."}},
+    {"@type": "Question", "name": "Does it block ads?",
+     "acceptedAnswer": {"@type": "Answer", "text": "No, and it never will. Ads and subscriptions are how Twitch and its streamers get paid. There are no money-related mods of any kind."}},
+    {"@type": "Question", "name": "Why does my passkey not work?",
+     "acceptedAnswer": {"@type": "Answer", "text": "A passkey is tied to the app's signing certificate, and a patched build is signed with a different key. Sign in with your password or the Google, Amazon or Apple buttons instead."}}
+  ]
+}
+</script>
+<style>
+:root {
+  --bg: #faf8ff; --surface: #ffffff; --text: #1c1530; --muted: #5d5575;
+  --line: #e6e0f5; --accent: #7c3aed; --accent-ink: #ffffff; --accent-soft: #efe7ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f0b18; --surface: #1a1426; --text: #efeaff; --muted: #a79fc0;
+    --line: #2d2440; --accent: #a970ff; --accent-ink: #120c1d; --accent-soft: #2a1d45;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+a { color: var(--accent); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+header.hero { padding: 64px 0 40px; }
+.badge {
+  display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .02em;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px;
+}
+h1 { font-size: clamp(32px, 6vw, 52px); line-height: 1.1; margin: 16px 0 12px; letter-spacing: -0.02em; }
+.lead { font-size: 19px; color: var(--muted); max-width: 640px; margin: 0 0 28px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn {
+  display: inline-block; text-decoration: none; font-weight: 600; padding: 12px 20px;
+  border-radius: 12px; border: 1px solid var(--line); color: var(--text); background: var(--surface);
+}
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+section { padding: 36px 0; border-top: 1px solid var(--line); }
+h2 { font-size: 26px; margin: 0 0 16px; letter-spacing: -0.01em; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.card h3 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.pledge { background: var(--accent-soft); border-radius: 14px; padding: 18px 20px; }
+.pledge p { margin: 6px 0 0; }
+ol.steps { padding-left: 20px; margin: 0; }
+ol.steps li { margin-bottom: 8px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+details p { color: var(--muted); margin: 8px 0 2px; }
+footer { padding: 28px 0 48px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+code { background: var(--accent-soft); padding: 1px 6px; border-radius: 6px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <span class="badge">Open source Xposed module for Twitch on Android</span>
+    <h1>PurpleTV ReVive</h1>
+    <p class="lead">7TV, BetterTTV and FrankerFaceZ emotes, third-party badges, emote autocomplete and a pile of chat tweaks for the official Twitch app. A continuation of the great work of PurpleTV and bttv-android, for today's Twitch.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/alienware377/purpletv-revive/releases/latest">Download the latest release</a>
+      <a class="btn" href="https://github.com/alienware377/purpletv-revive">Source code on GitHub</a>
+    </div>
+  </header>
+
+  <section aria-labelledby="features">
+    <h2 id="features">What it adds</h2>
+    <div class="grid">
+      <div class="card"><h3>7TV, BTTV, FFZ and Homies emotes</h3><p>Global and channel emotes render right in chat, animated ones included, with each channel's own pictures.</p></div>
+      <div class="card"><h3>Emote autocomplete</h3><p>Start typing a name, no colon needed. Pin your go-to emotes to the top, per streamer if you like.</p></div>
+      <div class="card"><h3>Favorites bar</h3><p>Long-press any emote to keep it in a bar at the top of the emote picker.</p></div>
+      <div class="card"><h3>Third-party badges and pronouns</h3><p>FFZ, Chatterino, DankChat, Chatsen and Homies badges, plus pronouns next to names.</p></div>
+      <div class="card"><h3>Deleted messages and timestamps</h3><p>See what a deleted message said, and timestamps with seconds, even with Twitch's own turned off.</p></div>
+      <div class="card"><h3>Highlights and blacklist</h3><p>Tint lines with a word or from a user, and hide matching messages completely.</p></div>
+      <div class="card"><h3>Player extras</h3><p>Brightness and volume swipes, a sleep timer, and skipping the external link warning.</p></div>
+      <div class="card"><h3>Tidy up</h3><p>Hide the hype train, leaderboards, chat header, Bits button, create button and more, one switch each.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="never">
+    <h2 id="never">What it will never do</h2>
+    <div class="pledge">
+      <strong>No ad blocking, and no money-related mods of any kind.</strong>
+      <p>Ads and subscriptions are how Twitch and the streamers on it get paid. This module is about the chat reading experience, not about taking anything away from creators.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="alt">
+    <h2 id="alt">Looking for PurpleTV or bttv-android?</h2>
+    <p>Both brought third-party emotes to Twitch on Android, and bttv-android has stopped updating. PurpleTV ReVive picks up their chat features for today's Twitch app. It works as a module for the official app, so your Twitch login stays as it is. One difference to know: unlike PurpleTV, it has no ad blocking.</p>
+  </section>
+
+  <section aria-labelledby="install">
+    <h2 id="install">How to install</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Easiest: ready-to-install APK</h3>
+        <ol class="steps">
+          <li>From the latest release, download the Twitch file whose name ends in <code>patched.apk</code>.</li>
+          <li>Uninstall the Play Store Twitch app, then install the downloaded one.</li>
+          <li>Sign in with your password, or the Google, Amazon or Apple buttons.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Rooted: LSPosed</h3>
+        <ol class="steps">
+          <li>Install <code>purpletv-xp.apk</code> from the latest release.</li>
+          <li>In LSPosed, enable <strong>PurpleTV ReVive</strong> and tick Twitch in its scope.</li>
+          <li>Force-stop and reopen Twitch.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>No root: LSPatch</h3>
+        <ol class="steps">
+          <li>Open LSPatch (v1.2 or newer) and pick your installed Twitch app.</li>
+          <li>Choose Integrated mode and add <code>purpletv-xp.apk</code> as a module.</li>
+          <li>Install the patched Twitch that LSPatch makes.</li>
+        </ol>
+      </div>
+    </div>
+    <p>Settings live inside Twitch: open Twitch's Settings, and <strong>PurpleTV</strong> is the first row. Android 8.0 or newer.</p>
+  </section>
+
+  <section aria-labelledby="faq">
+    <h2 id="faq">Questions</h2>
+    <details><summary>Do I need root?</summary><p>No. Use LSPatch or the ready-to-install APK without root, or LSPosed with root.</p></details>
+    <details><summary>Does it block ads?</summary><p>No, and it never will. Ads pay Twitch and the streamers.</p></details>
+    <details><summary>Why doesn't my passkey work?</summary><p>A passkey is tied to the app's signing certificate, and a patched build is signed with a different key. Use your password, or the Google, Amazon or Apple buttons.</p></details>
+    <details><summary>Can I get the normal Twitch app back?</summary><p>Yes. Switch off "PurpleTV enabled" at the top of its settings and restart Twitch.</p></details>
+    <details><summary>Is this allowed by Twitch?</summary><p>Any client modification is against Twitch's Terms of Service, so use it at your own risk. It never automates chatting or viewing.</p></details>
+  </section>
+
+  <footer>
+    PurpleTV ReVive is open source under the Apache License 2.0. Emote data comes from the 7TV, BetterTTV and FrankerFaceZ public APIs. Not affiliated with, endorsed by, or connected to Twitch Interactive, Inc.
+  </footer>
+</div>
+</body>
+</html>
