@@ -71,6 +71,13 @@ object EmoteRepo {
      *  Used ONLY to feed the autocomplete suggestion strip. name -> CDN url. */
     val twitch = ConcurrentHashMap<String, String>()
 
+    /** Twitch emotes known to belong to a CHANNEL (sub, follower, bits tier), as opposed to
+     *  globals, hype train, Prime, Turbo and the like. Only orders the suggestion strip. */
+    private val channelOwned: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Twitch emotes known NOT to be channel emotes, so a later channel source cannot relabel them. */
+    private val notChannel: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val CHANNEL_TYPES = setOf("SUBSCRIPTIONS", "FOLLOWER", "BITS_BADGE_TIERS")
+
     /** Drawables for the suggestion strip: union of [drawables] (7TV/BTTV/FFZ) and the
      *  Twitch harvest. Separate map so injection never picks these up. */
     val suggestDrawables = ConcurrentHashMap<String, Drawable>()
@@ -445,6 +452,8 @@ object EmoteRepo {
                 val name = e.optString("token"); val id = e.optString("id")
                 if (name.isEmpty() || id.isEmpty()) continue
                 out[name] = "https://static-cdn.jtvnw.net/emoticons/v2/$id/default/dark/${EmoteQuality.twitch}"
+                if (e.optString("type") in CHANNEL_TYPES) { channelOwned.add(name); notChannel.remove(name) }
+                else { notChannel.add(name); channelOwned.remove(name) }
             }
         }
     }
@@ -455,6 +464,8 @@ object EmoteRepo {
         runCatching {
             val arr = JSONArray(get("https://emotes.adamcy.pl/v1/channel/$login/emotes/all"))
             addAdamcyTwitch(arr, out)
+            // A channel's own set: its emotes are channel emotes unless Twitch said otherwise.
+            for (name in out.keys) if (name !in notChannel) channelOwned.add(name)
         }.onFailure { log("adamcy channel '$login' failed: $it") }
     }
 
@@ -479,7 +490,7 @@ object EmoteRepo {
     }
 
     /** A single autocomplete suggestion: emote name + optional preview drawable. */
-    data class Sug(val name: String, val drawable: Drawable?)
+    data class Sug(val name: String, val drawable: Drawable?, val pinned: Boolean = false)
 
     /**
      * Unified emote name suggestions across 7TV/BTTV/FFZ ([map]) and Twitch ([twitch]).
@@ -489,29 +500,28 @@ object EmoteRepo {
     fun suggest(prefix: String, limit: Int = 30): List<Sug> {
         if (prefix.length < 2) return emptyList()
         val p = prefix.lowercase()
-        // Per-source toggles from the standalone PurpleTV settings panel.
         val onTwitch = Settings.get(Settings.KEY_SRC_TWITCH)
-        val starts = LinkedHashSet<String>()
-        val contains = LinkedHashSet<String>()
+        // Groups, in order: pinned, then 7TV/BTTV/FFZ/Homies, then channel (sub) emotes, then
+        // every other Twitch emote (globals, hype train, Prime...). Within a group, names that
+        // START with what was typed come first, then names that merely contain it; each part
+        // alphabetical, ignoring case.
+        val pins = Pins.all()
+        val keyed = HashMap<String, Int>()   // name -> group
         for ((name, url) in map) {
             if (!enabled(name) || url in gone) continue
-            val l = name.lowercase()
-            if (l.startsWith(p)) starts.add(name) else if (l.contains(p)) contains.add(name)
+            if (name.lowercase().contains(p)) keyed[name] = 1
         }
         if (onTwitch) for (name in twitch.keys) {
-            val l = name.lowercase()
-            if (l.startsWith(p)) starts.add(name) else if (l.contains(p)) contains.add(name)
+            if (keyed.containsKey(name) || !name.lowercase().contains(p)) continue
+            keyed[name] = if (name in channelOwned) 2 else 3
         }
-        val out = ArrayList<Sug>(limit)
-        for (name in starts) {
-            out.add(Sug(name, suggestDrawables[name]))
-            if (out.size >= limit) return out
-        }
-        for (name in contains) {
-            out.add(Sug(name, suggestDrawables[name]))
-            if (out.size >= limit) return out
-        }
-        return out
+        val order = compareBy<Map.Entry<String, Int>>(
+            { if (it.key in pins) 0 else it.value },
+            { if (it.key.lowercase().startsWith(p)) 0 else 1 },
+            { it.key.lowercase() },
+            { it.key })
+        return keyed.entries.sortedWith(order).take(limit)
+            .map { Sug(it.key, suggestDrawables[it.key], pinned = it.key in pins) }
     }
 
     /** Prefetch suggestion-strip drawables: 7TV/BTTV/FFZ (reuse [drawables]) + Twitch.

@@ -8,6 +8,8 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import kotlin.math.abs
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -200,9 +202,13 @@ object EmoteAutocomplete {
                     val sugs = EmoteRepo.suggest(word, 30)
                     if (sugs.isEmpty()) { popup?.dismiss(); return@Runnable }
                     popup?.dismiss()
-                    popup = showStrip(input, ctx, sugs) { name ->
+                    popup = showStrip(input, ctx, sugs, { name ->
                         replaceWord(input, start, end, name)
-                    }
+                    }, { handler.post(refresh) }, {
+                        // A hold can outlast the strip's timeout; keep it open meanwhile.
+                        handler.removeCallbacks(autoDismiss)
+                        handler.postDelayed(autoDismiss, stripTimeoutMs() + Pins.BOTH_FAVORITE_MS)
+                    })
                     handler.postDelayed(autoDismiss, stripTimeoutMs())
                 }.onFailure { log("AC text error: $it") }
         }
@@ -235,6 +241,104 @@ object EmoteAutocomplete {
         }.onFailure { log("AC insert error: $it") }
     }
 
+    /**
+     * Tap picks the emote. Holding it pins it to the top of the list, adds it to the emote
+     * picker's favorites bar, or (the default) both: 2 seconds pins, 5 seconds favorites instead.
+     * The list is rebuilt only once the finger lifts, since rebuilding mid-hold would throw the
+     * held chip away along with its timers.
+     */
+    private fun wireHold(chip: View, name: String, onPick: (String) -> Unit, onChanged: () -> Unit,
+                         onTouchStart: () -> Unit) {
+        val ctx = chip.context
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        val slop = android.view.ViewConfiguration.get(ctx).scaledTouchSlop
+        val lp = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        var fired = false
+        var pinnedNow = false
+        var downX = 0f; var downY = 0f
+        val favoritable = Favorites.isFavoritable(name)
+        fun buzz() { runCatching { chip.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) } }
+        val pin = Runnable {
+            fired = true; buzz()
+            pinnedNow = true
+            val now = Pins.toggle(name)
+            val more = if (Pins.holdMode() == Pins.HOLD_BOTH && favoritable) ". Keep holding to add it to favorites instead" else ""
+            toast(ctx, (if (now) "Pinned $name" else "Unpinned $name") + more)
+        }
+        val fav = Runnable {
+            fired = true
+            if (!favoritable) {
+                if (Pins.holdMode() == Pins.HOLD_FAVORITE)
+                    toast(ctx, "Only Twitch and sub emotes can go in the favorites bar")
+                return@Runnable
+            }
+            buzz()
+            // In "both", the 2 second pin already happened; a longer hold means favorite instead.
+            if (pinnedNow) { Pins.toggle(name); pinnedNow = false }
+            val now = Favorites.toggle(name)
+            toast(ctx, if (now) "\u2605 Added $name to favorites" else "Removed $name from favorites")
+        }
+        fun stop() { h.removeCallbacks(pin); h.removeCallbacks(fav); chip.setBackgroundColor(Color.TRANSPARENT) }
+        chip.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    fired = false; pinnedNow = false; downX = ev.x; downY = ev.y
+                    onTouchStart()
+                    v.setBackgroundColor(0x33FFFFFF)
+                    when (Pins.holdMode()) {
+                        Pins.HOLD_PIN -> h.postDelayed(pin, lp)
+                        Pins.HOLD_FAVORITE -> h.postDelayed(fav, lp)
+                        else -> { h.postDelayed(pin, Pins.BOTH_PIN_MS); h.postDelayed(fav, Pins.BOTH_FAVORITE_MS) }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (abs(ev.x - downX) > slop || abs(ev.y - downY) > slop) stop()
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val moved = abs(ev.x - downX) > slop || abs(ev.y - downY) > slop
+                    stop()
+                    if (fired) onChanged() else if (!moved) onPick(name)
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> { stop(); if (fired) onChanged(); false }
+                else -> true
+            }
+        }
+    }
+
+    private fun tipView(ctx: Context, onChanged: () -> Unit): View {
+        val msg = when (Pins.holdMode()) {
+            Pins.HOLD_PIN -> "Tip: hold an emote to pin it to the top of this list whenever it matches."
+            Pins.HOLD_FAVORITE -> "Tip: hold a Twitch emote to add it to the favorites bar in the emote picker."
+            else -> "Tip: hold an emote for 2 seconds to pin it to the top of this list, or 5 seconds to add it to the favorites bar in the emote picker."
+        } + " You can change this in PurpleTV settings."
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(ctx, 10f), dp(ctx, 6f), dp(ctx, 4f), dp(ctx, 6f))
+            setBackgroundColor(Color.parseColor("#FF3A2A55"))
+            addView(TextView(ctx).apply {
+                text = msg
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(ctx).apply {
+                text = "\u2715"
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                gravity = Gravity.CENTER
+                contentDescription = "Dismiss tip"
+                setPadding(dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
+                setOnClickListener {
+                    Settings.set(Pins.KEY_TIP_DISMISSED, true)
+                    onChanged()
+                }
+            })
+        }
+    }
+
     /** The whole input row (input plus its buttons), found by resource name, or the input
      *  itself if the row is not recognised. */
     private fun inputRow(input: EditText): View {
@@ -259,7 +363,8 @@ object EmoteAutocomplete {
 
     /** Horizontal chip strip anchored just above the input. */
     private fun showStrip(
-        input: EditText, ctx: Context, sugs: List<EmoteRepo.Sug>, onPick: (String) -> Unit
+        input: EditText, ctx: Context, sugs: List<EmoteRepo.Sug>, onPick: (String) -> Unit,
+        onChanged: () -> Unit, onTouchStart: () -> Unit
     ): PopupWindow {
         val vertical = Settings.get(KEY_VERTICAL, true)
         val row = LinearLayout(ctx).apply {
@@ -273,17 +378,8 @@ object EmoteAutocomplete {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(ctx, 6f), dp(ctx, 3f), dp(ctx, 6f), dp(ctx, 3f))
                 isClickable = true
-                setOnClickListener { onPick(sug.name) }
-                // Long-press a Twitch/sub emote chip to toggle it as a favorite (no-op for
-                // 7TV/BTTV/FFZ, which aren't favoritable). Returns true only when we handled it.
-                setOnLongClickListener {
-                    if (Favorites.isFavoritable(sug.name)) {
-                        val now = Favorites.toggle(sug.name)
-                        toast(ctx, if (now) "★ Favorited ${sug.name}" else "Removed ${sug.name}")
-                        true
-                    } else false
-                }
             }
+            wireHold(chip, sug.name, onPick, onChanged, onTouchStart)
             // Prefer a looping animated drawable for animated emotes; else the static one. An
             // ImageView hosts the drawable directly (provides its own invalidation callback), so
             // unlike chat spans we just start() it. Animated copies are cached per-name so we don't
@@ -304,6 +400,11 @@ object EmoteAutocomplete {
                     }
                 })
             }
+            if (sug.pinned) chip.addView(TextView(ctx).apply {
+                text = "\uD83D\uDCCC"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                setPadding(0, 0, dp(ctx, 3f), 0)
+            })
             chip.addView(TextView(ctx).apply {
                 text = sug.name
                 setTextColor(Color.WHITE)
@@ -328,12 +429,28 @@ object EmoteAutocomplete {
         }
         // Horizontal is a fixed bar. Vertical grows with the number of suggestions and then
         // stops and scrolls, so a long match list cannot swallow the screen.
-        val stripH = if (vertical) {
+        val listH = if (vertical) {
             val rowH = imgPx + dp(ctx, 6f)
             (sugs.size * rowH + dp(ctx, 8f)).coerceAtMost(dp(ctx, VERTICAL_MAX_DP))
         } else dp(ctx, 44f)
+        // The one-time tip sits on top of the list until its X is pressed.
+        val rowWidth = inputRow(input).width.takeIf { it > 0 } ?: (input.rootView ?: input).width
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#FF1F1925"))
+        }
+        var tipH = 0
+        if (!Settings.get(Pins.KEY_TIP_DISMISSED, false)) {
+            val tip = tipView(ctx, onChanged)
+            tip.measure(View.MeasureSpec.makeMeasureSpec(rowWidth, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            tipH = tip.measuredHeight
+            content.addView(tip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, tipH))
+        }
+        content.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, listH))
+        val stripH = listH + tipH
         val pw = PopupWindow(
-            scroll, ViewGroup.LayoutParams.MATCH_PARENT, stripH, false
+            content, ViewGroup.LayoutParams.MATCH_PARENT, stripH, false
         ).apply {
             isOutsideTouchable = false
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
