@@ -42,6 +42,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **`/me` styling** | Italic, coloured, or both. |
 | **Username display style** | For people whose display name differs from their login: show both, the international name only, or the login only. |
 | **Vibrate on mention** | Buzz when someone `@mentions` you, with an adjustable duration. |
+| **Push notifications on patched builds** | A re-signed Twitch normally cannot register for push notifications. This lets it, so go-live alerts work on the patched APK too. |
 | **Skip link warning** | Open chat links straight away, without Twitch's "this link will take you to" confirmation. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
