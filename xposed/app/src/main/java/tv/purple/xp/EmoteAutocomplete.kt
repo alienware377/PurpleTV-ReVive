@@ -175,28 +175,37 @@ object EmoteAutocomplete {
         // dismiss, so the strip stays put while actively typing and clears shortly after.
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val autoDismiss = Runnable { runCatching { popup?.dismiss() } }
+        lateinit var refresh: Runnable
 
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(e: Editable?) {
+                // Read the word on the next frame, not now. Twitch's emote picker inserts the
+                // text first and moves the cursor after, so reading it here saw the cursor still
+                // inside the PREVIOUS emote, and the strip kept showing that one.
+                handler.removeCallbacks(refresh)
+                handler.post(refresh)
+            }
+        })
+
+        refresh = Runnable {
                 runCatching {
                     handler.removeCallbacks(autoDismiss)
-                    if (!Settings.get(Settings.KEY_AUTOCOMPLETE)) { popup?.dismiss(); return }
-                    val text = e?.toString() ?: ""
+                    if (!Settings.get(Settings.KEY_AUTOCOMPLETE)) { popup?.dismiss(); return@Runnable }
+                    val text = input.text?.toString() ?: ""
                     val cur = input.selectionStart.coerceIn(0, text.length)
                     val (word, start, end) = wordAround(text, cur)
-                    if (word.length < MIN_LEN) { popup?.dismiss(); return }
+                    if (word.length < MIN_LEN) { popup?.dismiss(); return@Runnable }
                     val sugs = EmoteRepo.suggest(word, 30)
-                    if (sugs.isEmpty()) { popup?.dismiss(); return }
+                    if (sugs.isEmpty()) { popup?.dismiss(); return@Runnable }
                     popup?.dismiss()
                     popup = showStrip(input, ctx, sugs) { name ->
                         replaceWord(input, start, end, name)
                     }
                     handler.postDelayed(autoDismiss, stripTimeoutMs())
                 }.onFailure { log("AC text error: $it") }
-            }
-        })
+        }
 
         // Also dismiss immediately when the input loses focus (switching fields / leaving chat).
         // Creates NO window, so it cannot reintroduce the old kb-tracker's black-player regression.
@@ -329,12 +338,10 @@ object EmoteAutocomplete {
             isOutsideTouchable = false
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             isClippingEnabled = false
-            // CRITICAL: draw ABOVE the soft-keyboard window. The IME sits at a far higher
-            // window layer than a normal activity sub-window, so without this the strip is
-            // composited UNDERNEATH the keyboard and you never see it (confirmed via dumpsys:
-            // the popup window exists at subLayer 1 but the InputMethod window covers it).
-            // INPUT_METHOD_NOT_NEEDED re-layers the popup over the IME.
-            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            // Draw BEHIND the keyboard. The strip now sits on the input row, which a docked
+            // keyboard never covers, so the only keyboard it can overlap is a floating one, and
+            // that must stay on top: the strip was drawn over the floating keyboard's keys.
+            inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
         }
         runCatching {
             val root = input.rootView ?: input
