@@ -535,6 +535,35 @@ object EmoteRepo {
 
     /** Prefetch suggestion-strip drawables: 7TV/BTTV/FFZ (reuse [drawables]) + Twitch.
      *  If [guard] is non-null, aborts as soon as [activeChannel] != guard (user switched away). */
+    /**
+     * Fetch pictures for [names] right now, ahead of the background queue, and call [onReady]
+     * (on a worker thread) each time one arrives. The background queue fetches thousands of
+     * pictures in no particular order, so on a fresh install the few emotes actually on screen
+     * (a suggestion list, the favorites bar) could wait minutes for theirs.
+     */
+    fun wantPictures(names: Collection<String>, onReady: () -> Unit) {
+        val res = Resources.getSystem()
+        for (name in names) {
+            if (suggestDrawables.containsKey(name)) continue
+            val url = twitch[name] ?: map[name] ?: continue
+            if (url in gone || !inflight.add("sug:$name")) continue
+            hotPool.execute {
+                try {
+                    val d = buildDrawable(name, getBytes(url), res)
+                    if (d != null) {
+                        suggestDrawables[name] = d
+                        if (gTwitch.containsKey(name)) gSuggestDraw[name] = d
+                        onReady()
+                    }
+                } catch (t: Throwable) {
+                    if (isGone(t)) gone.add(url)
+                } finally {
+                    inflight.remove("sug:$name")
+                }
+            }
+        }
+    }
+
     private fun prefetchSuggestDrawables(guard: String? = null) {
         for ((name, d) in drawables) suggestDrawables.putIfAbsent(name, d)
         val res = Resources.getSystem()
@@ -545,7 +574,11 @@ object EmoteRepo {
             sugPool.execute {
                 try {
                     val d = buildDrawable(name, getBytes(url), res)
-                    if (d != null) suggestDrawables[name] = d
+                    if (d != null) {
+                        suggestDrawables[name] = d
+                        // User-wide emotes keep their picture across channel switches.
+                        if (gTwitch.containsKey(name)) gSuggestDraw[name] = d
+                    }
                 } catch (t: Throwable) {
                     log("sug img fail '$name': $t")
                 } finally {

@@ -400,6 +400,11 @@ object PickerFavorites {
             return
         }
         val sizePx = dp(ctx, 34f)
+        // Favorites whose picture has not loaded yet: fetch those now and redraw the bar.
+        val waiting = favs.filter { Favorites.isAvailable(it) && favDrawable(it) == null }
+        if (waiting.isNotEmpty()) EmoteRepo.wantPictures(waiting) {
+            row.post { runCatching { rebuild(row) } }
+        }
         for (name in favs) {
             // Not usable in this chat (a 7TV/BTTV/FFZ word this channel does not have): shown
             // greyed out and not insertable, but still removable with a long-press.

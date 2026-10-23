@@ -84,6 +84,9 @@ object EmoteAutocomplete {
         log("AC autocomplete hook installed (ctor)")
     }
 
+    /** When a finger last went down on the strip, so a picture redraw does not cut a hold short. */
+    @Volatile private var lastStripTouch = 0L
+
     /** Tag so we only wire each input instance once. */
     private val WIRED = java.util.Collections.newSetFromMap(
         java.util.WeakHashMap<EditText, Boolean>()
@@ -178,6 +181,14 @@ object EmoteAutocomplete {
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val autoDismiss = Runnable { runCatching { popup?.dismiss() } }
         lateinit var refresh: Runnable
+        lateinit var pictureRedraw: Runnable
+        pictureRedraw = Runnable {
+            if (popup?.isShowing != true) return@Runnable
+            if (android.os.SystemClock.uptimeMillis() - lastStripTouch < Pins.BOTH_FAVORITE_MS + 500) {
+                handler.postDelayed(pictureRedraw, 500); return@Runnable
+            }
+            handler.post(refresh)
+        }
 
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -202,10 +213,18 @@ object EmoteAutocomplete {
                     val sugs = EmoteRepo.suggest(word, 30)
                     if (sugs.isEmpty()) { popup?.dismiss(); return@Runnable }
                     popup?.dismiss()
+                    // Pictures still missing for what is shown: fetch those first, and redraw the
+                    // list as they land (unless a finger is on it, which a redraw would cancel).
+                    val missing = sugs.filter { it.drawable == null }.map { it.name }
+                    if (missing.isNotEmpty()) EmoteRepo.wantPictures(missing) {
+                        handler.removeCallbacks(pictureRedraw)
+                        handler.postDelayed(pictureRedraw, 250)
+                    }
                     popup = showStrip(input, ctx, sugs, { name ->
                         replaceWord(input, start, end, name)
                     }, { handler.post(refresh) }, {
                         // A hold can outlast the strip's timeout; keep it open meanwhile.
+                        lastStripTouch = android.os.SystemClock.uptimeMillis()
                         handler.removeCallbacks(autoDismiss)
                         handler.postDelayed(autoDismiss, stripTimeoutMs() + Pins.BOTH_FAVORITE_MS)
                     })
