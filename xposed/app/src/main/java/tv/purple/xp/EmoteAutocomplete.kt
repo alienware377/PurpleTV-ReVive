@@ -269,7 +269,7 @@ object EmoteAutocomplete {
             fired = true
             if (!favoritable) {
                 if (Pins.holdMode() == Pins.HOLD_FAVORITE)
-                    toast(ctx, "Only Twitch and sub emotes can go in the favorites bar")
+                    toast(ctx, "This emote cannot go in the favorites bar")
                 return@Runnable
             }
             buzz()
@@ -387,7 +387,9 @@ object EmoteAutocomplete {
             val chosen: android.graphics.drawable.Drawable? =
                 if (EmoteRepo.animBytes.containsKey(sug.name)) {
                     if (stripAnim.size > 200) stripAnim.clear()
-                    stripAnim[sug.name] ?: EmoteRepo.makeAnimated(sug.name)?.also { stripAnim[sug.name] = it }
+                    // Keyed by url too: the same word can be a different emote in another chat.
+                    val k = sug.name + "|" + EmoteRepo.urlOf(sug.name)
+                    stripAnim[k] ?: EmoteRepo.makeAnimated(sug.name)?.also { stripAnim[k] = it }
                 } else {
                     sug.drawable?.let { it.constantState?.newDrawable()?.mutate() ?: it }
                 }

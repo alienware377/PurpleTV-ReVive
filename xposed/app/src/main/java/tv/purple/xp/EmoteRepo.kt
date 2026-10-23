@@ -90,6 +90,15 @@ object EmoteRepo {
     val animBytes = ConcurrentHashMap<String, ByteArray>()
     /** name -> [width,height] px at our row height, for sizing freshly-decoded animated drawables. */
     private val animBounds = ConcurrentHashMap<String, IntArray>()
+    /** name -> the url its cached picture was decoded from. Two channels often use the same word
+     *  for different images, so a picture only counts if it came from the url in use now. */
+    private val builtFrom = ConcurrentHashMap<String, String>()
+
+    /** The url [name] resolves to in the current chat, or null if it is not available here. */
+    fun urlOf(name: String): String? = map[name] ?: twitch[name]
+
+    /** Numeric id of the channel whose emotes are loaded, or null outside a channel. */
+    fun currentChannel(): String? = activeChannel
 
     // --- global snapshots (authoritative GLOBAL-only emote set) ---
     // The public maps above are the LIVE combined view (globals + the CURRENT channel) that the
@@ -189,7 +198,7 @@ object EmoteRepo {
         if (!inflight.add(name)) return
         try {
             val d = buildDrawable(name, getBytes(url), Resources.getSystem())
-            if (d != null) { drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
+            if (d != null) { builtFrom[name] = url; drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
         } catch (t: Throwable) {
             if (isGone(t)) gone.add(url)
             log("img fail '$name': $t")
@@ -588,7 +597,16 @@ object EmoteRepo {
                 twitch.clear(); twitch.putAll(gTwitch); twitch.putAll(cTwitch)
                 drawables.clear(); drawables.putAll(gDraw)
                 suggestDrawables.clear(); suggestDrawables.putAll(gSuggestDraw)
+                // A channel emote that reuses a global name has its own picture: drop the
+                // global one so the channel's is fetched instead of the global staying put.
+                for ((n, u) in cMap) if (gMap[n] != u) { drawables.remove(n); suggestDrawables.remove(n) }
+                // Animated pictures decoded for a different url are another chat's.
+                for (n in animBytes.keys) {
+                    val from = builtFrom[n] ?: continue
+                    if (from != urlOf(n)) { animBytes.remove(n); animBounds.remove(n); builtFrom.remove(n) }
+                }
             }
+            runCatching { Favorites.channelChanged() }
             log("channel $myId ($channelName) published: +${cMap.size} inject, +${cTwitch.size} twitch (map=${map.size}); prefetching")
             // Download channel images into the live maps; aborts mid-loop if the user switches.
             prefetchDrawables(myId)
@@ -694,6 +712,9 @@ object EmoteRepo {
     fun makeAnimated(name: String): Drawable? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         val bytes = animBytes[name] ?: return null
+        // Decoded for another channel's emote of the same name: not this chat's picture.
+        val from = builtFrom[name]
+        if (from != null && from != urlOf(name)) return null
         val b = animBounds[name]
         return runCatching {
             val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))

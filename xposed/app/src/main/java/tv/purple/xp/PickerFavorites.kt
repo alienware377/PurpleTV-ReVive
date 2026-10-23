@@ -392,7 +392,7 @@ object PickerFavorites {
         val favs = Favorites.list()
         if (favs.isEmpty()) {
             row.addView(TextView(ctx).apply {
-                text = "Long-press a Twitch emote to add it here"
+                text = "Long-press an emote to add it here"
                 setTextColor(Color.parseColor("#99FFFFFF"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 gravity = Gravity.CENTER_VERTICAL
@@ -401,7 +401,10 @@ object PickerFavorites {
         }
         val sizePx = dp(ctx, 34f)
         for (name in favs) {
-            val d = favDrawable(name)
+            // Not usable in this chat (a 7TV/BTTV/FFZ word this channel does not have): shown
+            // greyed out and not insertable, but still removable with a long-press.
+            val usable = Favorites.isAvailable(name)
+            val d = if (usable) favDrawable(name) else null
             val cell: View = if (d != null) {
                 ImageView(ctx).apply {
                     setImageDrawable(d)
@@ -421,7 +424,9 @@ object PickerFavorites {
                 setPadding(dp(ctx, 6f), 0, dp(ctx, 6f), 0)
                 isClickable = true
                 addView(cell)
+                if (!usable) alpha = 0.35f
                 setOnClickListener {
+                    if (!usable) { toast(ctx, "$name is not available in this chat"); return@setOnClickListener }
                     if (!EmoteAutocomplete.insertEmote(name))
                         toast(ctx, "Tap the chat box first")
                 }
@@ -443,6 +448,7 @@ object PickerFavorites {
             EmoteRepo.makeAnimated(name)?.let { return it }
         }
         EmoteRepo.suggestDrawables[name]?.let { return it.constantState?.newDrawable()?.mutate() ?: it }
+        EmoteRepo.drawables[name]?.let { return it.constantState?.newDrawable()?.mutate() ?: it }
         return null
     }
 

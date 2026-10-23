@@ -11,6 +11,15 @@ object Pins {
 
     private const val KEY = "suggest_pins"
 
+    /** Keep a separate set of pins for each channel instead of one shared set. */
+    const val KEY_PER_CHANNEL = "pins_per_channel"
+
+    private fun storeKey(): String {
+        if (!Settings.get(KEY_PER_CHANNEL, false)) return KEY
+        val ch = EmoteRepo.currentChannel() ?: return KEY
+        return "$KEY@$ch"
+    }
+
     /** What holding an emote in the strip does. */
     const val KEY_HOLD = "suggest_hold_action"
     const val HOLD_PIN = 0
@@ -29,7 +38,7 @@ object Pins {
     @Volatile private var cache: Set<String> = emptySet()
 
     fun all(): Set<String> {
-        val raw = Settings.getString(KEY, "")
+        val raw = Settings.getString(storeKey(), "")
         if (raw != cacheRaw) {
             cache = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
             cacheRaw = raw
@@ -44,7 +53,7 @@ object Pins {
         val cur = all().toMutableSet()
         val now = cur.add(name)
         if (!now) cur.remove(name)
-        Settings.setString(KEY, cur.sorted().joinToString(","))
+        Settings.setString(storeKey(), cur.sorted().joinToString(","))
         return now
     }
 
