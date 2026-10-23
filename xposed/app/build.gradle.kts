@@ -11,8 +11,8 @@ android {
         applicationId = "tv.purple.xp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.5.0-twitch31.1.2"
+        versionCode = 8
+        versionName = "0.6.1-twitch31.1.2"
     }
 
     buildTypes {

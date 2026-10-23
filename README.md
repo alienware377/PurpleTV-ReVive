@@ -29,8 +29,8 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **FrankerFaceZ (FFZ) emotes** | Global and channel FFZ emote sets. |
 | **Homies emotes** | Global and channel Chatterino Homies emotes. Off by default. |
 | **BTTV WEBP** | Optionally load BTTV emotes in WEBP format instead of GIF or PNG. |
-| **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a suggestion strip above the input. Optional vertical list that scrolls, and an adjustable time before it clears. |
-| **Favorites bar** | Long-press any Twitch or subscriber emote in the picker to pin it to a bar at the top of the picker. Persists across channels and restarts. |
+| **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a scrolling list just above the input. 7TV, BTTV and FFZ emotes come first, then your sub emotes, then other Twitch emotes. Hold one to pin it to the top whenever it matches, or to add it to the favorites bar. Pins can be kept per streamer. |
+| **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Can be kept per streamer. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
 | **Third-party badges** | FFZ, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
