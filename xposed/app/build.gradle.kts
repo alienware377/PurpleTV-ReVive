@@ -11,8 +11,8 @@ android {
         applicationId = "io.github.alienware377.purpletvrevive"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.6.4-twitch31.1.2"
+        versionCode = 12
+        versionName = "0.6.5-twitch31.1.2"
     }
 
     buildTypes {
