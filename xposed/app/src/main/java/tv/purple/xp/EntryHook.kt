@@ -71,6 +71,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { EmoteRepo.loadPersonalEmotesAsync(ctx) }.onFailure { log("personal emotes wire failed: $it") }
         runCatching { BadgeRepo.loadAsync() }.onFailure { log("badge fetch wire failed: $it") }
         runCatching { Pronouns.loadAsync() }.onFailure { log("pronoun wire failed: $it") }
+        runCatching { PushFix.install() }.onFailure { log("push fix failed: $it") }
         runCatching { EmoteHooks.install(lpparam) }.onFailure { log("emote hooks failed: $it") }
         runCatching { Channels.install(lpparam) }.onFailure { log("channel probe failed: $it") }
         runCatching { EmoteAutocomplete.install(lpparam) }.onFailure { log("autocomplete failed: $it") }

@@ -328,6 +328,9 @@ object PurpleMenu {
         Toggle("OkHttp Logging",
             "Enable logging of OkHttp requests and responses for debugging purposes", "okhttp_logging"),
         Toggle("Disable \"Comscore\"", "", "disable_comscore"),
+        Toggle("Fix push notifications",
+            "Lets a patched Twitch register for push notifications, which it otherwise cannot because it is signed with a different key",
+            PushFix.KEY, def = true, done = true),
         Toggle("Disable Google Play services",
             "Enabling this option will turn off Google Play services within the app",
             "disable_google_play_services")
