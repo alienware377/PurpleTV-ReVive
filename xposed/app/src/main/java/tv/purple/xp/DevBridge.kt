@@ -1,5 +1,7 @@
 package tv.purple.xp
 
+import android.view.View
+
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -143,6 +145,11 @@ object DevBridge {
                 if (!rx.containsMatchIn(t)) continue
                 val loc = IntArray(2).also { tv.getLocationOnScreen(it) }
                 log("DEV find: (${loc[0] + tv.width / 2},${loc[1] + tv.height / 2}) ${t.toString().take(120)}")
+                val touch = runCatching {
+                    val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(tv)
+                    li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }?.get(li)
+                }.getOrNull()
+                log("DEV find:   movement=${tv.movementMethod?.javaClass?.name} touch=${touch?.javaClass?.name} clickable=${tv.isClickable} spans=${(t as? android.text.Spanned)?.getSpans(0, t.length, android.text.style.ClickableSpan::class.java)?.joinToString { it.javaClass.simpleName }}")
                 n++
                 if (click && !clicked && t is android.text.Spanned) {
                     // The span that covers the matched text, not the first one (that is the name).

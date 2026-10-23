@@ -134,6 +134,7 @@ object EmoteHooks {
                             .onFailure { log("blacklist row error: $it") }
                             .getOrDefault(false)
                         if (hidden) return
+                        runCatching { wireLinks(tv, cs) }
                         runCatching { startAnimatedSpans(tv, cs) }
                         // Wire tap/long-press once per TextView that carries an emote we care about:
                         // our injected 7TV/etc spans (tap = preview) OR a native Twitch emote span
@@ -146,6 +147,60 @@ object EmoteHooks {
             )
             log("animation driver installed (TextView.setText)")
         }.onFailure { log("animation driver failed: $it") }
+    }
+
+    private val LINKS_WIRED = java.util.Collections.newSetFromMap(java.util.WeakHashMap<TextView, Boolean>())
+
+    /**
+     * Make links tappable on chat lines Twitch forgot to wire. Ordinary lines get Twitch's own
+     * link handler (a movement method), but announcement lines carry the same link spans with no
+     * handler at all, so tapping a link there did nothing. When a line has link spans and no
+     * movement method, a tap that lands on a link runs that link's own click, exactly as Twitch
+     * does elsewhere. Every other touch passes through untouched.
+     */
+    private fun wireLinks(tv: TextView, cs: CharSequence) {
+        if (cs !is Spanned || tv.movementMethod != null) return
+        val spans = cs.getSpans(0, cs.length, android.text.style.ClickableSpan::class.java)
+        if (spans.none { it.javaClass.name.contains("URL", ignoreCase = true) }) return
+        if (!LINKS_WIRED.add(tv)) return
+        val prev: View.OnTouchListener? = runCatching {
+            val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(tv)
+            li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }
+                ?.get(li) as? View.OnTouchListener
+        }.getOrNull()
+        var downOn: android.text.style.ClickableSpan? = null
+        val slop = android.view.ViewConfiguration.get(tv.context).scaledTouchSlop
+        var dx = 0f; var dy = 0f
+        tv.setOnTouchListener { v, ev ->
+            val t = v as TextView
+            if (t.movementMethod != null) return@setOnTouchListener prev?.onTouch(v, ev) ?: false
+            val mine = when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { dx = ev.x; dy = ev.y; downOn = linkAt(t, ev.x, ev.y); downOn != null }
+                MotionEvent.ACTION_MOVE -> {
+                    if (abs(ev.x - dx) > slop || abs(ev.y - dy) > slop) downOn = null
+                    downOn != null
+                }
+                MotionEvent.ACTION_UP -> {
+                    val sp = downOn; downOn = null
+                    if (sp != null && linkAt(t, ev.x, ev.y) === sp) { runCatching { sp.onClick(t) }; true } else false
+                }
+                MotionEvent.ACTION_CANCEL -> { downOn = null; false }
+                else -> downOn != null
+            }
+            if (mine) true else prev?.onTouch(v, ev) ?: false
+        }
+    }
+
+    private fun linkAt(tv: TextView, x: Float, y: Float): android.text.style.ClickableSpan? {
+        val layout = tv.layout ?: return null
+        val cs = tv.text as? Spanned ?: return null
+        val lx = x - tv.totalPaddingLeft + tv.scrollX
+        val ly = y - tv.totalPaddingTop + tv.scrollY
+        val line = layout.getLineForVertical(ly.toInt())
+        if (lx < layout.getLineLeft(line) || lx > layout.getLineRight(line)) return null
+        val off = layout.getOffsetForHorizontal(line, lx)
+        return cs.getSpans(off, off, android.text.style.ClickableSpan::class.java)
+            .firstOrNull { it.javaClass.name.contains("URL", ignoreCase = true) }
     }
 
     private fun startAnimatedSpans(tv: TextView, cs: CharSequence) {
@@ -256,9 +311,17 @@ object EmoteHooks {
             runCatching { t.onTouchEvent(c) }
             c.recycle()
         }
+        // Twitch may already have its own touch handler on this line (links, mentions). Setting
+        // ours replaced it, which broke tapping links on any line that also had an emote. It is
+        // kept and handed every touch we do not claim.
+        val prev: View.OnTouchListener? = runCatching {
+            val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(tv)
+            li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }
+                ?.get(li) as? View.OnTouchListener
+        }.getOrNull()
         tv.setOnTouchListener { v, ev ->
             val t = v as? TextView ?: return@setOnTouchListener false
-            when (ev.action) {
+            val mine = when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = ev.x; downY = ev.y; longFired = false
                     val hit = findHitAt(t, ev.x, ev.y)
@@ -292,6 +355,7 @@ object EmoteHooks {
                 MotionEvent.ACTION_CANCEL -> { cancelLp(t); pending = null; claimed = false; false }
                 else -> claimed
             }
+            if (mine) true else prev?.onTouch(v, ev) ?: false
         }
     }
 
