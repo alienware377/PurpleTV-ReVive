@@ -226,6 +226,18 @@ object EmoteAutocomplete {
         }.onFailure { log("AC insert error: $it") }
     }
 
+    /** The whole input row (input plus its buttons), found by resource name, or the input
+     *  itself if the row is not recognised. */
+    private fun inputRow(input: EditText): View {
+        var v: View? = input
+        while (v != null) {
+            val e = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+            if (e == "chat_message_input_view_container" || e == "message_input_view_container") return v
+            v = v.parent as? View
+        }
+        return input
+    }
+
     /** Lay the suggestions out as a scrollable vertical list above the keyboard, the way the
      *  original PurpleTV did, instead of a single horizontal strip. */
     const val KEY_VERTICAL = "suggest_vertical"
@@ -240,7 +252,7 @@ object EmoteAutocomplete {
     private fun showStrip(
         input: EditText, ctx: Context, sugs: List<EmoteRepo.Sug>, onPick: (String) -> Unit
     ): PopupWindow {
-        val vertical = Settings.get(KEY_VERTICAL, false)
+        val vertical = Settings.get(KEY_VERTICAL, true)
         val row = LinearLayout(ctx).apply {
             orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
             setPadding(dp(ctx, 4f), dp(ctx, 4f), dp(ctx, 4f), dp(ctx, 4f))
@@ -326,24 +338,34 @@ object EmoteAutocomplete {
         }
         runCatching {
             val root = input.rootView ?: input
-            // Pin the strip DIRECTLY above the chat input box, wherever it currently sits.
-            // We measure the input's live position in its window (getLocationInWindow) at the
-            // moment the strip shows — which is during active typing, so the input is laid out
-            // and visible above the keyboard. The strip's bottom is placed at the input's top.
-            //
-            // This is device/keyboard/orientation independent (no hardcoded fraction): on any
-            // screen, any IME height, portrait or landscape theater, the strip tracks the input
-            // automatically. showAtLocation uses window coordinates, matching getLocationInWindow.
-            // Gravity.TOP renders the popup in the visible region above the keyboard, so IME
-            // z-order is irrelevant.
-            val loc = IntArray(2)
-            input.getLocationInWindow(loc)
-            val inputTop = loc[1]
-            val rootH = root.height.takeIf { it > 0 } ?: realScreenHeight(ctx)
-            // Place strip bottom at the input's top; clamp into the visible window.
-            val y = (inputTop - stripH).coerceIn(dp(ctx, 4f), (rootH - stripH).coerceAtLeast(dp(ctx, 4f)))
-            log("AC strip pos: inputTop=$inputTop rootH=$rootH stripH=$stripH y=$y")
-            pw.showAtLocation(root, Gravity.TOP or Gravity.START, 0, y)
+            // Sit directly on top of the chat input row and only as wide as it: in landscape
+            // that is the chat column, not the whole screen across the player. The row is
+            // measured live, and re-measured on every layout, because it moves when the emote
+            // picker or keyboard opens and closes; a strip placed once was left hanging
+            // mid-screen after the picker closed.
+            val row = inputRow(input)
+            fun place(): IntArray {
+                val loc = IntArray(2)
+                row.getLocationInWindow(loc)
+                val rootH = root.height.takeIf { it > 0 } ?: realScreenHeight(ctx)
+                val y = (loc[1] - stripH).coerceIn(dp(ctx, 4f), (rootH - stripH).coerceAtLeast(dp(ctx, 4f)))
+                return intArrayOf(loc[0], y, row.width.takeIf { it > 0 } ?: root.width)
+            }
+            val p = place()
+            pw.width = p[2]
+            pw.showAtLocation(root, Gravity.TOP or Gravity.START, p[0], p[1])
+            var last = p
+            val follow = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                if (!pw.isShowing) return@OnGlobalLayoutListener
+                if (!row.isShown) { runCatching { pw.dismiss() }; return@OnGlobalLayoutListener }
+                val n = place()
+                if (!n.contentEquals(last)) { last = n; pw.update(n[0], n[1], n[2], stripH) }
+            }
+            val vto = root.viewTreeObserver
+            vto.addOnGlobalLayoutListener(follow)
+            pw.setOnDismissListener {
+                runCatching { root.viewTreeObserver.removeOnGlobalLayoutListener(follow) }
+            }
         }.onFailure { log("AC popup error: $it") }
         return pw
     }

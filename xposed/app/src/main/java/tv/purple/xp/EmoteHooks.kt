@@ -232,18 +232,30 @@ object EmoteHooks {
         return false
     }
 
-    /** Attach a tap/long-press listener. Wired once per TextView (TOUCH_WIRED). We CLAIM the
-     *  gesture only when DOWN lands on an emote (so chat scrolling / row clicks keep working),
-     *  then: tap = preview popup; long-press on a favoritable Twitch emote = toggle favorite. */
+    /** Attach a tap/long-press listener. Wired once per TextView (TOUCH_WIRED).
+     *
+     *  Our own 7TV/BTTV/FFZ emotes: the gesture is claimed on DOWN, and a tap opens our preview.
+     *  Twitch's own emotes: the gesture is NOT claimed, so a tap still reaches Twitch and opens
+     *  its emote card. Claiming it used to swallow the tap and do nothing, which made Twitch
+     *  emotes in chat look dead except at their very edge. Only a long press is ours there: it
+     *  toggles the favorite, and the TextView gets a CANCEL so Twitch does not act on it too. */
     private fun wireTouch(tv: TextView) {
         if (!TOUCH_WIRED.add(tv)) return
         var downX = 0f; var downY = 0f
-        var pending: Hit? = null            // emote the DOWN landed on (gesture claimed)
+        var pending: Hit? = null            // emote the DOWN landed on
+        var claimed = false                 // gesture owned by us (our own emotes only)
         var longFired = false               // long-press already handled this gesture
         var lpRunnable: Runnable? = null
         val slop = android.view.ViewConfiguration.get(tv.context).scaledTouchSlop
-        val lpTimeout = android.view.ViewConfiguration.getLongPressTimeout().toLong()
+        // A little shorter than the system long press, so ours fires first and can cancel it.
+        val lpTimeout = (android.view.ViewConfiguration.getLongPressTimeout() - 60L).coerceAtLeast(300L)
         fun cancelLp(t: TextView) { lpRunnable?.let { t.removeCallbacks(it) }; lpRunnable = null }
+        fun cancelTwitch(t: TextView) {
+            val now = SystemClock.uptimeMillis()
+            val c = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
+            runCatching { t.onTouchEvent(c) }
+            c.recycle()
+        }
         tv.setOnTouchListener { v, ev ->
             val t = v as? TextView ?: return@setOnTouchListener false
             when (ev.action) {
@@ -251,32 +263,34 @@ object EmoteHooks {
                     downX = ev.x; downY = ev.y; longFired = false
                     val hit = findHitAt(t, ev.x, ev.y)
                     pending = hit
+                    claimed = hit?.isPtv == true
                     if (hit != null && hit.favoritable) {
                         val r = Runnable {
                             longFired = true
+                            if (!claimed) cancelTwitch(t)
                             val now = Favorites.toggle(hit.name)
                             toast(t.context, if (now) "★ Favorited ${hit.name}" else "Removed ${hit.name}")
                         }
                         lpRunnable = r; t.postDelayed(r, lpTimeout)
                     }
-                    hit != null
+                    claimed
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (pending != null && (abs(ev.x - downX) > slop || abs(ev.y - downY) > slop))
                         cancelLp(t)
-                    pending != null
+                    claimed || longFired
                 }
                 MotionEvent.ACTION_UP -> {
                     cancelLp(t)
                     val hit = pending; pending = null
-                    if (hit != null && !longFired &&
-                        abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop && hit.isPtv) {
+                    if (hit != null && claimed && !longFired &&
+                        abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
                         showEmotePreview(t, hit.name)
                     }
-                    hit != null
+                    claimed || longFired
                 }
-                MotionEvent.ACTION_CANCEL -> { cancelLp(t); pending = null; false }
-                else -> pending != null  // keep owning the gesture we claimed
+                MotionEvent.ACTION_CANCEL -> { cancelLp(t); pending = null; claimed = false; false }
+                else -> claimed
             }
         }
     }

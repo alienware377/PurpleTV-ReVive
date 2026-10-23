@@ -161,7 +161,7 @@ object PurpleMenu {
             def = EmoteAutocomplete.TIMEOUT_DEFAULT, done = true),
         Toggle("Vertical emote suggestions",
             "Show emote suggestions as a scrollable list above the keyboard instead of one row",
-            EmoteAutocomplete.KEY_VERTICAL, done = true),
+            EmoteAutocomplete.KEY_VERTICAL, def = true, done = true),
         Toggle("Auto-claim channel points",
             "Claim bonus chests automatically, whether or not the chest is on screen",
             Settings.KEY_AUTO_POINTS, def = true, done = true),
