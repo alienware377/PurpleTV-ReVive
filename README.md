@@ -7,6 +7,7 @@ If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually rende
 [![Latest release](https://img.shields.io/github/v/release/alienware377/purpletv-revive?label=download&style=flat-square)](https://github.com/alienware377/purpletv-revive/releases/latest)
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square)](#requirements)
 [![Xposed](https://img.shields.io/badge/Xposed-LSPosed%20%7C%20LSPatch-9146ff?style=flat-square)](#installation)
+[![Website](https://img.shields.io/badge/website-purpletv--revive-7c3aed?style=flat-square)](https://alienware377.github.io/purpletv-revive/)
 
 ---
 
@@ -63,6 +64,10 @@ Everything is opt-in and individually toggleable, and the whole module can be sw
 ## Installation
 
 ### Rooted: LSPosed
+
+Easiest: in LSPosed, open the **Repository** tab, search for **PurpleTV ReVive** and install it from there. Updates then show up in LSPosed by themselves.
+
+Or by hand:
 
 1. Download `purpletv-xp.apk` from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
 2. Install it like a normal app.
