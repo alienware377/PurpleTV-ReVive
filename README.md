@@ -11,6 +11,10 @@ If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually rende
 
 ---
 
+## Looking for PurpleTV or bttv-android?
+
+Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bttv-android has stopped updating. PurpleTV ReVive picks up their chat features for today's Twitch app. It works as a module for the official app, so your Twitch login stays as it is, and there is a ready-to-install patched APK if you do not use LSPosed.
+
 ## What this module will never do
 
 **There is no ad blocking, and there are no money-related mods of any kind.** That is a deliberate design decision, not a missing feature, and pull requests adding either will be declined.
@@ -149,7 +153,7 @@ The emote image is cached per channel. Favorites from a channel you are not curr
 
 ## Contributing
 
-Issues and pull requests are welcome. When reporting a bug, include your Android version, Twitch app version, and whether you are using LSPosed or LSPatch.
+Questions, ideas and show-and-tell go in [Discussions](https://github.com/alienware377/purpletv-revive/discussions). Bug reports go in [Issues](https://github.com/alienware377/purpletv-revive/issues), and pull requests are welcome. When reporting a bug, include your Android version, Twitch app version, and whether you are using LSPosed or LSPatch.
 
 ## Credits
 
