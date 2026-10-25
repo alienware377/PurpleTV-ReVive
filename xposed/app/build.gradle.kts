@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -27,7 +29,28 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    // Built-in overlay textures: the repo's textures folder is copied in as Java resources under
+    // "textures/", with an index of file names, so the module can read them from its own class
+    // loader whether LSPosed or LSPatch loads it.
+    sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/ptvTextures"))
 }
+
+val packTextures by tasks.registering {
+    val src = rootProject.file("../textures")
+    val out = layout.buildDirectory.dir("generated/ptvTextures/textures")
+    inputs.dir(src).optional(true)
+    outputs.dir(out)
+    doLast {
+        val dst = out.get().asFile
+        dst.deleteRecursively(); dst.mkdirs()
+        val exts = setOf("jpg", "jpeg", "png", "webp")
+        val files = (src.listFiles() ?: emptyArray()).filter { it.isFile && it.extension.lowercase() in exts }.sortedBy { it.name }
+        files.forEach { it.copyTo(File(dst, it.name), overwrite = true) }
+        File(src, "manifest.json").takeIf { it.exists() }?.copyTo(File(dst, "manifest.json"), overwrite = true)
+        File(dst, "index.txt").writeText(files.joinToString(System.lineSeparator()) { it.name })
+    }
+}
+tasks.named("preBuild") { dependsOn(packTextures) }
 
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")

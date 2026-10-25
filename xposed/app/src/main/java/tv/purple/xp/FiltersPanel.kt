@@ -1,10 +1,13 @@
 package tv.purple.xp
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.res.ColorStateList
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -14,12 +17,16 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.GridLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
@@ -33,17 +40,20 @@ import kotlin.math.abs
  * The video filters panel, opened from the player's filters button.
  *
  * It docks to the side in landscape and to the bottom in portrait, and barely dims the video, so
- * every change is seen live on the stream behind it. Each filter has an icon, a name, a centred
- * slider with its value, a "?" that explains it in plain words, and an optional tone range drawn
- * as a shadows-to-highlights bar with two handles.
+ * every change is seen live on the stream behind it. Filters are grouped (Light, Detail, Colour,
+ * Style, Effects); each has an icon, a name, a slider with its value, a "?" that explains it in
+ * plain words, an optional tone range drawn as a shadows-to-highlights bar, and any extra
+ * controls it needs (colours, gradients, textures, blend modes).
  */
 object FiltersPanel {
 
-    private const val BG = 0xF2181221.toInt()
-    private const val CARD = 0xFF241B31.toInt()
-    private const val TEXT = 0xFFF1ECFF.toInt()
-    private const val MUTED = 0xFFA79FC0.toInt()
-    private const val PURPLE = FilterIcons.PURPLE
+    const val BG = 0xF2181221.toInt()
+    const val CARD = 0xFF241B31.toInt()
+    const val TEXT = 0xFFF1ECFF.toInt()
+    const val MUTED = 0xFFA79FC0.toInt()
+    const val PURPLE = FilterIcons.PURPLE
+
+    private val handler = Handler(Looper.getMainLooper())
 
     @SuppressLint("SetTextI18n")
     fun show(anchor: View) {
@@ -51,6 +61,7 @@ object FiltersPanel {
         val d = Dialog(ctx)
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         val landscape = ctx.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val changed = { VideoFilters.refresh(anchor) }
 
         val rows = ArrayList<Row>()
         val root = LinearLayout(ctx).apply {
@@ -59,7 +70,6 @@ object FiltersPanel {
             setPadding(dp(ctx, 18f), dp(ctx, 16f), dp(ctx, 18f), dp(ctx, 14f))
         }
 
-        // Header: icon, title, master switch.
         val master = Switch(ctx).apply {
             isChecked = Settings.get(VideoFilters.KEY_ON, true)
             thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
@@ -80,25 +90,54 @@ object FiltersPanel {
         root.addView(TextView(ctx).apply {
             text = "Only changes how the stream looks on your screen. Works on lives and VODs."
             setTextColor(MUTED); textSize = 12.5f
-            setPadding(0, dp(ctx, 4f), 0, dp(ctx, 10f))
+            setPadding(0, dp(ctx, 4f), 0, dp(ctx, 8f))
         })
 
         val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        for (i in VideoFilters.FILTERS.indices) {
-            val r = Row(ctx, i) { VideoFilters.refresh(anchor) }
-            rows.add(r); list.addView(r.view)
+        for (g in FilterDefs.Group.values()) {
+            val members = FilterDefs.FILTERS.indices.filter { FilterDefs.FILTERS[it].group == g }
+            val body = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            val openKey = "vf_ui_open_${g.name}"
+            val defOpen = g == FilterDefs.Group.LIGHT || g == FilterDefs.Group.COLOR
+            val chevron = TextView(ctx).apply { setTextColor(MUTED); textSize = 14f }
+            val count = TextView(ctx).apply { setTextColor(PURPLE); textSize = 12.5f }
+            fun syncHead() {
+                val open = Settings.get(openKey, defOpen)
+                body.visibility = if (open) View.VISIBLE else View.GONE
+                chevron.text = if (open) "▴" else "▾"
+                val n = members.count { FilterDefs.amount(it) != 0 }
+                count.text = if (n > 0) "$n on" else ""
+            }
+            list.addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 6f))
+                addView(TextView(ctx).apply {
+                    text = g.title.uppercase(); setTextColor(MUTED); textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                    letterSpacing = 0.12f
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(count, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { rightMargin = dp(ctx, 10f) })
+                addView(chevron)
+                setOnClickListener { Settings.set(openKey, !Settings.get(openKey, defOpen)); syncHead() }
+            })
+            for (i in members) {
+                val r = Row(ctx, i) { changed(); syncHead() }
+                rows.add(r); body.addView(r.view)
+            }
+            list.addView(body)
+            syncHead()
         }
         root.addView(ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(list) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        if (!VideoFilters.shaderSupported()) {
+        if (!VideoFilters.fullSupport()) {
             root.addView(TextView(ctx).apply {
-                text = "Clarity, Texture, Vibrance and tone ranges need Android 13 or newer."
+                text = "Some filters need Android 13 or newer and are greyed out on this device."
                 setTextColor(MUTED); textSize = 12f; setPadding(0, dp(ctx, 8f), 0, 0)
             })
         }
 
-        // Footer: reset all, done.
         root.addView(LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -106,9 +145,7 @@ object FiltersPanel {
             addView(TextView(ctx).apply {
                 text = "Reset all"; setTextColor(PURPLE); textSize = 15f; typeface = Typeface.DEFAULT_BOLD
                 setPadding(dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 12f), dp(ctx, 10f))
-                setOnClickListener {
-                    VideoFilters.resetAll(); rows.forEach { it.load() }; VideoFilters.refresh(anchor)
-                }
+                setOnClickListener { FilterDefs.resetAll(); rows.forEach { it.load() }; changed() }
             })
             addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
             addView(TextView(ctx).apply {
@@ -122,7 +159,7 @@ object FiltersPanel {
 
         fun syncEnabled() { val on = master.isChecked; rows.forEach { it.setEnabled(on) } }
         master.setOnCheckedChangeListener { _, v ->
-            Settings.set(VideoFilters.KEY_ON, v); syncEnabled(); VideoFilters.refresh(anchor)
+            Settings.set(VideoFilters.KEY_ON, v); syncEnabled(); changed()
         }
         syncEnabled()
 
@@ -133,8 +170,8 @@ object FiltersPanel {
             val dm = ctx.resources.displayMetrics
             val lp = w.attributes
             if (landscape) {
-                lp.width = dp(ctx, 400f).coerceAtMost((dm.widthPixels * 0.45f).toInt())
-                lp.height = (dm.heightPixels * 0.9f).toInt()
+                lp.width = dp(ctx, 420f).coerceAtMost((dm.widthPixels * 0.46f).toInt())
+                lp.height = (dm.heightPixels * 0.92f).toInt()
                 lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
                 lp.x = dp(ctx, 12f)
             } else {
@@ -149,17 +186,13 @@ object FiltersPanel {
         d.show()
     }
 
-    /** One filter: header line, slider, and the collapsible tone range. */
+    /** One filter: header line, slider, tone range, and any extra controls. */
     private class Row(val ctx: Context, val i: Int, val changed: () -> Unit) {
-        val f = VideoFilters.FILTERS[i]
+        val f = FilterDefs.FILTERS[i]
         val usable = VideoFilters.usable(i)
         val value = TextView(ctx).apply { setTextColor(MUTED); textSize = 13f; gravity = Gravity.END }
-        val seek = SeekBar(ctx).apply {
-            max = 200
-            progressTintList = ColorStateList.valueOf(PURPLE)
-            thumbTintList = ColorStateList.valueOf(PURPLE)
-            progressBackgroundTintList = ColorStateList.valueOf(0x55FFFFFF)
-        }
+        val icon = FilterIcons.forKey(f.key)
+        val seek = slider(ctx)
         val rangeLabel = TextView(ctx).apply { setTextColor(MUTED); textSize = 12.5f }
         val range = RangeBar(ctx)
         val rangeBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
@@ -167,15 +200,17 @@ object FiltersPanel {
             setTextColor(PURPLE); textSize = 12.5f
             setPadding(0, dp(ctx, 2f), 0, dp(ctx, 2f))
         }
+        val extras = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         val view: View
 
         fun syncToggle() {
             rangeToggle.text = (if (rangeBox.visibility == View.VISIBLE) "Hide tone range" else "Tone range") +
-                "  ·  " + rangeText(VideoFilters.lo(i), VideoFilters.hi(i))
+                "  ·  " + rangeText(FilterDefs.lo(i), FilterDefs.hi(i))
         }
 
+        val onExtra = { icon.invalidateSelf(); changed() }
+
         init {
-            val icon = FilterIcons.forFilter(i)
             val head = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -185,17 +220,19 @@ object FiltersPanel {
                     text = f.name; setTextColor(TEXT); textSize = 15.5f
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 // Tap the number to put this filter back to 0.
-                value.setOnClickListener { if (usable) { VideoFilters.setAmount(i, 0); load(); changed() } }
+                value.setOnClickListener { if (usable) { FilterDefs.setAmount(i, 0); load(); changed() } }
                 addView(value, LinearLayout.LayoutParams(dp(ctx, 52f), ViewGroup.LayoutParams.WRAP_CONTENT))
                 addView(helpChip(ctx, f.name, f.help), LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f))
                     .apply { leftMargin = dp(ctx, 8f) })
             }
+            seek.max = if (f.bipolar) 200 else 100
             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                     if (!fromUser) return
                     // A soft snap at zero, so "off" is easy to land on.
-                    val v = (p - 100).let { if (abs(it) <= 3) 0 else it }
-                    VideoFilters.setAmount(i, v); showValue(v); changed()
+                    val raw = if (f.bipolar) p - 100 else p
+                    val v = if (abs(raw) <= 3) 0 else raw
+                    FilterDefs.setAmount(i, v); showValue(v); changed()
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) { load() }
@@ -205,7 +242,7 @@ object FiltersPanel {
                 syncToggle()
             }
             range.onChange = { l, h ->
-                VideoFilters.setRange(i, l, h); rangeLabel.text = "Affects: " + rangeText(l, h); syncToggle(); changed()
+                FilterDefs.setRange(i, l, h); rangeLabel.text = "Affects: " + rangeText(l, h); syncToggle(); changed()
             }
             rangeBox.addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -215,10 +252,12 @@ object FiltersPanel {
                 addView(rangeLabel)
                 addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
                 addView(TextView(ctx).apply { text = "Highlights"; setTextColor(MUTED); textSize = 11f })
-                addView(helpChip(ctx, "Tone range", VideoFilters.RANGE_HELP),
+                addView(helpChip(ctx, "Tone range", FilterDefs.RANGE_HELP),
                     LinearLayout.LayoutParams(dp(ctx, 22f), dp(ctx, 22f)).apply { leftMargin = dp(ctx, 8f) })
             })
             rangeBox.addView(range, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 34f)))
+
+            if (usable) buildExtras()
 
             view = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
@@ -228,7 +267,8 @@ object FiltersPanel {
                     ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(ctx, 8f) }
                 addView(head)
                 addView(seek)
-                if (usable && VideoFilters.shaderSupported()) { addView(rangeToggle); addView(rangeBox) }
+                addView(extras)
+                if (usable && f.ranged && VideoFilters.fullSupport()) { addView(rangeToggle); addView(rangeBox) }
                 if (!usable) addView(TextView(ctx).apply {
                     text = "Needs Android 13 or newer"; setTextColor(MUTED); textSize = 12f
                 })
@@ -236,17 +276,158 @@ object FiltersPanel {
             load()
         }
 
+        private fun buildExtras() {
+            when (f.key) {
+                "mono" -> extras.addView(colorRow(ctx, "Colour", { FilterDefs.monoColor() }) {
+                    FilterDefs.setExtraInt("mono", "color", it); onExtra()
+                })
+                "gmap" -> buildGradientPicker()
+                "ovl" -> buildOverlayControls()
+                "grain" -> {
+                    extras.addView(miniSlider(ctx, "Grain size", 1, 8, FilterDefs.extraInt("grain", "size", 2)) {
+                        FilterDefs.setExtraInt("grain", "size", it); onExtra()
+                    })
+                    extras.addView(switchRow(ctx, "Colour noise", FilterDefs.extraBool("grain", "color", false)) {
+                        FilterDefs.setExtraBool("grain", "color", it); onExtra()
+                    })
+                    extras.addView(switchRow(ctx, "Moving grain", FilterDefs.extraBool("grain", "animated", true)) {
+                        FilterDefs.setExtraBool("grain", "animated", it); onExtra()
+                    })
+                }
+                "vignette" -> extras.addView(miniSlider(ctx, "Size", 0, 100, FilterDefs.extraInt("vignette", "size", 50)) {
+                    FilterDefs.setExtraInt("vignette", "size", it); onExtra()
+                })
+            }
+        }
+
+        private fun buildGradientPicker() {
+            val chips = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+            val custom = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            val customIdx = FilterDefs.GRADIENTS.indexOfFirst { it.name == "Custom" }
+            fun sync() {
+                val cur = FilterDefs.extraInt("gmap", "preset", 3)
+                for (k in 0 until chips.childCount) {
+                    val c = chips.getChildAt(k)
+                    c.alpha = if (k == cur) 1f else 0.65f
+                    ((c as? LinearLayout)?.getChildAt(0)?.background as? GradientDrawable)
+                        ?.setStroke(dp(ctx, if (k == cur) 2f else 0f), Color.WHITE)
+                }
+                custom.visibility = if (cur == customIdx) View.VISIBLE else View.GONE
+            }
+            FilterDefs.GRADIENTS.forEachIndexed { k, g ->
+                chips.addView(LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(dp(ctx, 3f), 0, dp(ctx, 3f), 0)
+                    addView(View(ctx).apply {
+                        background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                            if (g.name == "Custom") FilterDefs.currentGradientFor(k) else g.colors).apply {
+                            cornerRadius = dp(ctx, 8f).toFloat()
+                        }
+                    }, LinearLayout.LayoutParams(dp(ctx, 64f), dp(ctx, 26f)))
+                    addView(TextView(ctx).apply { text = g.name; setTextColor(MUTED); textSize = 10.5f; gravity = Gravity.CENTER })
+                    setOnClickListener { FilterDefs.setExtraInt("gmap", "preset", k); sync(); onExtra() }
+                })
+            }
+            extras.addView(HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(chips)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = dp(ctx, 4f); bottomMargin = dp(ctx, 4f) })
+            val refreshCustomChip = {
+                val chip = (chips.getChildAt(customIdx) as? LinearLayout)?.getChildAt(0)
+                (chip?.background as? GradientDrawable)?.colors = FilterDefs.currentGradientFor(customIdx)
+            }
+            custom.addView(colorRow(ctx, "Dark colour", { FilterDefs.currentGradientFor(customIdx)[0] }) {
+                FilterDefs.setExtraInt("gmap", "c1", it); refreshCustomChip(); onExtra()
+            })
+            custom.addView(colorRow(ctx, "Light colour", { FilterDefs.currentGradientFor(customIdx)[1] }) {
+                FilterDefs.setExtraInt("gmap", "c2", it); refreshCustomChip(); onExtra()
+            })
+            extras.addView(custom)
+            sync()
+        }
+
+        private fun buildOverlayControls() {
+            val preview = ImageView(ctx).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = GradientDrawable().apply { setColor(0xFF120C1A.toInt()); cornerRadius = dp(ctx, 8f).toFloat() }
+                clipToOutline = true
+            }
+            val srcName = TextView(ctx).apply { setTextColor(TEXT); textSize = 13.5f }
+            val blendBtn = TextView(ctx).apply { setTextColor(PURPLE); textSize = 13.5f }
+            var tileSwitch: Switch? = null
+            fun syncSrc() {
+                val src = VideoFilters.overlaySource()
+                srcName.text = describeSource(src)
+                if (src.startsWith("color:")) {
+                    preview.setImageDrawable(null)
+                    (preview.background as GradientDrawable).setColor(src.removePrefix("color:").toIntOrNull() ?: Color.MAGENTA)
+                } else {
+                    (preview.background as GradientDrawable).setColor(0xFF120C1A.toInt())
+                    loadThumb(src) { preview.setImageBitmap(it) }
+                }
+                blendBtn.text = "Blend: " + FilterDefs.BLEND_MODES[FilterDefs.extraInt("ovl", "blend", 12).coerceIn(0, 26)] + "  ▾"
+                tileSwitch?.isChecked = VideoFilters.overlayTiled()
+            }
+            extras.addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(ctx, 4f), 0, dp(ctx, 4f))
+                addView(preview, LinearLayout.LayoutParams(dp(ctx, 48f), dp(ctx, 48f)).apply { rightMargin = dp(ctx, 10f) })
+                addView(LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(srcName)
+                    addView(TextView(ctx).apply { text = "Tap to choose a texture, picture or colour"; setTextColor(MUTED); textSize = 11.5f })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                setOnClickListener { TexturePicker.show(ctx) { src, tex ->
+                    FilterDefs.setExtraStr("ovl", TextureLibrary.KEY_SRC, src)
+                    if (tex != null) {
+                        // Built-in textures come with sensible defaults; start from those.
+                        FilterDefs.setExtraInt("ovl", "blend", tex.blend)
+                        FilterDefs.setExtraBool("ovl", "tile", tex.tile)
+                        if (FilterDefs.amount(i) == 0) FilterDefs.setAmount(i, tex.opacity)
+                    } else {
+                        FilterDefs.setExtraBool("ovl", "tile", false)
+                        if (FilterDefs.amount(i) == 0) FilterDefs.setAmount(i, 50)
+                    }
+                    syncSrc(); load(); onExtra()
+                } }
+            })
+            blendBtn.setPadding(0, dp(ctx, 6f), 0, dp(ctx, 6f))
+            blendBtn.setOnClickListener {
+                BlendList.show(ctx, FilterDefs.extraInt("ovl", "blend", 12)) {
+                    FilterDefs.setExtraInt("ovl", "blend", it); syncSrc(); onExtra()
+                }
+            }
+            extras.addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(blendBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(helpChip(ctx, "Blend modes", "How the overlay mixes with the video, like Photoshop's layer blend modes. Open the list to read what each one does."),
+                    LinearLayout.LayoutParams(dp(ctx, 22f), dp(ctx, 22f)))
+            })
+            extras.addView(miniSlider(ctx, "Size", 10, 400, FilterDefs.extraInt("ovl", "scale", 100), "%") {
+                FilterDefs.setExtraInt("ovl", "scale", it); onExtra()
+            })
+            tileSwitch = Switch(ctx)
+            extras.addView(switchRow(ctx, "Repeat as a pattern", VideoFilters.overlayTiled(), tileSwitch) {
+                FilterDefs.setExtraBool("ovl", "tile", it); onExtra()
+            })
+            syncSrc()
+        }
+
         fun load() {
-            val v = VideoFilters.amount(i)
-            seek.progress = v + 100
+            val v = FilterDefs.amount(i)
+            seek.progress = if (f.bipolar) v + 100 else v
             showValue(v)
-            range.set(VideoFilters.lo(i), VideoFilters.hi(i))
-            rangeLabel.text = "Affects: " + rangeText(VideoFilters.lo(i), VideoFilters.hi(i))
+            range.set(FilterDefs.lo(i), FilterDefs.hi(i))
+            rangeLabel.text = "Affects: " + rangeText(FilterDefs.lo(i), FilterDefs.hi(i))
             syncToggle()
         }
 
         fun showValue(v: Int) {
-            value.text = if (v > 0) "+$v" else "$v"
+            value.text = if (v > 0 && f.bipolar) "+$v" else "$v"
             value.setTextColor(if (v == 0) MUTED else PURPLE)
         }
 
@@ -257,8 +438,89 @@ object FiltersPanel {
         }
     }
 
+    fun describeSource(src: String): String = when {
+        src.startsWith("tex:") -> TextureLibrary.find(src.removePrefix("tex:"))?.name ?: "Texture"
+        src.startsWith("img:") -> "Your picture"
+        src.startsWith("color:") -> "Solid colour"
+        else -> "Nothing chosen"
+    }
+
+    fun loadThumb(src: String, done: (Bitmap) -> Unit) {
+        Thread({
+            val b = TextureLibrary.thumb(src)
+            if (b != null) handler.post { done(b) }
+        }, "ptv-thumb").start()
+    }
+
+    // ---- small building blocks ----
+
+    fun slider(ctx: Context) = SeekBar(ctx).apply {
+        progressTintList = ColorStateList.valueOf(PURPLE)
+        thumbTintList = ColorStateList.valueOf(PURPLE)
+        progressBackgroundTintList = ColorStateList.valueOf(0x55FFFFFF)
+    }
+
+    /** A labelled small slider for a filter's secondary setting. */
+    fun miniSlider(ctx: Context, label: String, min: Int, max: Int, cur: Int, unit: String = "", set: (Int) -> Unit): View {
+        val v = TextView(ctx).apply { setTextColor(MUTED); textSize = 12f; text = "$cur$unit" }
+        val sb = slider(ctx).apply { this.max = max - min; progress = (cur - min).coerceIn(0, max - min) }
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                v.text = "${p + min}$unit"; set(p + min)
+            }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(ctx).apply { text = label; setTextColor(MUTED); textSize = 12f },
+                LinearLayout.LayoutParams(dp(ctx, 86f), ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(sb, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(v, LinearLayout.LayoutParams(dp(ctx, 44f), ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+    }
+
+    fun switchRow(ctx: Context, label: String, on: Boolean, sw: Switch = Switch(ctx), set: (Boolean) -> Unit): View {
+        sw.isChecked = on
+        sw.thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(PURPLE, 0xFFCCCCCC.toInt()))
+        sw.trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(0x88A970FF.toInt(), 0x55FFFFFF))
+        sw.setOnCheckedChangeListener { _, v -> set(v) }
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(ctx).apply { text = label; setTextColor(MUTED); textSize = 12.5f },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(sw)
+        }
+    }
+
+    /** A colour swatch with a label; tapping opens the colour picker. */
+    fun colorRow(ctx: Context, label: String, get: () -> Int, set: (Int) -> Unit): View {
+        val sw = View(ctx)
+        fun paint() {
+            sw.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL; setColor(get()); setStroke(dp(ctx, 2f), Color.WHITE)
+            }
+        }
+        paint()
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(ctx, 4f), 0, dp(ctx, 4f))
+            addView(sw, LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f)).apply { rightMargin = dp(ctx, 10f) })
+            addView(TextView(ctx).apply { text = label; setTextColor(TEXT); textSize = 13.5f },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(ctx).apply { text = "Change"; setTextColor(PURPLE); textSize = 13f })
+            setOnClickListener { ColorPicker.show(ctx, get()) { c -> set(c); paint() } }
+        }
+    }
+
     /** Words for a tone range, so the numbers mean something. */
-    private fun rangeText(lo: Int, hi: Int): String {
+    fun rangeText(lo: Int, hi: Int): String {
         if (lo <= 2 && hi >= 98) return "All tones"
         fun zone(v: Int) = when { v < 34 -> "shadows"; v < 67 -> "midtones"; else -> "highlights" }
         val a = zone(lo); val b = zone(hi.coerceAtLeast(lo))
@@ -266,7 +528,7 @@ object FiltersPanel {
     }
 
     /** A round "?" that opens a short explanation bubble next to it. */
-    private fun helpChip(ctx: Context, title: String, body: String): View = TextView(ctx).apply {
+    fun helpChip(ctx: Context, title: String, body: String): View = TextView(ctx).apply {
         text = "?"; gravity = Gravity.CENTER; textSize = 13f; typeface = Typeface.DEFAULT_BOLD
         setTextColor(TEXT)
         background = GradientDrawable().apply {
@@ -276,7 +538,7 @@ object FiltersPanel {
         setOnClickListener { v -> tooltip(v, title, body) }
     }
 
-    private fun tooltip(anchor: View, title: String, body: String) {
+    fun tooltip(anchor: View, title: String, body: String) {
         val ctx = anchor.context
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -300,11 +562,50 @@ object FiltersPanel {
         pw.showAsDropDown(anchor, -w + anchor.width, dp(ctx, 4f))
     }
 
+    /** A rounded dark dialog window, used by the pickers. */
+    fun sheet(ctx: Context, title: String, content: View, widthDp: Float = 420f): Dialog {
+        val d = Dialog(ctx)
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { setColor(0xFA1E1629.toInt()); cornerRadius = dp(ctx, 20f).toFloat() }
+            setPadding(dp(ctx, 16f), dp(ctx, 14f), dp(ctx, 16f), dp(ctx, 12f))
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(ctx).apply { text = title; setTextColor(TEXT); textSize = 17f; typeface = Typeface.DEFAULT_BOLD },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(ctx).apply {
+                    text = "✕"; setTextColor(TEXT); textSize = 17f
+                    setPadding(dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 4f), dp(ctx, 4f))
+                    setOnClickListener { d.dismiss() }
+                })
+            })
+            addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+        d.setContentView(root)
+        d.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            val dm = ctx.resources.displayMetrics
+            val lp = w.attributes
+            lp.width = dp(ctx, widthDp).coerceAtMost(dm.widthPixels - dp(ctx, 24f))
+            lp.height = (dm.heightPixels * 0.82f).toInt()
+            w.attributes = lp
+        }
+        return d
+    }
+
+    fun activityOf(ctx: Context): Activity? {
+        var c: Context? = ctx
+        while (c is ContextWrapper) { if (c is Activity) return c; c = c.baseContext }
+        return null
+    }
+
     /**
      * Shadows-to-highlights bar with two handles. The chosen span is shown at full strength and
      * the rest of the bar is dimmed, so it reads as "this filter works here".
      */
-    private class RangeBar(ctx: Context) : View(ctx) {
+    class RangeBar(ctx: Context) : View(ctx) {
         var onChange: ((Int, Int) -> Unit)? = null
         private var lo = 0
         private var hi = 100
@@ -359,6 +660,8 @@ object FiltersPanel {
         }
     }
 
-    private fun dp(ctx: Context, v: Float): Int =
+    fun dp(ctx: Context, v: Float): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
+
+    @Suppress("unused") private val keepGrid = GridLayout::class.java
 }

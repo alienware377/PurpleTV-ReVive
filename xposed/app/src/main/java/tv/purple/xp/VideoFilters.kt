@@ -1,100 +1,84 @@
 package tv.purple.xp
 
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
+import android.graphics.Shader
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import java.util.WeakHashMap
 
 /**
- * Picture filters for the live and VOD player: brightness, contrast, clarity, texture,
- * saturation and vibrance, each limited to a band of tones (shadows to highlights).
+ * Picture filters for the live and VOD player. The filter list and settings are in [FilterDefs],
+ * the maths in [FilterShader].
  *
- * The maths is the band-limited filter stack from the Lume Pad 3D Everywhere app, ported from
- * GLSL to AGSL. Twitch draws the video into a plain framework TextureView, so the filters are a
- * RenderEffect on that view: the GPU applies them to every frame as it is composited, nothing
- * touches the decoder, and nothing obfuscated is involved.
- *
- * Android 13+ runs the full shader. Android 12 and older cannot run a custom shader on a view, so
- * there brightness, contrast and saturation fall back to a colour matrix on the TextureView's
- * layer paint (whole picture only, no tone band), and the other three are unavailable.
+ * Twitch draws the video into a plain framework TextureView inside "playback_view_container".
+ * On Android 13+ the filters are a RuntimeShader RenderEffect on that view: the GPU applies them
+ * as each frame is composited, nothing touches the decoder, and nothing obfuscated is involved.
+ * Older Android cannot run a custom shader on a view; there [GlVideoFilter] takes over if it is
+ * available, otherwise a colour matrix covers what it can.
  */
 object VideoFilters {
 
     const val KEY_BUTTON = "show_filters_button"
     const val KEY_ON = "vf_on"
+    const val KEY_TIP = "vf_tip_dismissed"
 
-    class Filter(val key: String, val name: String, val help: String, val needsShader: Boolean)
-
-    val FILTERS = listOf(
-        Filter("bright", "Brightness",
-            "Makes the picture lighter or darker, like a camera's exposure. Handy for dark horror streams.",
-            false),
-        Filter("contrast", "Contrast",
-            "Pushes darks darker and lights lighter for more punch. Lower it to soften a harsh picture.",
-            false),
-        Filter("clarity", "Clarity",
-            "Adds contrast between neighbouring areas so shapes and faces stand out, without changing the overall brightness. A lot of it can look crunchy.",
-            true),
-        Filter("texture", "Texture",
-            "Sharpens fine detail like hair, fur and small text. Lower it to smooth out blocky compression noise.",
-            true),
-        Filter("sat", "Saturation",
-            "Makes every colour stronger or weaker. All the way down is black and white.",
-            false),
-        Filter("vib", "Vibrance",
-            "A gentler saturation: boosts dull colours more than ones that are already strong, so skin tones stay natural.",
-            true)
-    )
-
-    const val RANGE_HELP =
-        "Choose which tones this filter touches, from shadows on the left to highlights on the right. " +
-        "For example, brighten only the shadows to see into dark scenes without washing out the rest."
+    val FILTERS get() = FilterDefs.FILTERS
 
     fun shaderSupported() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
-    fun amount(i: Int) = Settings.getInt("vf_${FILTERS[i].key}_a", 0).coerceIn(-100, 100)
-    fun lo(i: Int) = Settings.getInt("vf_${FILTERS[i].key}_lo", 0).coerceIn(0, 100)
-    fun hi(i: Int) = Settings.getInt("vf_${FILTERS[i].key}_hi", 100).coerceIn(0, 100)
-    fun setAmount(i: Int, v: Int) = Settings.setInt("vf_${FILTERS[i].key}_a", v)
-    fun setRange(i: Int, l: Int, h: Int) {
-        Settings.setInt("vf_${FILTERS[i].key}_lo", l); Settings.setInt("vf_${FILTERS[i].key}_hi", h)
-    }
+    /** Filters the colour-matrix fallback can do when no shader path is available. */
+    private val MATRIX_KEYS = setOf("exposure", "bright", "contrast", "sat", "temp", "tint", "hue", "invert", "fade", "mono")
 
-    fun usable(i: Int) = !FILTERS[i].needsShader || shaderSupported()
+    fun fullSupport() = shaderSupported() || GlVideoFilter.available()
+
+    fun usable(i: Int) = fullSupport() || FilterDefs.FILTERS[i].key in MATRIX_KEYS
 
     /** True when the master switch is on and at least one usable filter is moved off zero. */
     fun anyActive(): Boolean =
-        Settings.get(KEY_ON, true) && FILTERS.indices.any { usable(it) && amount(it) != 0 }
-
-    fun resetAll() {
-        for (i in FILTERS.indices) { setAmount(i, 0); setRange(i, 0, 100) }
-    }
+        Settings.get(KEY_ON, true) && FilterDefs.FILTERS.indices.any { usable(it) && FilterDefs.amount(it) != 0 }
 
     // ---- applying ----
 
     /** What each video view currently has applied, so unchanged views are left alone. */
     private val applied = WeakHashMap<TextureView, String>()
+    private val views = WeakHashMap<TextureView, Boolean>()
+    private val handler = Handler(Looper.getMainLooper())
 
-    /** Called from every ViewHider pass, and right away whenever a slider moves. */
+    /** Called from every ViewHider pass, and right away whenever something in the panel changes. */
     fun attach(root: View) {
         val ctx = root.context
         val id = ctx.resources.getIdentifier("playback_view_container", "id", ctx.packageName)
         if (id != 0) {
             val sig = signature()
-            val views = ArrayList<TextureView>()
-            collectVideos(root, id, views)
-            for (tv in views) {
-                if (applied[tv] == sig) continue
-                applied[tv] = sig
+            val found = ArrayList<TextureView>()
+            collectVideos(root, id, found)
+            for (tv in found) {
+                views[tv] = true
+                val s = sig + "|" + tv.width + "x" + tv.height
+                if (applied[tv] == s) continue
+                applied[tv] = s
                 runCatching { apply(tv) }.onFailure { log("filters apply failed: $it") }
             }
+            scheduleGrain()
         }
         runCatching { attachButton(root) }.onFailure { log("filters button: $it") }
     }
@@ -106,7 +90,15 @@ object VideoFilters {
 
     private fun signature(): String {
         if (!anyActive()) return "off"
-        return FILTERS.indices.joinToString(",") { "${amount(it)}:${lo(it)}:${hi(it)}" }
+        val sb = StringBuilder()
+        for (i in FilterDefs.FILTERS.indices) {
+            sb.append(FilterDefs.amount(i)).append(':').append(FilterDefs.lo(i)).append(':').append(FilterDefs.hi(i)).append(',')
+        }
+        for (k in listOf("ovl" to "src", "ovl" to "blend", "ovl" to "scale", "ovl" to "tile", "gmap" to "preset",
+                "gmap" to "c1", "gmap" to "c2", "mono" to "color", "grain" to "size", "grain" to "color",
+                "vignette" to "size"))
+            sb.append(Settings.getString("vf_${k.first}_${k.second}", "")).append(Settings.getInt("vf_${k.first}_${k.second}", -1))
+        return sb.toString()
     }
 
     private fun collectVideos(v: View, containerId: Int, out: MutableList<TextureView>) {
@@ -121,37 +113,190 @@ object VideoFilters {
 
     private fun apply(tv: TextureView) {
         val on = anyActive()
-        if (shaderSupported()) {
-            if (!on) { tv.setRenderEffect(null); return }
-            val s = RuntimeShader(SHADER)
-            for (i in FILTERS.indices) {
-                s.setFloatUniform("f$i", amount(i) / 100f, lo(i) / 100f, hi(i) / 100f)
+        when {
+            shaderSupported() -> {
+                if (!on) { tv.setRenderEffect(null); return }
+                tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))
             }
-            val h = tv.height.takeIf { it > 0 } ?: 1080
-            s.setFloatUniform("blurR", (h * 0.012f).coerceIn(4f, 40f))
-            s.setFloatUniform("px", 1.25f)
-            tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(s, "content"))
-        } else {
-            if (!on) { tv.setLayerPaint(null); return }
-            tv.setLayerPaint(Paint().apply { colorFilter = ColorMatrixColorFilter(fallbackMatrix()) })
+            GlVideoFilter.available() -> GlVideoFilter.update(tv, on)
+            else -> {
+                if (!on) { tv.setLayerPaint(null); return }
+                tv.setLayerPaint(Paint().apply { colorFilter = ColorMatrixColorFilter(fallbackMatrix()) })
+            }
         }
     }
 
-    /** Brightness, contrast and saturation as one colour matrix, for Android 12 and older. */
-    private fun fallbackMatrix(): ColorMatrix {
-        val m = ColorMatrix()
-        val b = Math.pow(2.0, amount(0) / 100.0 * 1.5).toFloat()
-        m.postConcat(ColorMatrix(floatArrayOf(b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, 1f, 0f)))
-        val c = 1f + amount(1) / 100f * 1.5f
-        val t = 127.5f * (1f - c)
-        m.postConcat(ColorMatrix(floatArrayOf(c, 0f, 0f, 0f, t, 0f, c, 0f, 0f, t, 0f, 0f, c, 0f, t, 0f, 0f, 0f, 1f, 0f)))
-        m.postConcat(ColorMatrix().apply { setSaturation((1f + amount(4) / 100f).coerceAtLeast(0f)) })
+    // ---- shader inputs, shared by the RuntimeShader and GL paths ----
+
+    @Volatile var seed = 0f
+
+    /** All uniforms as name -> values, for whichever shader path is running. */
+    fun uniforms(w: Int, h: Int): Map<String, FloatArray> {
+        val m = HashMap<String, FloatArray>()
+        val on = Settings.get(KEY_ON, true)
+        for (i in FilterDefs.FILTERS.indices) {
+            val a = if (on && usable(i)) FilterDefs.amount(i) / 100f else 0f
+            m["f_" + FilterDefs.FILTERS[i].key] = floatArrayOf(a, FilterDefs.lo(i) / 100f, FilterDefs.hi(i) / 100f)
+        }
+        m["uSize"] = floatArrayOf(w.toFloat().coerceAtLeast(1f), h.toFloat().coerceAtLeast(1f))
+        m["uBlur"] = floatArrayOf((h * 0.012f).coerceIn(4f, 40f))
+        m["uBlend"] = floatArrayOf(FilterDefs.extraInt("ovl", "blend", 12).toFloat())
+        m["uSeed"] = floatArrayOf(seed)
+        m["uGrainSize"] = floatArrayOf(FilterDefs.extraInt("grain", "size", 2).coerceIn(1, 8) * (h / 1080f).coerceAtLeast(0.5f))
+        m["uGrainColor"] = floatArrayOf(if (FilterDefs.extraBool("grain", "color", false)) 1f else 0f)
+        m["uVigSize"] = floatArrayOf(0.1f + FilterDefs.extraInt("vignette", "size", 50).coerceIn(0, 100) / 100f * 0.7f)
         return m
     }
 
-    // ---- the player button ----
+    fun overlaySource(): String {
+        val def = TextureLibrary.builtIns().firstOrNull()?.let { "tex:" + it.file } ?: "color:${0xFFA970FF.toInt()}"
+        return FilterDefs.extraStr("ovl", TextureLibrary.KEY_SRC, def)
+    }
+
+    fun overlayTiled(): Boolean {
+        val src = overlaySource()
+        val def = if (src.startsWith("tex:")) TextureLibrary.find(src.removePrefix("tex:"))?.tile ?: true else false
+        return FilterDefs.extraBool("ovl", "tile", def)
+    }
+
+    /** The overlay layer as a shader in view pixel coordinates. */
+    fun overlayShader(w: Int, h: Int): Shader {
+        val src = overlaySource()
+        if (src.startsWith("color:")) {
+            val c = src.removePrefix("color:").toIntOrNull() ?: Color.MAGENTA
+            return LinearGradient(0f, 0f, 1f, 0f, c, c, Shader.TileMode.CLAMP)
+        }
+        val bmp = TextureLibrary.bitmap(src) ?: return LinearGradient(0f, 0f, 1f, 0f, 0, 0, Shader.TileMode.CLAMP)
+        val m = Matrix()
+        return if (overlayTiled()) {
+            val s = (h / 1080f).coerceAtLeast(0.3f) * FilterDefs.extraInt("ovl", "scale", 100).coerceIn(10, 400) / 100f
+            m.setScale(s, s)
+            BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT).apply { setLocalMatrix(m) }
+        } else {
+            // Cover the whole picture, centred, cropping the excess.
+            val s = maxOf(w / bmp.width.toFloat(), h / bmp.height.toFloat()) *
+                FilterDefs.extraInt("ovl", "scale", 100).coerceIn(10, 400) / 100f
+            m.setScale(s, s)
+            m.postTranslate((w - bmp.width * s) / 2f, (h - bmp.height * s) / 2f)
+            BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(m) }
+        }
+    }
+
+    fun gradientColors() = FilterDefs.currentGradient()
+    fun monoColors(): IntArray = intArrayOf(Color.BLACK, FilterDefs.monoColor(), Color.WHITE)
+
+    /** A 256 wide gradient ramp, used both as a shader (AGSL) and as a texture (GL). */
+    fun rampShader(colors: IntArray): Shader = LinearGradient(0f, 0f, 256f, 0f, colors, null, Shader.TileMode.CLAMP)
+
+    fun rampBitmap(colors: IntArray): Bitmap {
+        val b = Bitmap.createBitmap(256, 1, Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(b).drawRect(0f, 0f, 256f, 1f, Paint().apply { shader = rampShader(colors) })
+        return b
+    }
+
+    private var shader: RuntimeShader? = null
+
+    private fun buildShader(tv: TextureView): RuntimeShader {
+        val s = shader ?: RuntimeShader(FilterShader.AGSL).also { shader = it }
+        val w = tv.width.takeIf { it > 0 } ?: 1920
+        val h = tv.height.takeIf { it > 0 } ?: 1080
+        for ((k, v) in uniforms(w, h)) {
+            when (v.size) {
+                1 -> s.setFloatUniform(k, v[0])
+                2 -> s.setFloatUniform(k, v[0], v[1])
+                else -> s.setFloatUniform(k, v[0], v[1], v[2])
+            }
+        }
+        s.setInputShader("ovl", overlayShader(w, h))
+        s.setInputShader("grad", rampShader(gradientColors()))
+        s.setInputShader("mono", rampShader(monoColors()))
+        return s
+    }
+
+    // ---- moving grain ----
+
+    private var grainRunning = false
+    private val grainTick = object : Runnable {
+        override fun run() {
+            val gi = FilterDefs.index("grain")
+            val live = anyActive() && FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true)
+            if (!live) { grainRunning = false; return }
+            seed = (seed + 1.37f) % 997f
+            for (tv in views.keys.toList()) {
+                if (!tv.isAttachedToWindow) continue
+                if (shaderSupported()) runCatching {
+                    tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))
+                } else if (GlVideoFilter.available()) GlVideoFilter.update(tv, true)
+            }
+            handler.postDelayed(this, 42)
+        }
+    }
+
+    private fun scheduleGrain() {
+        if (grainRunning) return
+        val gi = FilterDefs.index("grain")
+        if (anyActive() && FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true)) {
+            grainRunning = true
+            handler.postDelayed(grainTick, 42)
+        }
+    }
+
+    // ---- colour matrix fallback ----
+
+    private fun amt(key: String) = FilterDefs.amount(FilterDefs.index(key)) / 100f
+
+    /** What a colour matrix can do: exposure, brightness, contrast, saturation, temperature, tint,
+     *  hue, invert, fade and a monotone approximation, all on the whole picture. */
+    fun fallbackMatrix(): ColorMatrix {
+        val m = ColorMatrix()
+        fun scale(r: Float, g: Float, b: Float) =
+            m.postConcat(ColorMatrix(floatArrayOf(r, 0f, 0f, 0f, 0f, 0f, g, 0f, 0f, 0f, 0f, 0f, b, 0f, 0f, 0f, 0f, 0f, 1f, 0f)))
+        val e = Math.pow(2.0, amt("exposure") * 2.0).toFloat() * Math.pow(2.0, amt("bright") * 1.0).toFloat()
+        scale(e, e, e)
+        val c = 1f + amt("contrast") * 1.5f
+        val t = 127.5f * (1f - c)
+        m.postConcat(ColorMatrix(floatArrayOf(c, 0f, 0f, 0f, t, 0f, c, 0f, 0f, t, 0f, 0f, c, 0f, t, 0f, 0f, 0f, 1f, 0f)))
+        val tp = amt("temp"); val ti = amt("tint")
+        scale((1f + tp * 0.25f) * (1f + ti * 0.12f), (1f + tp * 0.03f) * (1f - ti * 0.2f), (1f - tp * 0.25f) * (1f + ti * 0.12f))
+        val hue = amt("hue") * 180f
+        if (hue != 0f) {
+            val rad = Math.toRadians(hue.toDouble())
+            val cs = Math.cos(rad).toFloat(); val sn = Math.sin(rad).toFloat()
+            m.postConcat(ColorMatrix(floatArrayOf(
+                0.213f + cs * 0.787f - sn * 0.213f, 0.715f - cs * 0.715f - sn * 0.715f, 0.072f - cs * 0.072f + sn * 0.928f, 0f, 0f,
+                0.213f - cs * 0.213f + sn * 0.143f, 0.715f + cs * 0.285f + sn * 0.140f, 0.072f - cs * 0.072f - sn * 0.283f, 0f, 0f,
+                0.213f - cs * 0.213f - sn * 0.787f, 0.715f - cs * 0.715f + sn * 0.715f, 0.072f + cs * 0.928f + sn * 0.072f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f)))
+        }
+        m.postConcat(ColorMatrix().apply { setSaturation((1f + amt("sat")).coerceAtLeast(0f)) })
+        val mono = amt("mono")
+        if (mono > 0f) {
+            val col = FilterDefs.monoColor()
+            val mc = ColorMatrix().apply { setSaturation(0f) }
+            mc.postConcat(ColorMatrix(floatArrayOf(Color.red(col) / 128f, 0f, 0f, 0f, 0f, 0f, Color.green(col) / 128f, 0f, 0f, 0f,
+                0f, 0f, Color.blue(col) / 128f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)))
+            m.postConcat(lerp(ColorMatrix(), mc, mono))
+        }
+        val inv = amt("invert")
+        if (inv > 0f) m.postConcat(lerp(ColorMatrix(), ColorMatrix(floatArrayOf(-1f, 0f, 0f, 0f, 255f, 0f, -1f, 0f, 0f, 255f,
+            0f, 0f, -1f, 0f, 255f, 0f, 0f, 0f, 1f, 0f)), inv))
+        val fade = amt("fade")
+        if (fade > 0f) {
+            val k = 1f - fade * 0.35f; val o = fade * 0.22f * 255f
+            m.postConcat(ColorMatrix(floatArrayOf(k, 0f, 0f, 0f, o, 0f, k, 0f, 0f, o, 0f, 0f, k, 0f, o, 0f, 0f, 0f, 1f, 0f)))
+        }
+        return m
+    }
+
+    private fun lerp(a: ColorMatrix, b: ColorMatrix, t: Float): ColorMatrix {
+        val x = a.array; val y = b.array
+        return ColorMatrix(FloatArray(20) { x[it] + (y[it] - x[it]) * t })
+    }
+
+    // ---- the player button and its one-time tip ----
 
     private const val TAG = "ptv_filters_button"
+    private const val TIP_TAG = "ptv_filters_tip"
     private val ROW = arrayOf("create_clip_text_button", "create_clip_button_compose_view", "switch_to_vertical_view",
         "cast_button", "media_route_button",
         "share_button", "settings_button", "audio_and_subtitles")
@@ -169,7 +314,11 @@ object VideoFilters {
         collectBars(root, settingsId, bars)
         for (bar in bars) {
             var btn = bar.findViewWithTag<ImageView>(TAG)
-            if (!on) { if (btn != null) bar.removeView(btn); continue }
+            if (!on) {
+                if (btn != null) bar.removeView(btn)
+                bar.findViewWithTag<View>(TIP_TAG)?.let { bar.removeView(it) }
+                continue
+            }
             val row = ROW.mapNotNull { n -> ids(n).takeIf { it != 0 }?.let { bar.findViewById<View>(it) } }
                 .filter { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }
                 .toMutableList()
@@ -179,6 +328,7 @@ object VideoFilters {
             val ref = row.firstOrNull { it.height > 0 }
             if (ref == null) {
                 btn?.visibility = View.GONE
+                bar.findViewWithTag<View>(TIP_TAG)?.visibility = View.GONE
                 if (seenBars.add(bar)) log("filters: bar ${bar.javaClass.simpleName} has no visible controls yet")
                 continue
             }
@@ -199,76 +349,60 @@ object VideoFilters {
             if (btn.y != ref.y) btn.y = ref.y
             if (btn.visibility != View.VISIBLE) btn.visibility = View.VISIBLE
             (btn.drawable as? FilterIcons.Tune)?.setActive(anyActive())
+            runCatching { placeTip(bar, btn, ref) }
         }
+    }
+
+    /**
+     * A one-time speech bubble under the button announcing the feature. It lives in the same
+     * control bar, so it only shows while the player controls do and fades out with them. Its X
+     * hides it for good; tapping the bubble itself opens the panel.
+     */
+    private fun placeTip(bar: ViewGroup, btn: View, ref: View) {
+        var tip = bar.findViewWithTag<View>(TIP_TAG)
+        if (Settings.get(KEY_TIP, false)) { if (tip != null) bar.removeView(tip); return }
+        val ctx = bar.context
+        fun dp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
+        if (tip == null) {
+            val w = dp(250f)
+            val box = LinearLayout(ctx)
+            tip = box.apply {
+                tag = TIP_TAG
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = GradientDrawable().apply {
+                    setColor(0xF2241B31.toInt()); cornerRadius = dp(12f).toFloat(); setStroke(dp(1.5f), FilterIcons.PURPLE)
+                }
+                setPadding(dp(12f), dp(9f), dp(4f), dp(9f))
+                elevation = dp(6f).toFloat()
+                addView(TextView(ctx).apply {
+                    text = "New: video filters! Tap here to tweak brightness, colours, textures and more."
+                    setTextColor(Color.WHITE); textSize = 13f
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(ctx).apply {
+                    text = "✕"; setTextColor(Color.WHITE); textSize = 16f; gravity = Gravity.CENTER
+                    contentDescription = "Dismiss tip"
+                    setPadding(dp(10f), dp(2f), dp(10f), dp(2f))
+                    setOnClickListener {
+                        Settings.set(KEY_TIP, true)
+                        (box.parent as? ViewGroup)?.removeView(box)
+                    }
+                })
+                setOnClickListener { FiltersPanel.show(btn) }
+            }
+            bar.addView(tip, ViewGroup.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val tw = tip.layoutParams.width.toFloat()
+        val tx = (btn.x + btn.width - tw).coerceAtLeast(dp(8f).toFloat())
+        val ty = btn.y + btn.height + dp(4f)
+        if (tip.x != tx) tip.x = tx
+        if (tip.y != ty) tip.y = ty
+        if (tip.visibility != View.VISIBLE) tip.visibility = View.VISIBLE
+        tip.bringToFront()
     }
 
     private fun collectBars(v: View, settingsId: Int, out: MutableList<ViewGroup>) {
         if (v.id == settingsId) { (v.parent as? ViewGroup)?.let { if (it !in out) out.add(it) }; return }
         if (v is ViewGroup) for (i in 0 until v.childCount) collectBars(v.getChildAt(i), settingsId, out)
     }
-
-    /**
-     * AGSL port of the Lume Pad 3D Everywhere filter stack. Each fN is (amount -1..1, band low,
-     * band high); a filter at amount 0 is skipped. Clarity compares each pixel with a ring-sampled
-     * local average; texture is a small unsharp mask.
-     */
-    private const val SHADER = """
-uniform shader content;
-uniform float blurR;
-uniform float px;
-uniform float3 f0;
-uniform float3 f1;
-uniform float3 f2;
-uniform float3 f3;
-uniform float3 f4;
-uniform float3 f5;
-const float3 LW = float3(0.299, 0.587, 0.114);
-
-float bandw(float3 f, float L) {
-    return smoothstep(f.y - 0.15, f.y, L) * (1.0 - smoothstep(f.z, f.z + 0.15, L));
-}
-float lum(float2 p) { return dot(float3(content.eval(p).rgb), LW); }
-
-half4 main(float2 p) {
-    half4 src = content.eval(p);
-    float3 own = float3(src.rgb);
-    float L0 = dot(own, LW);
-    float a = f0.x;
-    if (abs(a) > 0.003) own = clamp(own * pow(2.0, a * 1.5 * bandw(f0, L0)), 0.0, 1.0);
-    a = f1.x;
-    if (abs(a) > 0.003) own = clamp(mix(own, (own - 0.5) * (1.0 + a * 1.5) + 0.5, bandw(f1, L0)), 0.0, 1.0);
-    a = f2.x;
-    if (abs(a) > 0.003) {
-        float L = dot(own, LW);
-        float Lb = L0;
-        for (int k = 0; k < 8; k++) {
-            float ang = float(k) * 0.7853981;
-            float2 d = float2(cos(ang), sin(ang));
-            Lb += lum(p + d * blurR) + lum(p + d * blurR * 0.5);
-        }
-        Lb = Lb / 17.0;
-        own = clamp(own * (1.0 + a * 2.5 * (L - Lb) * bandw(f2, L0) / max(L, 0.05)), 0.0, 1.0);
-    }
-    a = f3.x;
-    if (abs(a) > 0.003) {
-        float L = dot(own, LW);
-        float ln = lum(p + float2(px, 0.0)) + lum(p - float2(px, 0.0))
-                 + lum(p + float2(0.0, px)) + lum(p - float2(0.0, px));
-        float lap = L0 - ln * 0.25;
-        own = clamp(own * (1.0 + a * 3.0 * lap * bandw(f3, L0) / max(L, 0.05)), 0.0, 1.0);
-    }
-    a = f4.x;
-    if (abs(a) > 0.003) {
-        float L = dot(own, LW);
-        own = clamp(mix(float3(L), own, 1.0 + a * bandw(f4, L0)), 0.0, 1.0);
-    }
-    a = f5.x;
-    if (abs(a) > 0.003) {
-        float L = dot(own, LW);
-        float cs = max(own.r, max(own.g, own.b)) - min(own.r, min(own.g, own.b));
-        own = clamp(mix(float3(L), own, 1.0 + a * (1.0 - cs) * bandw(f5, L0)), 0.0, 1.0);
-    }
-    return half4(half3(own), src.a);
-}
-"""
 }
