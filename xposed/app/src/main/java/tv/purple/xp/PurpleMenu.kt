@@ -185,9 +185,6 @@ object PurpleMenu {
         Toggle("Vibrate when mentioned",
             "Enable this option to receive a vibration notification when you are mentioned in the chat",
             Mentions.KEY_ENABLED, done = true),
-        Toggle("Anon chat",
-            "Connect to the chat as an anonymous user. You won't be able to send messages or earn/spend channel points",
-            "anon_chat"),
         Toggle("Do not clear chat when commanded to",
             "When a moderator clears chat, keep the messages on your screen. Timeouts and bans of single users still work",
             ChatGuards.KEY_NO_CLEAR, done = true),
@@ -253,9 +250,6 @@ object PurpleMenu {
         Slide("Landscape chat width", "Configure the width of the chat view in landscape mode",
             ChatTransparency.KEY_CHAT_WIDTH, min = 10, max = 50,
             def = ChatTransparency.CHAT_WIDTH_DEFAULT, done = true),
-        Slide("Landscape split chat width",
-            "Configure the width of the split chat view in landscape mode",
-            "landscape_split_chat_size_v3", min = 10, max = 70, def = 50),
         Toggle("Highlight mentions of me",
             "Tint the whole chat row when someone @mentions your account",
             ChatHighlight.KEY_MENTION_ENABLED, done = true),
@@ -271,9 +265,6 @@ object PurpleMenu {
     )
 
     private val PLAYER = listOf(
-        Drop("Player implementation",
-            "Choose between the default Twitch player (TwitchCore) and the optimized Google player (ExoPlayer) for media playback",
-            "player_impl", listOf("Default", "TwitchCore", "ExoPlayer")),
         Toggle("Hide \"Mature content\"",
             "Enabling this option removes the UI elements associated with the mature content warning",
             ViewHider.KEY_MATURE, done = true),
@@ -282,11 +273,6 @@ object PurpleMenu {
             PlayerStats.KEY_NO_LOW_LATENCY, done = true),
         Toggle("Turn off autoplay", "When a video or clip ends, don't play the next one by itself. The Up next card stays so you can still tap it",
             ChatGuards.KEY_NO_AUTOPLAY, done = true),
-        Toggle("Force ExoPlayer for VODs",
-            "Set ExoPlayer as the default player for VODs, overriding other player options",
-            "force_exoplayer_for_vods"),
-        Toggle("Use compact follow view", "Enable this option to display a compact view",
-            "compact_player_follow_view"),
         Toggle("Show stats button",
             "A button in the player controls that shows quality, bitrate, frame rate, delay behind live, buffer and dropped frames over the video",
             PlayerStats.KEY_STATS, done = true),
@@ -320,8 +306,6 @@ object PurpleMenu {
     private val VIEW = listOf(
         Toggle("Twitch Stories", "Show the row of Twitch Stories at the top of Home. Turn off to hide it",
             ViewHider.KEY_STORIES, def = true, done = true),
-        Drop("Navbar position", "", "bottom_navbar_position", listOf("Default", "Top", "Hidden")),
-        Toggle("Show full stream cards in followed section", "", "followed_full_cards"),
         Toggle("Hide Browse (search) tab", "Removes \"Browse\", the magnifying glass, from the navigation bar",
             ViewHider.KEY_BROWSE, done = true),
         Toggle("Open Home on Following",
@@ -339,24 +323,13 @@ object PurpleMenu {
         Toggle("Show timer button", "A sleep timer in the player controls that pauses the stream after a chosen time",
             SleepTimer.KEY, done = true),
         Toggle("Hide \"Create\" (plus) button", "Removes the plus button from the navigation bar, in portrait and landscape",
-            "hide_create_button", done = true),
-        Toggle("Force toolbar search button", "", "force_toolbar_search_button"),
-        Toggle("Force Tablet UI", "", "force_tablet_mode")
+            "hide_create_button", done = true)
     )
 
     private val DEV = listOf(
-        Toggle("Dev mode",
-            "Activate developer mode to unlock advanced settings and features for debugging and development purposes",
-            "dev_mode"),
-        Toggle("OkHttp Logging",
-            "Enable logging of OkHttp requests and responses for debugging purposes", "okhttp_logging"),
-        Toggle("Disable \"Comscore\"", "", "disable_comscore"),
         Toggle("Fix push notifications",
             "Lets a patched Twitch register for push notifications, which it otherwise cannot because it is signed with a different key",
-            PushFix.KEY, def = true, done = true),
-        Toggle("Disable Google Play services",
-            "Enabling this option will turn off Google Play services within the app",
-            "disable_google_play_services")
+            PushFix.KEY, def = true, done = true)
     )
 
     private val INFO = listOf(
