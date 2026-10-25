@@ -355,7 +355,8 @@ object PurpleMenu {
                 "and show what changed",
             UpdateChecker.KEY, def = true, done = true),
         Custom("Check for updates now",
-            "You have PurpleTV ReVive " + BuildConfig.VERSION_NAME.replace("-twitch", ", built for Twitch "),
+            "You have PurpleTV ReVive " + BuildConfig.VERSION_NAME.substringBefore("-twitch") +
+                " on Twitch " + TwitchVersion.name + ". It is made for Twitch " + TwitchVersion.SUPPORTED + ".",
             { UpdateChecker.checkNow(it) })
     )
 
@@ -407,6 +408,16 @@ object PurpleMenu {
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG)
+        }
+        // Newer Twitch draws edge to edge, so keep the page clear of the status and navigation bars.
+        root.setOnApplyWindowInsetsListener { v, insets ->
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val i = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                v.setPadding(i.left, i.top, i.right, i.bottom)
+            } else @Suppress("DEPRECATION") {
+                v.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
         }
         root.addView(header(ctx, title) { dlg.dismiss() })
 

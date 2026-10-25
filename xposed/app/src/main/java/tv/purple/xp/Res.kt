@@ -24,6 +24,15 @@ object Res {
             ?: if (ctx.packageName != RES_PKG) r.getIdentifier(name, type, RES_PKG) else 0
     }
 
+    /**
+     * True for the player's control bar. Its gear shares the "settings_button" id with the
+     * Settings gear on profile pages, so the player's own share button is what tells them apart.
+     */
+    fun isPlayerBar(bar: android.view.ViewGroup): Boolean {
+        val share = id(bar.context, "share_button")
+        return share != 0 && bar.findViewById<View>(share) != null
+    }
+
     /** The resource entry name of [v]'s id, or null. Only the app's own ids (0x7f......) have one. */
     fun entry(v: View): String? {
         val id = v.id

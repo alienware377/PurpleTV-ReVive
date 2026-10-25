@@ -115,7 +115,7 @@ object PlayerStats {
     }
 
     private fun collectBars(v: View, settingsId: Int, out: MutableList<ViewGroup>) {
-        if (v.id == settingsId) { (v.parent as? ViewGroup)?.let { if (it !in out) out.add(it) }; return }
+        if (v.id == settingsId) { (v.parent as? ViewGroup)?.let { if (it !in out && Res.isPlayerBar(it)) out.add(it) }; return }
         if (v is ViewGroup) for (i in 0 until v.childCount) collectBars(v.getChildAt(i), settingsId, out)
     }
 

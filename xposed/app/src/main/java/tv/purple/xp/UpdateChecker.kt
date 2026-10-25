@@ -234,9 +234,9 @@ object UpdateChecker {
     private fun downloadFor(ctx: Context, r: Release): String {
         if (isLspatch(ctx)) {
             val twitch = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull()
-            val patched = r.assets.firstOrNull { it.first.endsWith("-patched.apk") }
-            if (twitch != null && patched != null && patched.first.startsWith("twitch-$twitch-")) return patched.second
-            return r.page
+            // A release can carry a patched Twitch for each supported version: take the one for this Twitch.
+            val patched = twitch?.let { v -> r.assets.firstOrNull { it.first.endsWith("-patched.apk") && it.first.startsWith("twitch-$v-") } }
+            return patched?.second ?: r.page
         }
         return r.assets.firstOrNull { it.first.contains("-module-") || it.first == "purpletv-xp.apk" }?.second ?: r.page
     }

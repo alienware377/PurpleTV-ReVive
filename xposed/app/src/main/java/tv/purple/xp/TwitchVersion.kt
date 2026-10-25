@@ -15,6 +15,8 @@ object TwitchVersion {
     /** Supported builds, oldest first: version code to name. */
     const val V31_1_2 = 3101026L
     const val V31_7_0 = 3107006L
+    /** The Twitch versions this module is made for, for the settings page. */
+    const val SUPPORTED = "31.7.0 and 31.1.2"
 
     @Volatile var code: Long = 0L
         private set
