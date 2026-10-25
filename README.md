@@ -64,7 +64,8 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Disable low latency** | Plays live streams a few seconds further behind, for fewer stutters and rebuffers on a weak connection. |
 | **Turn off autoplay** | When a VOD or clip ends, the next video does not start by itself. The Up next card stays so you can still tap it. |
 | **Keep chat on /clear** | When a moderator clears chat, the messages stay on your screen and a short note says chat was cleared. Timeouts and bans still work. |
-| **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
+| **Mod logs** | In channels you moderate (or your own), a line in chat says who timed out, banned, unbanned or deleted a message from whom, with the reason. Only works where you are a moderator. |
+| **Chat appearance** | Font size, alternating row backgrounds, opacity, and the landscape chat width, with a separate width for the expanded chat (swipe from the video edge). |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
