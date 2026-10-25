@@ -39,7 +39,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **7TV, BTTV and FFZ in the emote picker** | This channel's and the global 7TV, BTTV, FFZ and Homies emotes appear as their own sections at the bottom of Twitch's emote picker. |
 | **Frequently Used** | Emotes you send from the favorites bar or the suggestion list count towards Twitch's Frequently Used row, like ones picked in Twitch's own picker. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
-| **Third-party badges** | FFZ, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
+| **Third-party badges** | FFZ, BTTV, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
 | **Timestamps** | Nine timestamp formats, including seconds, which Twitch itself cannot show. Shown even if Twitch's own chat timestamps are off. |
 | **Deleted messages** | Show what a deleted message actually said, struck through, greyed, or plain. Works as an ordinary viewer, not only as a moderator, including messages already deleted before you joined. |
@@ -56,7 +56,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
 | **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
-| **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind. |
+| **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind (on by default). |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
