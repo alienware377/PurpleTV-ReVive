@@ -33,6 +33,7 @@ object DevBridge {
     private const val ACTION_RAID = "tv.purple.xp.DEV_RAID"
     private const val ACTION_FREQ = "tv.purple.xp.DEV_FREQ"
     private const val ACTION_MODLOG = "tv.purple.xp.DEV_MODLOG"
+    private const val ACTION_EMOTE = "tv.purple.xp.DEV_EMOTE"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -53,6 +54,7 @@ object DevBridge {
                         ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
                         ACTION_AT -> at(i.getIntExtra("x", 0), i.getIntExtra("y", 0))
                         ACTION_TIMER -> SleepTimer.start(app, i.getIntExtra("s", 10) * 1000L)
+                        ACTION_EMOTE -> ViewHider.currentActivity()?.window?.decorView?.let { EmoteHooks.showEmotePreview(it, i.getStringExtra("name").orEmpty()) }
                         ACTION_MODLOG -> ModLogs.test(i.getStringExtra("text").orEmpty())
                         ACTION_FREQ -> FrequentEmotes.test(app, i.getStringExtra("name").orEmpty())
                         ACTION_RAID -> RaidCard.simulate(i.getStringExtra("src").orEmpty(), i.getStringExtra("dst").orEmpty(), i.getIntExtra("n", 5))
@@ -64,7 +66,7 @@ object DevBridge {
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {

@@ -35,6 +35,10 @@ object EmoteRepo {
     /** name -> source tag ("7tv" | "bttv" | "ffz") for the entries in [map], so the
      *  suggestion strip can honour the per-source Settings toggles. */
     val srcOf = ConcurrentHashMap<String, String>()
+    /** Who uploaded each third-party emote, for the emote popup. */
+    val uploaderOf = ConcurrentHashMap<String, String>()
+    /** This channel's own third-party emote names (the rest are global). */
+    @Volatile var chNames: Set<String> = emptySet()
 
     /** Names contributed by the 7TV GLOBAL set. Tracked separately so "7TV global emotes" can be
      *  switched off while channel 7TV emotes stay on. */
@@ -154,6 +158,7 @@ object EmoteRepo {
     // have them. Globals persist; only channel-scoped entries are dropped.
     private val gMap = ConcurrentHashMap<String, String>()
     private val gSrc = ConcurrentHashMap<String, String>()
+    private val gUploader = ConcurrentHashMap<String, String>()
     private val gDraw = ConcurrentHashMap<String, Drawable>()
     private val gTwitch = ConcurrentHashMap<String, String>()
     private val gSuggestDraw = ConcurrentHashMap<String, Drawable>()
@@ -313,8 +318,8 @@ object EmoteRepo {
             runCatching {
                 val ch = activeChannel; val chName = activeName
                 activeChannel = null
-                map.clear(); srcOf.clear(); stvGlobal.clear()
-                gMap.clear(); gSrc.clear()
+                map.clear(); srcOf.clear(); stvGlobal.clear(); uploaderOf.clear()
+                gMap.clear(); gSrc.clear(); gUploader.clear()
                 drawables.clear(); gDraw.clear(); gSuggestDraw.clear()
                 animBytes.clear(); suggestDrawables.clear()
                 homies = null
@@ -343,7 +348,7 @@ object EmoteRepo {
                 runCatching { loadHomies(null, map, srcOf) }.onFailure { log("Homies global failed: $it") }
             // Snapshot the global NAMES now (before any channel can merge in) so a later
             // channel switch can restore exactly the global-only set.
-            gMap.putAll(map); gSrc.putAll(srcOf)
+            gMap.putAll(map); gSrc.putAll(srcOf); gUploader.putAll(uploaderOf)
             bumpPicker()
             log("emote map ready: ${map.size} global emotes; prefetching images (h=${emoteHeightPx}px)")
             prefetchDrawables()
@@ -698,10 +703,11 @@ object EmoteRepo {
             // Build this channel's set in LOCAL maps — no writes to the live maps yet.
             val cMap = LinkedHashMap<String, String>()   // keeps each provider's own order for the picker
             val cSrc = HashMap<String, String>()
+            val cUp = HashMap<String, String>()
             val cTwitch = HashMap<String, String>()
-            runCatching { loadSevenTvChannel(myId, cMap, cSrc) }.onFailure { log("7TV ch failed: $it") }
-            runCatching { loadBttvChannel(myId, cMap, cSrc) }.onFailure { log("BTTV ch failed: $it") }
-            runCatching { loadFfzChannel(myId, cMap, cSrc) }.onFailure { log("FFZ ch failed: $it") }
+            runCatching { loadSevenTvChannel(myId, cMap, cSrc, cUp) }.onFailure { log("7TV ch failed: $it") }
+            runCatching { loadBttvChannel(myId, cMap, cSrc, cUp, channelName) }.onFailure { log("BTTV ch failed: $it") }
+            runCatching { loadFfzChannel(myId, cMap, cSrc, cUp) }.onFailure { log("FFZ ch failed: $it") }
             if (Settings.get(KEY_HOMIES, false))
                 runCatching { loadHomies(myId, cMap, cSrc) }.onFailure { log("Homies ch failed: $it") }
             if (!channelName.isNullOrBlank())
@@ -712,6 +718,8 @@ object EmoteRepo {
                 if (activeChannel != myId) { log("ch $myId superseded at publish — discarded"); return@Thread }
                 map.clear(); map.putAll(gMap); map.putAll(cMap)
                 srcOf.clear(); srcOf.putAll(gSrc); srcOf.putAll(cSrc)
+                uploaderOf.clear(); uploaderOf.putAll(gUploader); uploaderOf.putAll(cUp)
+                chNames = cMap.keys.toSet()
                 twitch.clear(); twitch.putAll(gTwitch); twitch.putAll(cTwitch)
                 drawables.clear(); drawables.putAll(gDraw)
                 suggestDrawables.clear(); suggestDrawables.putAll(gSuggestDraw)
@@ -742,7 +750,8 @@ object EmoteRepo {
     }
 
     // 7TV channel: https://7tv.io/v3/users/twitch/<id> -> { emote_set:{ emotes:[ {name,id} ] } }
-    private fun loadSevenTvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>) {
+    private fun loadSevenTvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                                   up: MutableMap<String, String>) {
         val root = JSONObject(get("https://7tv.io/v3/users/twitch/$id"))
         val arr = root.optJSONObject("emote_set")?.optJSONArray("emotes") ?: return
         var n = 0
@@ -751,12 +760,14 @@ object EmoteRepo {
             val name = e.optString("name"); val eid = e.optString("id")
             if (name.isEmpty() || eid.isEmpty()) continue
             out[name] = "https://cdn.7tv.app/emote/$eid/${EmoteQuality.sevenTv}.webp"; src[name] = "7tv"; n++
+            ownerName(e.optJSONObject("data")?.optJSONObject("owner"))?.let { up[name] = it }
         }
         log("7TV channel: $n")
     }
 
     // BTTV channel: https://api.betterttv.net/3/cached/users/twitch/<id> -> { channelEmotes:[], sharedEmotes:[] }
-    private fun loadBttvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>) {
+    private fun loadBttvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                                up: MutableMap<String, String>, channelName: String?) {
         val root = JSONObject(get("https://api.betterttv.net/3/cached/users/twitch/$id"))
         var n = 0
         for (key in arrayOf("channelEmotes", "sharedEmotes")) {
@@ -766,13 +777,17 @@ object EmoteRepo {
                 val name = e.optString("code"); val eid = e.optString("id")
                 if (name.isEmpty() || eid.isEmpty()) continue
                 out[name] = "https://cdn.betterttv.net/emote/$eid/${EmoteQuality.bttv}"; src[name] = "bttv"; n++
+                // Shared emotes name their uploader; the channel's own were uploaded by the channel.
+                (e.optJSONObject("user")?.let { u -> u.optString("displayName").ifEmpty { u.optString("name") } }
+                    ?.takeIf { it.isNotEmpty() } ?: if (key == "channelEmotes") channelName else null)?.let { up[name] = it }
             }
         }
         log("BTTV channel: $n")
     }
 
     // FFZ room: https://api.frankerfacez.com/v1/room/id/<id> -> { sets:{ "<id>":{ emoticons:[...] } } }
-    private fun loadFfzChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>) {
+    private fun loadFfzChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                               up: MutableMap<String, String>) {
         val root = JSONObject(get("https://api.frankerfacez.com/v1/room/id/$id"))
         val sets = root.optJSONObject("sets") ?: return
         var n = 0
@@ -786,6 +801,7 @@ object EmoteRepo {
                 if (pick.isEmpty()) continue
                 out[name] = if (pick.startsWith("//")) "https:$pick" else pick
                 src[name] = "ffz"; n++
+                ownerName(e.optJSONObject("owner"))?.let { up[name] = it }
             }
         }
         log("FFZ channel: $n")
@@ -950,6 +966,18 @@ object EmoteRepo {
         log("Homies ${channelId ?: "global"}: $n")
     }
 
+    /** An emote owner's display name (7TV "display_name"/"username", FFZ "display_name"/"name"). */
+    private fun ownerName(o: JSONObject?): String? = o?.let {
+        it.optString("display_name").ifEmpty { it.optString("username") }.ifEmpty { it.optString("name") }
+    }?.takeIf { it.isNotEmpty() }
+
+    /** For the emote popup: (service, uploader, whether it is a global emote rather than this channel's). */
+    fun infoOf(name: String): Triple<String, String?, Boolean>? {
+        val src = srcOf[name] ?: return null
+        val label = when (src) { "7tv" -> "7TV"; "bttv" -> "BetterTTV"; "ffz" -> "FrankerFaceZ"; "homies" -> "Homies"; else -> src.uppercase() }
+        return Triple(label, uploaderOf[name], name !in chNames)
+    }
+
     // 7TV: https://7tv.io/v3/emote-sets/global -> { emotes:[ {name,id} ] }
     private fun loadSevenTvGlobal() {
         val root = JSONObject(get("https://7tv.io/v3/emote-sets/global"))
@@ -963,6 +991,7 @@ object EmoteRepo {
             map.putIfAbsent(name, "https://cdn.7tv.app/emote/$id/${EmoteQuality.sevenTv}.webp")
             srcOf.putIfAbsent(name, "7tv"); globalOrder.add(name)
             stvGlobal.add(name)
+            ownerName(e.optJSONObject("data")?.optJSONObject("owner"))?.let { uploaderOf.putIfAbsent(name, it) }
             n++
         }
         log("7TV global: $n")
@@ -979,6 +1008,7 @@ object EmoteRepo {
             if (name.isEmpty() || id.isEmpty()) continue
             map.putIfAbsent(name, "https://cdn.betterttv.net/emote/$id/${EmoteQuality.bttv}")
             srcOf.putIfAbsent(name, "bttv"); globalOrder.add(name)
+            uploaderOf.putIfAbsent(name, "BetterTTV")
             n++
         }
         log("BTTV global: $n")
@@ -1001,6 +1031,7 @@ object EmoteRepo {
                 val full = if (pick.startsWith("//")) "https:$pick" else pick
                 map.putIfAbsent(name, full)
                 srcOf.putIfAbsent(name, "ffz"); globalOrder.add(name)
+                ownerName(e.optJSONObject("owner"))?.let { uploaderOf.putIfAbsent(name, it) }
                 n++
             }
         }

@@ -396,7 +396,7 @@ object EmoteHooks {
     /** Show a centered dark popup with a large emote image + its name. Image is loaded at native
      *  size on a worker thread (network for non-animated); animated emotes start looping. Tap to
      *  dismiss. */
-    private fun showEmotePreview(anchor: View, name: String) {
+    fun showEmotePreview(anchor: View, name: String) {
         val ctx = anchor.context ?: return
         runCatching {
             val img = ImageView(ctx).apply {
@@ -422,6 +422,23 @@ object EmoteHooks {
                     setColor(Color.parseColor("#F21F1925"))
                 }
                 addView(img); addView(label)
+                // Where the emote comes from: the service, global or this channel's, and who made it.
+                EmoteRepo.infoOf(name)?.let { (svc, by, global) ->
+                    addView(TextView(ctx).apply {
+                        text = svc + if (global) " global emote" else " channel emote"
+                        setTextColor(Color.parseColor("#BF94FF"))
+                        gravity = Gravity.CENTER
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                        setPadding(0, dp(ctx, 6f), 0, 0)
+                    })
+                    if (!by.isNullOrBlank()) addView(TextView(ctx).apply {
+                        text = "Uploaded by $by"
+                        setTextColor(Color.parseColor("#ADADB8"))
+                        gravity = Gravity.CENTER
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                        setPadding(0, dp(ctx, 2f), 0, 0)
+                    })
+                }
             }
             val dialog = AlertDialog.Builder(ctx).setView(box).create()
             dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
