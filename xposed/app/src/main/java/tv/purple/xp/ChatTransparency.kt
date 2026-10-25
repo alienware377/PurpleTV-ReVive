@@ -219,6 +219,14 @@ object ChatTransparency {
 
             val current = guideline.left.toFloat() / width
 
+            // Chat switched off (double tap or the chat button): Twitch moves the guideline to the
+            // edge so the video fills the screen, and may hide the panel. Leave that alone, and
+            // forget our last write so the width is applied afresh when chat comes back.
+            if (pct != null && (current >= 0.95f || current <= 0.05f || panel.visibility != View.VISIBLE)) {
+                lastWritten.remove(guideline)
+                return
+            }
+
             // Snapshot Twitch's own split once, before we ever write. Guard the range so a
             // half-laid-out frame (guideline at 0, or flush right) is never mistaken for it.
             if (!originalGuidePercent.containsKey(guideline)) {
@@ -247,6 +255,7 @@ object ChatTransparency {
             writing = true
             try { m.invoke(guideline, target) } finally { writing = false }
             lastWritten[guideline] = target
+            if (guideFields == null) findGuideField(guideline, target)
         }.onFailure { log("CW applyChatWidth: " + it) }
     }
 
@@ -258,9 +267,55 @@ object ChatTransparency {
         return 1f - pct / 100f
     }
 
+    /**
+     * The guideline's position field in ConstraintLayout's LayoutParams. R8 renamed it, so it is
+     * found by value: right after we set a position nobody else uses, it is the one float field
+     * holding exactly that number.
+     */
+    @Volatile private var guideFields: List<java.lang.reflect.Field>? = null
+    /** A few remaps are logged after each start, to confirm the swap happens before drawing. */
+    @Volatile private var logRemaps = 6
+
+    private fun findGuideField(guideline: View, value: Float) {
+        // 0.5 and 1.0 are also the default biases and sizes, so only an unusual value tells.
+        if (kotlin.math.abs(value - 0.5f) < 0.01f || value >= 0.99f || value <= 0.01f) return
+        val lp = guideline.layoutParams ?: return
+        val hits = lp.javaClass.declaredFields.filter { f ->
+            f.type == java.lang.Float.TYPE && !java.lang.reflect.Modifier.isStatic(f.modifiers) &&
+                runCatching { f.isAccessible = true; kotlin.math.abs(f.getFloat(lp) - value) < 1e-6f }.getOrDefault(false)
+        }
+        // The position and its cached copy.
+        if (hits.size in 1..2) { guideFields = hits; log("CW guide fields found: ${hits.joinToString { it.name }}") }
+    }
+
     /** When Twitch itself sets the chat guideline, swap in our width for the state it picked. */
     private fun hookGuideline(lp: LoadPackageParam) = runCatching {
         val g = lp.classLoader.loadClass("androidx.constraintlayout.widget.Guideline")
+        // Twitch switches widths by re-applying its whole layout, which hands the guideline new
+        // LayoutParams (and animates to them). Fix the position inside those params first, so
+        // the animation goes straight to our width instead of to Twitch's and then jumping.
+        XposedBridge.hookAllMethods(View::class.java, "setLayoutParams", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                if (writing) return
+                val v = p.thisObject as? View ?: return
+                if (v.javaClass !== g) return
+                val fs = guideFields ?: return
+                val params = p.args.getOrNull(0) ?: return
+                if (Res.entry(v) != "chat_guideline") return
+                if (v.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) return
+                val last = lastWritten[v]
+                // Twitch's new position: whichever copy it changed away from ours.
+                val values = fs.mapNotNull { f -> runCatching { f.getFloat(params) }.getOrNull() }
+                val asked = values.firstOrNull { last == null || kotlin.math.abs(it - last) >= 0.0005f } ?: return
+                if (asked <= 0.05f || asked >= 0.95f) return     // chat hidden: leave it
+                val wide = (1f - asked) >= WIDE_FROM
+                val target = targetFor(wide, Settings.getInt(KEY_CHAT_WIDTH, CHAT_WIDTH_DEFAULT))
+                for (f in fs) runCatching { f.setFloat(params, target) }
+                if (BuildConfig.DEBUG || logRemaps-- > 0) log("CW Twitch set ${"%.2f".format(asked)}, using ${"%.2f".format(target)}")
+                wideMode[v] = wide
+                lastWritten[v] = target
+            }
+        })
         XposedBridge.hookAllMethods(g, "setGuidelinePercent", object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 if (writing) return
