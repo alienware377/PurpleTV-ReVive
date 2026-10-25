@@ -211,7 +211,7 @@ object PurpleMenu {
             "disable_hype_train", done = true),
         Toggle("One chat lurker",
             "Activating this option hides the UI for message input and sending in the \"One Chat\" mode",
-            "one_chat_lurker"),
+            "one_chat_lurker", done = true),
         Drop("Timestamp Format", "Choose the preferred format for displaying timestamps",
             ChatLineStyle.KEY_TIMESTAMP, listOf(
                 "Default", "12 Hour", "12 Hour with Seconds", "24 Hour", "24 Hour with Seconds",
@@ -302,7 +302,8 @@ object PurpleMenu {
     )
 
     private val VIEW = listOf(
-        Toggle("Twitch Stories", "Enables the display of Twitch Stories", "stories"),
+        Toggle("Twitch Stories", "Show the row of Twitch Stories at the top of Home. Turn off to hide it",
+            ViewHider.KEY_STORIES, def = true, done = true),
         Drop("Navbar position", "", "bottom_navbar_position", listOf("Default", "Top", "Hidden")),
         Toggle("Show full stream cards in followed section", "", "followed_full_cards"),
         Toggle("Hide Browse (search) tab", "Removes \"Browse\", the magnifying glass, from the navigation bar",

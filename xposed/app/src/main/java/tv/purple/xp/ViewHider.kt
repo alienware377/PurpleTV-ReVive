@@ -32,8 +32,12 @@ object ViewHider {
     private class Rule(
         val key: String,
         val entries: List<String>,
-        val landscape: Boolean = false
-    )
+        val landscape: Boolean = false,
+        /** The setting SHOWS the views (on by default) and hiding happens when it is off. */
+        val inverted: Boolean = false
+    ) {
+        fun active() = if (inverted) !Settings.get(key, true) else Settings.get(key, false)
+    }
 
     private val RULES = listOf(
         Rule("hide_chat_header", listOf("chat_header_container", "chat_header")),
@@ -61,6 +65,10 @@ object ViewHider {
             "create_clip_text_button", "create_clip_panel")),
         Rule("hide_player_live_share_button", listOf("share_button")),
         Rule("disable_cast", listOf("cast_button")),
+        // The message box of "One Chat", the chat laid over the video in fullscreen landscape.
+        Rule("one_chat_lurker", listOf("one_chat_message_input_view_container")),
+        // "Twitch Stories" is a show switch: off removes the row of story circles on Home.
+        Rule(KEY_STORIES, listOf("stories_shelf_container", "stories_shelf"), inverted = true),
         // The "Intended for certain audiences" chip on the player. The full-screen warning in
         // front of a mature stream is a button press, not a view to hide; see applyStopSign.
         Rule(KEY_MATURE, listOf("mature_disclosure")),
@@ -266,6 +274,7 @@ object ViewHider {
     }
 
     const val KEY_MATURE = "disable_mature_content"
+    const val KEY_STORIES = "stories"
 
     /** Stop-sign views already answered, so one warning is never pressed twice. */
     private val STOP_DONE = java.util.Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
@@ -300,7 +309,7 @@ object ViewHider {
 
     private fun apply(act: Activity) {
         // Cheap exit: if nothing is switched on there's no reason to walk the tree at all.
-        val active = RULES.filter { Settings.get(it.key, false) }
+        val active = RULES.filter { it.active() }
         val root = act.window?.decorView ?: return
         // Menu-backed rather than view-backed, so it runs every pass regardless of the view rules.
         runCatching { hideBrowseItem(act, Settings.get(KEY_BROWSE, false)) }
