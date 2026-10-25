@@ -72,7 +72,7 @@ Everything is opt-in and individually toggleable, and the whole module can be sw
 
 - Android 8.0 (API 26) or newer
 - A rooted device with **[LSPosed](https://github.com/LSPosed/LSPosed)**, **or** a non-rooted device using **[LSPatch](https://github.com/LSPosed/LSPatch)**
-- The official Twitch app installed
+- The official Twitch app installed. Each release is built for one Twitch version, named in its file names and release notes (currently **Twitch 31.1.2**).
 
 ## Installation
 
@@ -82,7 +82,7 @@ Easiest: in LSPosed, open the **Repository** tab, search for **PurpleTV ReVive**
 
 Or by hand:
 
-1. Download `purpletv-xp.apk` from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
+1. Download the module file from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest): the one named `purpletv-revive-<version>-module-twitch<version>.apk` (older releases call it `purpletv-xp.apk`).
 2. Install it like a normal app.
 3. Open LSPosed → **Modules** → enable **PurpleTV ReVive**.
 4. In the module's scope list, tick **Twitch**.
@@ -90,8 +90,8 @@ Or by hand:
 
 ### Non-rooted: LSPatch
 
-1. Download `purpletv-xp.apk` from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
-2. In LSPatch, select your installed Twitch app, choose **Integrated** patch mode, and add `purpletv-xp.apk` as an embedded module.
+1. Download the module file (`purpletv-revive-<version>-module-twitch<version>.apk`) from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
+2. In LSPatch, select your installed Twitch app, choose **Integrated** patch mode, and add the module file as an embedded module.
 3. Install the patched Twitch APK that LSPatch produces.
 
 > Your Twitch login is preserved across reinstalls as long as the signing key stays the same.
@@ -134,7 +134,7 @@ The result is a module that keeps working across Twitch updates far longer than 
 
 ## Compatibility
 
-Tested against recent Twitch Android releases. Because the module avoids obfuscated identifiers, it generally survives app updates. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/purpletv-revive/issues) with your Twitch version number.
+Built and tested for **Twitch 31.1.2**, the version named in each release. **Twitch 31.5 and newer** moved chat, the emote menu and the message box to a new system, so the chat features (emotes, autocomplete, favorites, badges and so on) will most likely stop working there until the module is updated. Player and hide options may keep working. Because the module avoids obfuscated identifiers, it generally survives app updates. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/purpletv-revive/issues) with your Twitch version number.
 
 ## FAQ
 
