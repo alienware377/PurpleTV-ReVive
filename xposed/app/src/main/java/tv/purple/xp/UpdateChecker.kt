@@ -206,9 +206,12 @@ object UpdateChecker {
             background = GradientDrawable().apply { setColor(PURPLE); cornerRadius = dp(8f).toFloat() }
             setPadding(dp(18f), dp(10f), dp(18f), dp(10f))
             val url = downloadFor(act, latest)
-            log("update: Update would open $url")
+            // The patched Twitch with install permission downloads and installs inside the app.
+            val inApp = url.endsWith("-patched.apk") && InAppUpdate.canInstall(act)
+            log("update: Update would ${if (inApp) "download in the app" else "open"} $url")
             setOnClickListener {
-                open(act, url)
+                if (inApp) InAppUpdate.start(act, url, latest.tag, latest.version.joinToString("."))
+                else open(act, url)
                 dlg.dismiss()
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })

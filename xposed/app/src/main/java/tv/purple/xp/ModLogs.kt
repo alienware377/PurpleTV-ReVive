@@ -23,9 +23,9 @@ object ModLogs {
 
     private const val ACTION = "tv.twitch.android.shared.moderation.actions.pubsub.ModerationActionPubSubEvent\$ModeratorAction"
     private const val STRINGS = "tv.twitch.android.core.strings.e"   // StringResource factory; c(String) = plain text
-    private const val NOTICE = "f95"         // RegularChannelNotice(noticeId, message)
-    private const val NOTICE_EVENT = "de6"   // ChannelNoticeEvent(channelId, notice)
-    private const val CHAT_NOTICE = "aq5"    // ChatNotice(chatNoticeEvent)
+    private val NOTICE get() = TwitchVersion.pick("f95", "vb5")         // RegularChannelNotice(noticeId, message)
+    private val NOTICE_EVENT get() = TwitchVersion.pick("de6", "ih6")   // ChannelNoticeEvent(channelId, notice)
+    private val CHAT_NOTICE get() = TwitchVersion.pick("aq5", "kt5")    // ChatNotice(chatNoticeEvent)
 
     private val main = Handler(Looper.getMainLooper())
     private var cl: ClassLoader? = null
@@ -89,8 +89,9 @@ object ModLogs {
         val subj = RaidCard.noticeSubject() ?: run { log("ML no chat notice channel yet"); return@runCatching }
         val res = XposedHelpers.callStaticMethod(XposedHelpers.findClass(STRINGS, l), "c", text)
         val notice = XposedHelpers.newInstance(XposedHelpers.findClass(NOTICE, l), "ptv_modlog", res)
-        val event = XposedHelpers.newInstance(XposedHelpers.findClass(NOTICE_EVENT, l), RaidCard.currentChannel().orEmpty(), notice)
-        XposedHelpers.callMethod(subj, "c", XposedHelpers.newInstance(XposedHelpers.findClass(CHAT_NOTICE, l), event))
+        val channel = TwitchVersion.channelIdArg(l, RaidCard.currentChannel().orEmpty()) ?: run { log("ML no channel yet"); return@runCatching }
+        val event = XposedHelpers.newInstance(XposedHelpers.findClass(NOTICE_EVENT, l), channel, notice)
+        XposedHelpers.callMethod(subj, TwitchVersion.onNext, XposedHelpers.newInstance(XposedHelpers.findClass(CHAT_NOTICE, l), event))
     }.onFailure { log("ML show: $it") }
 
     /** Hidden test: show a sample line in the open chat. */

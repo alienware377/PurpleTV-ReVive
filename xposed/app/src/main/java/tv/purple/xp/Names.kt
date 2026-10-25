@@ -26,7 +26,7 @@ object Names {
     // they are not yet confirmed on device for this version.
     // v46.b returns the per-chat-line model `f86`; field .e is the message body.
     //   f86.a=timestamp  f86.c="username: "  f86.e=body  f86.f=bool
-    const val ASSEMBLER = "v46"           // v46.b(...) -> f86 (chat line model)
+    val ASSEMBLER: String get() = TwitchVersion.pick("v46", "b86")   // .b(...) -> chat line model (f86 / lb6)
     const val ASSEMBLER_METHOD = "b"
     const val BODY_FIELD = "e"            // f86.e : CharSequence = the message body
     const val NAME_FIELD = "c"            // f86.c : CharSequence = "username: " (badges/pronouns)

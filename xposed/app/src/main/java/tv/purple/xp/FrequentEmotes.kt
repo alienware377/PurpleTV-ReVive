@@ -20,10 +20,10 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object FrequentEmotes {
 
-    private const val REPO = "qqf"         // frequent-emotes repository; "SeemsGood"/"64138" in <clinit>
+    private val REPO get() = TwitchVersion.pick("qqf", "oyf")         // frequent-emotes repository; "SeemsGood"/"64138" in <clinit>
     private const val REPO_SEND = "e"      // e(String messageText): counts the clicked emotes
-    private const val CLICK_EVENT = "oqf"  // "EmoteClicked(emoteModel="
-    private const val GENERIC = "mnf"      // "Generic(id=": EmoteModel.Generic(id, token)
+    private val CLICK_EVENT get() = TwitchVersion.pick("oqf", "myf")  // "EmoteClicked(emoteModel="
+    private val GENERIC get() = TwitchVersion.pick("mnf", "kvf")      // "Generic(id=": EmoteModel.Generic(id, token)
     private const val DISPATCHER = "tv.twitch.android.core.mvp.viewdelegate.EventDispatcher"
 
     private val pending: MutableSet<String> = ConcurrentHashMap.newKeySet()

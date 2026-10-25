@@ -932,6 +932,29 @@ object EmoteRepo {
     fun httpGet(url: String): String = get(url)
     fun httpBytes(url: String): ByteArray = getBytes(url)
 
+    /** Stream [url] into [out] (for app updates), reporting (bytes so far, total). Uses the shared
+     *  connection pool but no cache, so a 140 MB file never lands in the emote picture cache. */
+    fun httpDownload(url: String, out: File, onProgress: (Long, Long) -> Unit) {
+        val c = http.newBuilder().cache(null).readTimeout(60, TimeUnit.SECONDS).build()
+        c.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) error("HTTP ${r.code} for $url")
+            val body = r.body ?: error("empty body for $url")
+            val total = body.contentLength()
+            val tmp = File(out.path + ".part")
+            body.byteStream().use { input ->
+                tmp.outputStream().use { o ->
+                    val buf = ByteArray(64 * 1024); var done = 0L
+                    while (true) {
+                        val n = input.read(buf); if (n < 0) break
+                        o.write(buf, 0, n); done += n; onProgress(done, total)
+                    }
+                }
+            }
+            if (total > 0 && tmp.length() != total) error("download incomplete: ${tmp.length()} of $total")
+            if (!tmp.renameTo(out)) error("could not save ${out.path}")
+        }
+    }
+
     private fun getBytes(url: String): ByteArray {
         http.newCall(Request.Builder().url(url).build()).execute().use { r ->
             if (!r.isSuccessful) error("HTTP ${r.code} for $url")

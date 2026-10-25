@@ -30,11 +30,11 @@ object RaidCard {
     // Pinned for Twitch 31.1.2 (R8 names). All are only reached through reflection, so a missing
     // class just switches this off.
     private const val RAID_INFO = "tv.twitch.android.shared.raids.pubsub.RaidEventInfo"
-    private const val NOTICES = "znc"      // chat notice source; field b = PublishSubject of ChatNotice
-    private const val CHAT_NOTICE = "aq5"  // ChatNotice(chatNoticeEvent)
-    private const val RAID_EVENT = "me6"   // RaidNoticeEvent(channelId, notice)
-    private const val RAID_NOTICE = "sg6"  // ChatRaidNotice(systemMessage, profileImageUrl, raidingUserInfo, viewerCount)
-    private const val USER_INFO = "j960"   // UserInfo(userId, userName, displayName, unused)
+    private val NOTICES get() = TwitchVersion.pick("znc", "ouc")      // chat notice source; field b = PublishSubject of ChatNotice
+    private val CHAT_NOTICE get() = TwitchVersion.pick("aq5", "kt5")  // ChatNotice(chatNoticeEvent)
+    private val RAID_EVENT get() = TwitchVersion.pick("me6", "rh6")   // RaidNoticeEvent(channelId, notice)
+    private val RAID_NOTICE get() = TwitchVersion.pick("sg6", "zj6")  // ChatRaidNotice(systemMessage, profileImageUrl, raidingUserInfo, viewerCount)
+    private val USER_INFO get() = TwitchVersion.pick("j960", "e370")   // UserInfo(userId, userName, displayName, unused)
 
     private class Raid(val source: String, val target: String, val count: Int, val at: Long)
 
@@ -160,10 +160,11 @@ object RaidCard {
         val user = XposedHelpers.newInstance(XposedHelpers.findClass(USER_INFO, l), r.source, login, display, 0)
         val system = if (r.count == 1) "1 raider from $display has joined!" else "${r.count} raiders from $display have joined!"
         val notice = XposedHelpers.newInstance(XposedHelpers.findClass(RAID_NOTICE, l), system, logo, user, r.count)
-        val event = XposedHelpers.newInstance(XposedHelpers.findClass(RAID_EVENT, l), r.target, notice)
+        val target = TwitchVersion.channelIdArg(l, r.target) ?: return false
+        val event = XposedHelpers.newInstance(XposedHelpers.findClass(RAID_EVENT, l), target, notice)
         val wrapped = XposedHelpers.newInstance(XposedHelpers.findClass(CHAT_NOTICE, l), event)
         building = false
-        XposedHelpers.callMethod(subj, "c", wrapped)   // PublishSubject.onNext
+        XposedHelpers.callMethod(subj, TwitchVersion.onNext, wrapped)   // PublishSubject.onNext
         true
     }.getOrElse { building = false; log("RC raid card failed: $it"); false }
 

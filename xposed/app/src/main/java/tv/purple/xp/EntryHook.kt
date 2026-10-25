@@ -51,6 +51,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
             android.provider.Settings.Global.getInt(ctx.contentResolver, "purplexp_disable", 0) == 1
         }.getOrDefault(false)
         if (disabled) { log("DISABLED via purplexp_disable=1 — no features wired"); return }
+        runCatching { TwitchVersion.init(ctx) }
         runCatching { Settings.init(ctx) }.onFailure { log("settings init failed: $it") }
         runCatching { DevBridge.install(ctx) }.onFailure { log("dev bridge failed: $it") }
 
@@ -81,11 +82,13 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { RefreshButton.install(lpparam) }.onFailure { log("refresh button failed: $it") }
         runCatching { VodSeek.install(lpparam) }.onFailure { log("vod seek failed: $it") }
         runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
+        runCatching { ClassicTheatre.install(lpparam) }.onFailure { log("classic theatre failed: $it") }
         runCatching { ModLogs.install(lpparam) }.onFailure { log("mod logs failed: $it") }
         runCatching { ChatGuards.install(lpparam) }.onFailure { log("chat guards failed: $it") }
         runCatching { PlayerStats.install(lpparam) }.onFailure { log("player stats failed: $it") }
         runCatching { AudioFilters.install() }.onFailure { log("audio filters failed: $it") }
         runCatching { RaidCard.install(lpparam) }.onFailure { log("raid card failed: $it") }
+        runCatching { InAppUpdate.install(ctx) }.onFailure { log("in-app update failed: $it") }
         runCatching { UpdateChecker.schedule() }.onFailure { log("update check failed: $it") }
         runCatching { PickerFavorites.install(lpparam) }.onFailure { log("picker favorites failed: $it") }
         runCatching { ChatTransparency.install(lpparam) }.onFailure { log("chat transparency failed: $it") }

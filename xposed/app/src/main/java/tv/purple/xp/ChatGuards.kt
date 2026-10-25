@@ -27,11 +27,11 @@ object ChatGuards {
 
     private const val DISPATCH = "b1"          // lambda class; case 0xa = onChannelEventReceived
     private const val DISPATCH_CASE = 0xa
-    private const val CHANNEL_CLEARED = "rm5"  // ChannelMessagesCleared(channelId)
-    private const val UNIT = "sd50"            // the app's kotlin.Unit
-    private const val AUTOPLAY_VIEW = "e92"    // autoplay "Up next" view delegate
-    private const val AUTOPLAY_PLAYABLE = "wcw"
-    private const val COUNTDOWN_DONE = "ud1"   // Runnable; case 1 with b = e92 ends the countdown
+    private val CHANNEL_CLEARED get() = TwitchVersion.pick("rm5", "aq5")  // ChannelMessagesCleared(channelId)
+    private val UNIT get() = TwitchVersion.pick("sd50", "o760")            // the app's kotlin.Unit
+    private val AUTOPLAY_VIEW get() = TwitchVersion.pick("e92", "ya2")    // autoplay "Up next" view delegate
+    private val AUTOPLAY_PLAYABLE get() = TwitchVersion.pick("wcw", "hww")
+    private val COUNTDOWN_DONE get() = TwitchVersion.pick("ud1", "of1")   // Runnable; case 1 with b = e92 ends the countdown
 
     @Volatile private var lastNote = 0L
 
