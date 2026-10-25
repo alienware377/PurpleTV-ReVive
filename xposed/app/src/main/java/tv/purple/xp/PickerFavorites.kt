@@ -229,7 +229,8 @@ object PickerFavorites {
                     if (!enabled()) return
                     val v = param.thisObject as? View ?: return
                     if (v.id == View.NO_ID || v.id != emoteIconId(v)) return
-                    val name = v.contentDescription?.toString()?.trim().orEmpty()
+                    // Animated or locked emotes read "KEKW, Animated emote"; the name is before the comma.
+                    val name = v.contentDescription?.toString()?.substringBefore(", ")?.trim().orEmpty()
                     if (name.isEmpty() || !Favorites.isFavoritable(name)) return
                     val now = Favorites.toggle(name)
                     toast(v.context, if (now) "★ Favorited $name" else "Removed $name")

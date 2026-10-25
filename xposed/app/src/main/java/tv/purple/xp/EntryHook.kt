@@ -75,7 +75,9 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { EmoteHooks.install(lpparam) }.onFailure { log("emote hooks failed: $it") }
         runCatching { Channels.install(lpparam) }.onFailure { log("channel probe failed: $it") }
         runCatching { EmoteAutocomplete.install(lpparam) }.onFailure { log("autocomplete failed: $it") }
+        runCatching { GlVideoFilter.install() }.onFailure { log("GL filter install failed: $it") }
         runCatching { FrequentEmotes.install(lpparam) }.onFailure { log("frequent emotes failed: $it") }
+        runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
         runCatching { PickerFavorites.install(lpparam) }.onFailure { log("picker favorites failed: $it") }
         runCatching { ChatTransparency.install(lpparam) }.onFailure { log("chat transparency failed: $it") }
         runCatching { ChannelPoints.install(ctx) }.onFailure { log("channel points failed: $it") }

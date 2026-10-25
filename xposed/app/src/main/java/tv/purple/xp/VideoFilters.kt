@@ -114,11 +114,14 @@ object VideoFilters {
     private fun apply(tv: TextureView) {
         val on = anyActive()
         when {
+            GlVideoFilter.available() -> {
+                if (shaderSupported()) tv.setRenderEffect(null)
+                GlVideoFilter.update(tv, on)
+            }
             shaderSupported() -> {
                 if (!on) { tv.setRenderEffect(null); return }
                 tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))
             }
-            GlVideoFilter.available() -> GlVideoFilter.update(tv, on)
             else -> {
                 if (!on) { tv.setLayerPaint(null); return }
                 tv.setLayerPaint(Paint().apply { colorFilter = ColorMatrixColorFilter(fallbackMatrix()) })
@@ -224,16 +227,17 @@ object VideoFilters {
             seed = (seed + 1.37f) % 997f
             for (tv in views.keys.toList()) {
                 if (!tv.isAttachedToWindow) continue
-                if (shaderSupported()) runCatching {
+                if (shaderSupported() && !GlVideoFilter.available()) runCatching {
                     tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))
-                } else if (GlVideoFilter.available()) GlVideoFilter.update(tv, true)
+                }
             }
             handler.postDelayed(this, 42)
         }
     }
 
     private fun scheduleGrain() {
-        if (grainRunning) return
+        // The GL path moves its grain on every drawn frame by itself.
+        if (grainRunning || GlVideoFilter.available()) return
         val gi = FilterDefs.index("grain")
         if (anyActive() && FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true)) {
             grainRunning = true

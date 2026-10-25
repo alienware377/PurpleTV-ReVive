@@ -94,6 +94,52 @@ object EmoteRepo {
      *  for different images, so a picture only counts if it came from the url in use now. */
     private val builtFrom = ConcurrentHashMap<String, String>()
 
+    // ---- emote picker sections ----
+
+    /** Global emote names in each provider's own order, as loaded. */
+    private val globalOrder: MutableList<String> = java.util.Collections.synchronizedList(ArrayList())
+    /** This channel's emote names in provider order, and which channel they belong to. */
+    @Volatile private var chOrder: List<String> = emptyList()
+    @Volatile private var chOrderFor: String? = null
+    @Volatile private var pickerVer = 0
+    private val pickerListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    fun addPickerListener(l: () -> Unit) { pickerListeners.add(l) }
+    private fun bumpPicker() { pickerVer++; for (l in pickerListeners) runCatching { l() } }
+
+    /** Changes whenever the lists or the source toggles change. */
+    fun pickerVersion(): Int = pickerVer * 31 + listOf(Settings.KEY_SRC_SEVENTV, Settings.KEY_SRC_BTTV,
+        Settings.KEY_SRC_FFZ, KEY_STV_GLOBAL, KEY_HOMIES).fold(0) { a, k -> a * 2 + if (Settings.get(k, k != KEY_HOMIES)) 1 else 0 }
+
+    private val PROVIDER_TITLES = linkedMapOf("7tv" to "7TV", "bttv" to "BTTV", "ffz" to "FFZ", "homies" to "Homies")
+
+    /**
+     * Sections for the emote picker, in order: this channel's 7TV, BTTV, FFZ and Homies emotes,
+     * then the global ones. Empty sections are left out; switched-off sources are left out.
+     */
+    fun pickerGroups(): List<Pair<String, List<String>>> {
+        val out = ArrayList<Pair<String, List<String>>>()
+        val ch = if (chOrderFor != null && chOrderFor == activeChannel) chOrder else emptyList()
+        val chSet = ch.toHashSet()
+        for ((src, title) in PROVIDER_TITLES) {
+            val names = ch.filter { srcOf[it] == src && enabled(it) && map[it] !in gone }
+            if (names.isNotEmpty()) out += "$title channel emotes" to names
+        }
+        val globals = synchronized(globalOrder) { globalOrder.toList() }
+        for ((src, title) in PROVIDER_TITLES) {
+            val names = globals.filter { it !in chSet && srcOf[it] == src && enabled(it) && map[it] !in gone }.distinct()
+            if (names.isNotEmpty()) out += "$title global emotes" to names
+        }
+        return out
+    }
+
+    /** A drawable for one picker cell: a fresh animated copy, or a private copy of the static one. */
+    fun pickerDrawable(name: String): Drawable? {
+        makeAnimated(name)?.let { return it }
+        val d = drawables[name] ?: suggestDrawables[name] ?: return null
+        return d.constantState?.newDrawable()?.mutate() ?: d
+    }
+
     /** The url [name] resolves to in the current chat, or null if it is not available here. */
     fun urlOf(name: String): String? = map[name] ?: twitch[name]
 
@@ -235,6 +281,7 @@ object EmoteRepo {
                 drawables.clear(); gDraw.clear(); gSuggestDraw.clear()
                 animBytes.clear(); suggestDrawables.clear()
                 homies = null
+                globalOrder.clear(); chOrder = emptyList()
                 globalsLoaded = true
                 log("emote cache cleared; refetching at quality=${Settings.getInt(EmoteQuality.KEY, EmoteQuality.DEFAULT)}")
                 loadGlobalsNow()
@@ -260,6 +307,7 @@ object EmoteRepo {
             // Snapshot the global NAMES now (before any channel can merge in) so a later
             // channel switch can restore exactly the global-only set.
             gMap.putAll(map); gSrc.putAll(srcOf)
+            bumpPicker()
             log("emote map ready: ${map.size} global emotes; prefetching images (h=${emoteHeightPx}px)")
             prefetchDrawables()
             gDraw.putAll(drawables); gSuggestDraw.putAll(suggestDrawables)
@@ -611,7 +659,7 @@ object EmoteRepo {
         Thread({
             val myId = channelId
             // Build this channel's set in LOCAL maps — no writes to the live maps yet.
-            val cMap = HashMap<String, String>()
+            val cMap = LinkedHashMap<String, String>()   // keeps each provider's own order for the picker
             val cSrc = HashMap<String, String>()
             val cTwitch = HashMap<String, String>()
             runCatching { loadSevenTvChannel(myId, cMap, cSrc) }.onFailure { log("7TV ch failed: $it") }
@@ -639,7 +687,10 @@ object EmoteRepo {
                     if (from != urlOf(n)) { animBytes.remove(n); animBounds.remove(n); builtFrom.remove(n) }
                 }
             }
+            chOrder = cMap.keys.toList(); chOrderFor = myId
+            bumpPicker()
             runCatching { Favorites.channelChanged() }
+            runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post { PinnedChat.channelChanged() } }
             log("channel $myId ($channelName) published: +${cMap.size} inject, +${cTwitch.size} twitch (map=${map.size}); prefetching")
             // Download channel images into the live maps; aborts mid-loop if the user switches.
             prefetchDrawables(myId)
@@ -853,6 +904,7 @@ object EmoteRepo {
             val name = e.optString("name"); val id = e.optString("id")
             if (name.isEmpty() || id.isEmpty() || out.containsKey(name)) continue
             out[name] = "https://cdn.7tv.app/emote/$id/${EmoteQuality.sevenTv}.webp"; src[name] = "homies"; n++
+            if (channelId == null) globalOrder.add(name)
         }
         log("Homies ${channelId ?: "global"}: $n")
     }
@@ -868,7 +920,7 @@ object EmoteRepo {
             val id = e.optString("id")
             if (name.isEmpty() || id.isEmpty()) continue
             map.putIfAbsent(name, "https://cdn.7tv.app/emote/$id/${EmoteQuality.sevenTv}.webp")
-            srcOf.putIfAbsent(name, "7tv")
+            srcOf.putIfAbsent(name, "7tv"); globalOrder.add(name)
             stvGlobal.add(name)
             n++
         }
@@ -885,7 +937,7 @@ object EmoteRepo {
             val id = e.optString("id")
             if (name.isEmpty() || id.isEmpty()) continue
             map.putIfAbsent(name, "https://cdn.betterttv.net/emote/$id/${EmoteQuality.bttv}")
-            srcOf.putIfAbsent(name, "bttv")
+            srcOf.putIfAbsent(name, "bttv"); globalOrder.add(name)
             n++
         }
         log("BTTV global: $n")
@@ -907,7 +959,7 @@ object EmoteRepo {
                 if (pick.isEmpty()) continue
                 val full = if (pick.startsWith("//")) "https:$pick" else pick
                 map.putIfAbsent(name, full)
-                srcOf.putIfAbsent(name, "ffz")
+                srcOf.putIfAbsent(name, "ffz"); globalOrder.add(name)
                 n++
             }
         }

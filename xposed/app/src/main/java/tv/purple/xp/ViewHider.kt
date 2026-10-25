@@ -323,6 +323,7 @@ object ViewHider {
         runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) }
         runCatching { SleepTimer.attach(root) }.onFailure { log("sleep timer: $it") }
         runCatching { VideoFilters.attach(root) }.onFailure { log("video filters: $it") }
+        runCatching { PinnedChat.apply(root) }.onFailure { log("pinned chat: $it") }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")
