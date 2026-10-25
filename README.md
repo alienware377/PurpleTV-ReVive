@@ -36,6 +36,8 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **BTTV WEBP** | Optionally load BTTV emotes in WEBP format instead of GIF or PNG. |
 | **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a scrolling list just above the input. 7TV, BTTV and FFZ emotes come first, then your sub emotes, then other Twitch emotes. Hold one to pin it to the top whenever it matches, or to add it to the favorites bar. Pins can be kept per streamer. |
 | **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Can be kept per streamer. |
+| **7TV, BTTV and FFZ in the emote picker** | This channel's and the global 7TV, BTTV, FFZ and Homies emotes appear as their own sections at the bottom of Twitch's emote picker. |
+| **Frequently Used** | Emotes you send from the favorites bar or the suggestion list count towards Twitch's Frequently Used row, like ones picked in Twitch's own picker. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
 | **Third-party badges** | FFZ, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
@@ -48,11 +50,16 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Vibrate on mention** | Buzz when someone `@mentions` you, with an adjustable duration. |
 | **Push notifications on patched builds** | A re-signed Twitch normally cannot register for push notifications. This lets it, so go-live alerts work on the patched APK too. |
 | **Skip link warning** | Open chat links straight away, without Twitch's "this link will take you to" confirmation. |
-| **Video filters** | A filters button in the player for lives and VODs: brightness, contrast, clarity, texture, saturation and vibrance, each limited to the tones you choose. Changes are seen live. |
+| **Pinned messages** | Hide pinned chat messages, or hide them 30 seconds after they appear. Hype trains, polls and predictions stay. |
+| **Video filters** | A filters button in the player for lives and VODs, with 24 filters: exposure, brightness, contrast, highlights, shadows, gamma, fade, clarity, sharpen, soft focus, temperature, tint, hue, saturation, vibrance, monotone, gradient map, posterize, invert, noise, vignette, colour fringe, pixelate, and an overlay layer. Most can be limited to the shadows, midtones or highlights. Every filter has a plain-words explanation. |
+| **Overlays** | Lay a texture, your own picture or a solid colour over the video with any of Photoshop's 27 blend modes and an opacity slider. Comes with 32 built-in textures: grunge, paper, film grain, light leaks, bokeh, manga screentones and speed lines, retro scanlines, rain and more. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
+| **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
+| **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
+| **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
 
 Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
