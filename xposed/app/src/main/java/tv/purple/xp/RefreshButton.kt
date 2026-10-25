@@ -56,6 +56,9 @@ object RefreshButton {
         log("RB hooks: $n")
     }
 
+    /** The player Twitch is using now, for the stats box. */
+    fun currentPlayer(): Any? = player?.get()
+
     /** The live channel login, from the stream address (".../api/channel/hls/<login>.m3u8"). */
     private fun liveLogin(): String? {
         val path = lastUri?.path ?: return null

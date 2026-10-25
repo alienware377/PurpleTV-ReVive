@@ -374,6 +374,7 @@ object ViewHider {
         timed("following") { runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") } }
         timed("points") { runCatching { PointsWatch.check(root) } }
         timed("backspace") { runCatching { PickerBackspace.attach(root) } }
+        timed("stats") { runCatching { PlayerStats.attach(root) } }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")
