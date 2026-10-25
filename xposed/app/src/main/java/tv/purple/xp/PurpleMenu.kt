@@ -236,6 +236,8 @@ object PurpleMenu {
             listOf("Default", "Mod", "Strikethrough", "Grey"), done = true),
         Drop("Pinned messages", "Choose the behavior of pinned messages in the chat",
             PinnedChat.KEY, listOf("Default", "Disabled", "30 sec."), done = true),
+        Toggle("Hide Drops notices", "Dismisses the \"Twitch Drops\" banner at the top of chat, like pressing its own Dismiss button",
+            PinnedChat.KEY_DROPS, done = true),
         Slide("Chat font size", "Adjust the font size for chat messages",
             ChatAppearance.KEY_FONT_SIZE, min = 8, max = 24,
             def = ChatAppearance.FONT_SIZE_DEFAULT, done = true),
