@@ -121,6 +121,98 @@ object FiltersPanel {
         fun setEnabled(on: Boolean) { seek.isEnabled = on; view.alpha = if (on) 1f else 0.45f }
     }
 
+    /** The 16-band equaliser: a card that folds open to one slider per band. */
+    private class EqCard(val ctx: Context) {
+        val view: View
+        private val status = TextView(ctx).apply { setTextColor(PURPLE); textSize = 12.5f }
+        private val chevron = TextView(ctx).apply { setTextColor(MUTED); textSize = 14f }
+        private val body = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        private val icon = AudioIcon("eq")
+        private val bands = ArrayList<Pair<SeekBar, TextView>>()
+
+        init {
+            val head = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(ImageView(ctx).apply { setImageDrawable(icon) },
+                    LinearLayout.LayoutParams(dp(ctx, 22f), dp(ctx, 22f)).apply { rightMargin = dp(ctx, 10f) })
+                addView(TextView(ctx).apply { text = "Equaliser"; setTextColor(TEXT); textSize = 15.5f },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { rightMargin = dp(ctx, 8f) })
+                addView(helpChip(ctx, "Equaliser", AudioFilters.EQ_HELP), LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f))
+                    .apply { rightMargin = dp(ctx, 8f) })
+                addView(chevron)
+                setOnClickListener { Settings.set(KEY_OPEN, !Settings.get(KEY_OPEN, true)); syncOpen() }
+            }
+            for (i in AudioFilters.EQ_HZ.indices) {
+                val v = TextView(ctx).apply { setTextColor(MUTED); textSize = 12f; gravity = Gravity.END }
+                val sb = slider(ctx).apply { max = AudioFilters.EQ_MAX * 2 }
+                sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                        if (!fromUser) return
+                        val g = p - AudioFilters.EQ_MAX
+                        AudioFilters.setEqGain(i, g); v.text = gainText(g); syncStatus(); AudioFilters.refresh()
+                    }
+                    override fun onStartTrackingTouch(s: SeekBar?) {}
+                    override fun onStopTrackingTouch(s: SeekBar?) {}
+                })
+                // Tap the value to put just this band back to 0.
+                v.setOnClickListener { AudioFilters.setEqGain(i, 0); load(); AudioFilters.refresh() }
+                bands.add(sb to v)
+                body.addView(LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(TextView(ctx).apply { text = AudioFilters.eqLabel(i); setTextColor(TEXT); textSize = 13f },
+                        LinearLayout.LayoutParams(dp(ctx, 56f), ViewGroup.LayoutParams.WRAP_CONTENT))
+                    addView(sb, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(v, LinearLayout.LayoutParams(dp(ctx, 54f), ViewGroup.LayoutParams.WRAP_CONTENT))
+                })
+            }
+            body.addView(TextView(ctx).apply {
+                text = "Flat"; setTextColor(PURPLE); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+                setPadding(dp(ctx, 2f), dp(ctx, 8f), dp(ctx, 12f), dp(ctx, 4f))
+                setOnClickListener { AudioFilters.resetEq(); load(); AudioFilters.refresh() }
+            })
+            view = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                background = GradientDrawable().apply { setColor(CARD); cornerRadius = dp(ctx, 14f).toFloat() }
+                setPadding(dp(ctx, 12f), dp(ctx, 10f), dp(ctx, 12f), dp(ctx, 8f))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(ctx, 8f) }
+                addView(head)
+                addView(body)
+            }
+            load(); syncOpen()
+        }
+
+        private fun gainText(g: Int) = if (g == 0) "0 dB" else (if (g > 0) "+" else "") + g + " dB"
+
+        private fun syncOpen() {
+            val open = Settings.get(KEY_OPEN, true)
+            body.visibility = if (open) View.VISIBLE else View.GONE
+            chevron.text = if (open) "\u25B4" else "\u25BE"
+        }
+
+        private fun syncStatus() {
+            val n = AudioFilters.EQ_HZ.indices.count { AudioFilters.eqGain(it) != 0 }
+            status.text = if (n == 0) "Flat" else "$n changed"
+            icon.color = if (n > 0) PURPLE else Color.WHITE; icon.invalidateSelf()
+        }
+
+        fun load() {
+            for ((i, b) in bands.withIndex()) {
+                val g = AudioFilters.eqGain(i)
+                b.first.progress = g + AudioFilters.EQ_MAX; b.second.text = gainText(g)
+            }
+            syncStatus()
+        }
+
+        fun setEnabled(on: Boolean) { bands.forEach { it.first.isEnabled = on }; view.alpha = if (on) 1f else 0.45f }
+
+        companion object { const val KEY_OPEN = "af_ui_eq_open" }
+    }
+
     /** Line icons for the audio filters. */
     private class AudioIcon(val key: String) : FilterIcons.Icon() {
         override fun paint(c: Canvas, s: Float) {
@@ -154,6 +246,14 @@ object FiltersPanel {
                     c.drawRoundRect(RectF(s * 0.38f, s * 0.12f, s * 0.62f, s * 0.58f), s * 0.12f, s * 0.12f, stroke)
                     c.drawArc(RectF(s * 0.26f, s * 0.3f, s * 0.74f, s * 0.72f), 0f, 180f, false, stroke)
                     line(0.5f, 0.72f, 0.5f, 0.86f); line(0.36f, 0.86f, 0.64f, 0.86f)
+                }
+                "eq" -> {      // three equaliser sliders
+                    val knobs = floatArrayOf(0.62f, 0.3f, 0.5f)
+                    for (k in 0..2) {
+                        val x = 0.25f + k * 0.25f
+                        line(x, 0.14f, x, 0.86f)
+                        c.drawCircle(s * x, s * knobs[k], s * 0.08f, fill)
+                    }
                 }
                 "bass", "treble" -> {   // a slow or fast wave
                     val f = if (key == "bass") 0.25f else 0.9f
@@ -256,9 +356,35 @@ object FiltersPanel {
         val videoPane = ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(list) }
         root.addView(videoPane, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val audioRows = ArrayList<AudioRow>()
+        var eqCard: EqCard? = null
         val audioList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         if (AudioFilters.supported()) {
-            for (fx in AudioFilters.FX) { val r = AudioRow(ctx, fx); audioRows.add(r); audioList.addView(r.view) }
+            // Bass and Treble, or (switched) the full 16-band equaliser in their place.
+            val simple = ArrayList<View>()
+            val eq = EqCard(ctx).also { eqCard = it }
+            fun syncEqMode() {
+                val full = AudioFilters.fullEq()
+                simple.forEach { it.visibility = if (full) View.GONE else View.VISIBLE }
+                eq.view.visibility = if (full) View.VISIBLE else View.GONE
+            }
+            for (fx in AudioFilters.FX) {
+                if (fx.key == "bass") {
+                    audioList.addView(LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        background = GradientDrawable().apply { setColor(CARD); cornerRadius = dp(ctx, 14f).toFloat() }
+                        setPadding(dp(ctx, 12f), dp(ctx, 6f), dp(ctx, 12f), dp(ctx, 6f))
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(ctx, 8f) }
+                        addView(switchRow(ctx, "Full equaliser (16 bands instead of Bass and Treble)", AudioFilters.fullEq()) { on ->
+                            Settings.set(AudioFilters.KEY_EQ_FULL, on); syncEqMode(); AudioFilters.refresh(); changed()
+                        })
+                    })
+                }
+                val r = AudioRow(ctx, fx); audioRows.add(r); audioList.addView(r.view)
+                if (fx.key == "bass" || fx.key == "treble") simple.add(r.view)
+                if (fx.key == "treble") audioList.addView(eq.view)
+            }
+            syncEqMode()
         } else audioList.addView(TextView(ctx).apply {
             text = "Audio filters need Android 9 or newer."; setTextColor(MUTED); textSize = 13f
         })
@@ -281,7 +407,7 @@ object FiltersPanel {
                 setPadding(dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 12f), dp(ctx, 10f))
                 setOnClickListener {
                     if (audioPane.visibility == View.VISIBLE) {
-                        AudioFilters.resetAll(); audioRows.forEach { it.load() }; AudioFilters.refresh(); changed()
+                        AudioFilters.resetAll(); audioRows.forEach { it.load() }; eqCard?.load(); AudioFilters.refresh(); changed()
                     } else { FilterDefs.resetAll(); rows.forEach { it.load() }; changed() }
                 }
             })
@@ -298,6 +424,7 @@ object FiltersPanel {
         fun syncEnabled() {
             rows.forEach { it.setEnabled(Settings.get(VideoFilters.KEY_ON, true)) }
             audioRows.forEach { it.setEnabled(Settings.get(AudioFilters.KEY_ON, true)) }
+            eqCard?.setEnabled(Settings.get(AudioFilters.KEY_ON, true))
         }
         fun showTab(audio: Boolean) {
             Settings.setInt(KEY_TAB, if (audio) 1 else 0)

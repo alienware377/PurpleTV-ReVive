@@ -48,9 +48,28 @@ object AudioFilters {
 
     fun amount(key: String) = Settings.getInt("af_$key", 0)
     fun setAmount(key: String, v: Int) = Settings.setInt("af_$key", v)
-    fun resetAll() { for (f in FX) setAmount(f.key, 0) }
+    fun resetAll() { for (f in FX) setAmount(f.key, 0); resetEq() }
 
-    fun anyActive(): Boolean = supported() && Settings.get(KEY_ON, true) && FX.any { amount(it.key) != 0 }
+    /** The full equaliser replaces Bass and Treble while it is switched on. */
+    const val KEY_EQ_FULL = "af_eq_full"
+    fun fullEq() = Settings.get(KEY_EQ_FULL, false)
+    fun inUse(fx: Fx) = !(fullEq() && (fx.key == "bass" || fx.key == "treble"))
+
+    fun anyActive(): Boolean = supported() && Settings.get(KEY_ON, true) &&
+        (FX.any { inUse(it) && amount(it.key) != 0 } || (fullEq() && EQ_HZ.indices.any { eqGain(it) != 0 }))
+
+    // ---- the 16-band equaliser ----
+
+    /** Centre of each equaliser band, in Hz. */
+    val EQ_HZ = intArrayOf(30, 40, 60, 100, 200, 300, 500, 1000, 2000, 3000, 4000, 5000, 6000, 8000, 12000, 16000)
+    const val EQ_MAX = 12
+    const val EQ_HELP = "Turn single frequency ranges up or down. The low numbers are bass and rumble (30 to 200 Hz), " +
+        "the middle is where voices live (300 Hz to 4k), and the high numbers are treble, hiss and sparkle (5k to 16k)."
+
+    fun eqGain(i: Int) = Settings.getInt("af_eq_$i", 0).coerceIn(-EQ_MAX, EQ_MAX)
+    fun setEqGain(i: Int, v: Int) = Settings.setInt("af_eq_$i", v.coerceIn(-EQ_MAX, EQ_MAX))
+    fun resetEq() { for (i in EQ_HZ.indices) Settings.setInt("af_eq_$i", 0) }
+    fun eqLabel(i: Int): String { val hz = EQ_HZ[i]; return if (hz >= 1000) "${hz / 1000}k" else "$hz Hz" }
 
     // ---- attaching ----
 
@@ -122,8 +141,10 @@ object AudioFilters {
 
     // ---- settings to effect parameters ----
 
-    /** Equaliser band tops in Hz: rumble, bass, low mids, presence, treble, air. */
-    private val CUTS = floatArrayOf(80f, 250f, 2000f, 5000f, 10000f, 20000f)
+    /** Where each equaliser band ends: halfway (on a log scale) to the next centre, the last at 20 kHz. */
+    private val CUTS = FloatArray(16) { i ->
+        if (i == 15) 20000f else kotlin.math.sqrt(EQ_HZ[i].toFloat() * EQ_HZ[i + 1]).toFloat()
+    }
 
     private fun apply(dp: DynamicsProcessing) {
         val on = anyActive()
@@ -134,19 +155,25 @@ object AudioFilters {
         val cmp = amount("comp").coerceIn(0, 100) / 100f
         val lim = amount("limit").coerceIn(0, 100) / 100f
         val voice = amount("voice").coerceIn(0, 100) / 100f
-        val bass = amount("bass").coerceIn(-12, 12).toFloat()
-        val treble = amount("treble").coerceIn(-12, 12).toFloat()
         val low = amount("lowcut").coerceIn(0, 100) / 100f
 
-        // Equaliser.
-        val gains = floatArrayOf(
-            bass * 0.6f - 24f * low,
-            bass - 2.5f * voice,
-            0f,
-            5f * voice,
-            treble + 1.5f * voice,
-            treble
-        )
+        // Equaliser: the full equaliser's bands, or Bass and Treble as gentle shelves over the
+        // same bands, plus what Voice clarity and Rumble cut add.
+        val full = fullEq()
+        val bass = amount("bass").coerceIn(-12, 12).toFloat()
+        val treble = amount("treble").coerceIn(-12, 12).toFloat()
+        val gains = FloatArray(EQ_HZ.size) { i ->
+            val hz = EQ_HZ[i]
+            var g = if (full) eqGain(i).toFloat() else {
+                val b = when { hz <= 100 -> 1f; hz <= 200 -> 0.6f; hz <= 300 -> 0.25f; else -> 0f }
+                val t = when { hz >= 8000 -> 1f; hz >= 6000 -> 0.8f; hz >= 5000 -> 0.6f; hz >= 4000 -> 0.35f; else -> 0f }
+                bass * b + treble * t
+            }
+            if (hz <= 60) g -= 24f * low else if (hz == 100) g -= 8f * low
+            if (hz in 100..300) g -= 2.5f * voice
+            if (hz in 2000..5000) g += 5f * voice else if (hz in 6000..8000) g += 1.5f * voice
+            g
+        }
         val eq = DynamicsProcessing.Eq(true, true, CUTS.size)
         for (i in CUTS.indices) eq.setBand(i, DynamicsProcessing.EqBand(true, CUTS[i], gains[i]))
         dp.setPreEqAllChannelsTo(eq)
