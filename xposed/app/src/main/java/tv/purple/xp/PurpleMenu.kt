@@ -362,6 +362,16 @@ object PurpleMenu {
         Link("FrankerFaceZ", "frankerfacez.com", "https://frankerfacez.com")
     )
 
+    private val UPDATES = listOf(
+        Toggle("Check for updates",
+            "Look for a new PurpleTV ReVive version on GitHub when Twitch starts, a few times a day at most, " +
+                "and show what changed",
+            UpdateChecker.KEY, def = true, done = true),
+        Custom("Check for updates now",
+            "You have PurpleTV ReVive " + BuildConfig.VERSION_NAME.replace("-twitch", ", built for Twitch "),
+            { UpdateChecker.checkNow(it) })
+    )
+
     /** The master switch, and the only row shown while it is off. */
     private val MASTER = Toggle("PurpleTV enabled",
         "Turn this off to get the stock Twitch app back. Everything else stays as you set it. " +
@@ -383,6 +393,7 @@ object PurpleMenu {
                 toast(ctx, "Tips will show again")
                 ViewHider.reapply()
             }),
+        Sub("Updates", items = UPDATES),
         Sub("Info", items = INFO)
     )
 

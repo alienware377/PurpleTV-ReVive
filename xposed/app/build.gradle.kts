@@ -17,6 +17,10 @@ android {
         versionName = "0.8.0-twitch31.1.2"
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
