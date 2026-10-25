@@ -72,9 +72,7 @@ object EmoteAutocomplete {
                 val v = param.thisObject as? EditText ?: return
                 v.post {
                     runCatching {
-                        val entry = runCatching {
-                            v.resources.getResourceEntryName(v.id)
-                        }.getOrNull() ?: return@post
+                        val entry = Res.entry(v) ?: return@post
                         if (entry != "message_input") return@post
                         attach(v, v.context ?: return@post)
                     }.onFailure { log("AC attach error: $it") }
@@ -365,7 +363,7 @@ object EmoteAutocomplete {
     private fun inputRow(input: EditText): View {
         var v: View? = input
         while (v != null) {
-            val e = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+            val e = Res.entry(v)
             if (e == "chat_message_input_view_container" || e == "message_input_view_container") return v
             v = v.parent as? View
         }

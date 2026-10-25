@@ -176,7 +176,7 @@ object HomeTabs {
     private fun findStrip(root: View): View? {
         var fallback: View? = null
         walk(root) { v ->
-            val e = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+            val e = Res.entry(v)
             if (e != null && e in STRIP_IDS) {
                 if (v.visibility == View.VISIBLE && fallback == null) fallback = v
                 else if (fallback == null) fallback = v

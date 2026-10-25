@@ -89,7 +89,7 @@ object ChatAppearance {
         var rowIndex = 0
         var nItem = 0; var nMessage = 0; var nContainer = 0
         walk(root) { v ->
-            when (runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()) {
+            when (Res.entry(v)) {
                 // Ordinary chat lines carry chat_message_item; the One Chat overlay and the
                 // user-notice rows carry chat_message. Both are message TextViews, so both are
                 // sized -- matching only one of them is what left the slider inert.

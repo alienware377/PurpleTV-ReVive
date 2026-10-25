@@ -298,8 +298,7 @@ object PickerSections {
         r.getIdentifier(name, type, v.context.packageName).takeIf { it != 0 } ?: r.getIdentifier(name, type, RES_PKG)
     }
     private fun find(root: View, entry: String): View? = res(root, entry, "id").takeIf { it != 0 }?.let { root.findViewById(it) }
-    private fun entry(v: View): String? =
-        if (v.id == View.NO_ID) null else runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+    private fun entry(v: View): String? = Res.entry(v)
     private fun allFields(c: Class<*>): List<Field> {
         val out = ArrayList<Field>(); var k: Class<*>? = c
         while (k != null && k != Any::class.java) { out.addAll(k.declaredFields); k = k.superclass }

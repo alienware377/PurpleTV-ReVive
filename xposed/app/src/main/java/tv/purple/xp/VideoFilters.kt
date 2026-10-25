@@ -66,9 +66,9 @@ object VideoFilters {
     /** Called from every ViewHider pass, and right away whenever something in the panel changes. */
     fun attach(root: View) {
         val ctx = root.context
-        val id = ctx.resources.getIdentifier("playback_view_container", "id", ctx.packageName)
+        val id = Res.id(ctx, "playback_view_container")
         if (id != 0) {
-            val sig = signature()
+            val sig = cachedSignature()
             val found = ArrayList<TextureView>()
             collectVideos(root, id, found)
             for (tv in found) {
@@ -86,6 +86,16 @@ object VideoFilters {
     /** Re-run [attach] on the screen in front, after a change made in the panel. */
     fun refresh(anyView: View) {
         anyView.rootView?.let { r -> runCatching { attach(r) } }
+    }
+
+    private var sigKey = -1
+    private var sigCache = "off"
+
+    /** [signature], recomputed only when a setting changed: it reads every filter's settings. */
+    private fun cachedSignature(): String {
+        val key = Settings.rev * 2 + (if (GlVideoFilter.available()) 1 else 0)
+        if (key != sigKey) { sigCache = signature(); sigKey = key }
+        return sigCache
     }
 
     private fun signature(): String {
@@ -351,7 +361,7 @@ object VideoFilters {
         val on = Settings.get(KEY_BUTTON, true)
         if (!on && !added) return
         val ctx = root.context
-        fun ids(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun ids(n: String) = Res.id(ctx, n)
         val settingsId = ids("settings_button")
         if (settingsId == 0) return
         val bars = ArrayList<ViewGroup>()
@@ -392,7 +402,7 @@ object VideoFilters {
             if (btn.x != x) btn.x = x
             if (btn.y != ref.y) btn.y = ref.y
             if (btn.visibility != View.VISIBLE) btn.visibility = View.VISIBLE
-            (btn.drawable as? FilterIcons.Tune)?.setActive(anyActive())
+            (btn.drawable as? FilterIcons.Tune)?.setActive(cachedSignature() != "off")
             runCatching { placeTip(bar, btn, ref) }
         }
     }

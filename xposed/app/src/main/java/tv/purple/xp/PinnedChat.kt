@@ -46,7 +46,7 @@ object PinnedChat {
         val mode = Settings.getInt(KEY, MODE_DEFAULT)
         if (mode == MODE_DEFAULT) { if (!Settings.get(KEY_DROPS, false)) restoreAll(); return }
         val ctx = root.context
-        fun id(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun id(n: String) = Res.id(ctx, n)
         val headerId = id("highlight_header")
         val containerId = id("community_highlight_container")
         if (headerId == 0 || containerId == 0) return
@@ -90,7 +90,7 @@ object PinnedChat {
     private fun dismiss(container: View, header: View, key: String, mask: Boolean) {
         if (busy) return
         val ctx0 = container.context
-        fun id0(n: String) = ctx0.resources.getIdentifier(n, "id", ctx0.packageName)
+        fun id0(n: String) = Res.id(ctx0, n)
         val page0 = ancestor(header, id0("highlight_container")) ?: header
         val already = (container as? ViewGroup)?.findViewById<View>(id0("dismiss_pinned_message_button"))?.takeIf { it.isShown }
         val arrow = (page0 as? ViewGroup)?.findViewById<View>(id0("banner_action_icon"))?.takeIf { it.isShown }
@@ -112,7 +112,7 @@ object PinnedChat {
         done[key] = longArrayOf(attempt, android.os.SystemClock.uptimeMillis())
         if (mask) container.alpha = 0f
         val ctx = container.context
-        fun id(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun id(n: String) = Res.id(ctx, n)
         // Expand the banner: its action arrow, or the banner itself.
         val page = ancestor(header, id("highlight_container")) ?: header
         if (already == null) {
@@ -158,7 +158,7 @@ object PinnedChat {
     private fun applyDrops(root: View) {
         if (!Settings.get(KEY_DROPS, false)) return
         val ctx = root.context
-        fun id(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun id(n: String) = Res.id(ctx, n)
         val title = str(root, "twitch_drops") ?: return
         val headers = ArrayList<TextView>()
         collect(root, id("highlight_header"), headers)
@@ -181,7 +181,7 @@ object PinnedChat {
         container.alpha = 0f
         val ctx = root.context
         val label = str(root, "dismiss_drops") ?: "Dismiss This Message"
-        val page = ancestor(header, ctx.resources.getIdentifier("highlight_container", "id", ctx.packageName)) ?: header
+        val page = ancestor(header, Res.id(ctx, "highlight_container")) ?: header
         (clickTarget(page) ?: clickUp(header))?.performClick()
         var tries = 0
         val poll = object : Runnable {
@@ -218,13 +218,13 @@ object PinnedChat {
     }
 
     private fun str(v: View, name: String): String? {
-        val id = v.resources.getIdentifier(name, "string", v.context.packageName)
+        val id = Res.id(v.context, name, "string")
         return if (id == 0) null else runCatching { v.resources.getString(id).trim() }.getOrNull()
     }
 
     /** The words before the badge and name in "Pinned by <badge> name", in the app's language. */
     private fun pinnedByPrefix(v: View): String? {
-        val id = v.resources.getIdentifier("pinned_chat_message_pinned_by_text", "string", v.context.packageName)
+        val id = Res.id(v.context, "pinned_chat_message_pinned_by_text", "string")
         if (id == 0) return null
         val raw = runCatching { v.resources.getText(id).toString() }.getOrNull() ?: return null
         val cut = raw.indexOfFirst { it == '￼' || it == '%' }

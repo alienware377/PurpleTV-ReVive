@@ -285,7 +285,7 @@ object PurpleMenu {
             "show_stats_button"),
         Toggle("Show refresh button",
             "Enable the display of a refresh button, allowing you to manually refresh the stream",
-            RefreshButton.KEY, done = true),
+            RefreshButton.KEY, def = true, done = true),
         Toggle("Hide Unfollow button", "", "hide_unfollow_button", done = true),
         Toggle("Hide \"Follow/Subscribe\" button", "", "hide_fsb", done = true),
         Toggle("Hide \"Create clip button\"", "", "hide_player_create_clip_button", done = true),

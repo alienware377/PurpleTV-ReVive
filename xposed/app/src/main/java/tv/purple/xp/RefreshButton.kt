@@ -94,10 +94,10 @@ object RefreshButton {
 
     /** From each ViewHider pass: add, place or remove the button. Live streams only. */
     fun attach(root: View) {
-        val on = Settings.get(KEY, false)
+        val on = Settings.get(KEY, true)
         if (!on && !added) return
         val ctx = root.context
-        fun ids(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun ids(n: String) = Res.id(ctx, n)
         val settingsId = ids("settings_button"); if (settingsId == 0) return
         val bars = ArrayList<ViewGroup>()
         collectBars(root, settingsId, bars)

@@ -114,7 +114,7 @@ object PickerFavorites {
 
     /** Depth-first search for the first descendant whose resource entry name == [entry]. */
     private fun findByEntry(root: View, entry: String): View? {
-        val e = runCatching { root.resources.getResourceEntryName(root.id) }.getOrNull()
+        val e = Res.entry(root)
         if (e == entry) return root
         if (root is ViewGroup) {
             for (i in 0 until root.childCount) {

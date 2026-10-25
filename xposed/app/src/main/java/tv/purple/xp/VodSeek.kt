@@ -62,7 +62,7 @@ object VodSeek {
     /** From each ViewHider pass: wrap the seek buttons' own touch listeners once. */
     fun attach(root: View) {
         val ctx = root.context
-        fun id(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun id(n: String) = Res.id(ctx, n)
         for ((name, forward) in listOf("seek_forward_button" to true, "seek_rewind_button" to false)) {
             val vid = id(name); if (vid == 0) continue
             val v = (root as? ViewGroup)?.findViewById<View>(vid) ?: continue

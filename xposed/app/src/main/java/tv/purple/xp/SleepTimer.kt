@@ -50,7 +50,7 @@ object SleepTimer {
         if (!on && dueAt > 0) { handler.removeCallbacks(fire); dueAt = 0 }
         if (!on && !added) return
         val ctx = root.context
-        fun ids(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+        fun ids(n: String) = Res.id(ctx, n)
         val settingsId = ids("settings_button")
         if (settingsId == 0) return
         // Every player overlay on screen that has a settings gear gets the button.

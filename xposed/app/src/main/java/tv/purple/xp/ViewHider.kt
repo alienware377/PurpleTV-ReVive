@@ -159,21 +159,36 @@ object ViewHider {
      * reached through a public getMenu() that any menu-hosting view exposes. Views that have no
      * such method, or whose menu lacks the item, are skipped.
      */
+    private fun entryOf(v: View): String? = Res.entry(v)
+
+    /** getMenu() per view class, or null when the class has none. Looked up once per class: asking
+     *  every view by reflection threw for almost all of them and froze the UI thread. */
+    private val menuGetter = HashMap<Class<*>, java.lang.reflect.Method?>()
+
+    private fun menuOf(v: View): android.view.Menu? {
+        val m = menuGetter.getOrPut(v.javaClass) { runCatching { v.javaClass.getMethod("getMenu") }.getOrNull() }
+            ?: return null
+        return runCatching { m.invoke(v) as? android.view.Menu }.getOrNull()
+    }
+
+    /** Whether the Browse item was ever hidden, so switching the option off can put it back. */
+    private var browseTouched = false
+
     private fun hideBrowseItem(act: Activity, hide: Boolean) {
+        if (!hide && !browseTouched) return
+        if (hide) browseTouched = true
         val itemId = runCatching {
             act.resources.getIdentifier("viewer_bottom_nav_explore", "id", act.packageName)
         }.getOrDefault(0)
         if (itemId == 0) return
         val root = act.window?.decorView ?: return
         walk(root) { v ->
-            val menu = runCatching {
-                v.javaClass.getMethod("getMenu").invoke(v) as? android.view.Menu
-            }.getOrNull() ?: return@walk
+            val menu = menuOf(v) ?: return@walk
             val item = runCatching { menu.findItem(itemId) }.getOrNull() ?: return@walk
             // Guarded: the walk visits every menu-hosting view in the window, and some menus
             // refuse mutation. An escaping throw here used to abort the whole pass silently.
             runCatching { if (item.isVisible == hide) item.isVisible = !hide }
-            runCatching { dumpNav(v) }
+            if (hide) runCatching { dumpNav(v) }
         }
     }
 
@@ -202,11 +217,12 @@ object ViewHider {
      * cells there are, and undoes itself when Browse is switched back on.
      */
     private fun recentreCreateButton(root: View) {
+        if (!Settings.get(KEY_BROWSE, false) && NUDGED.isEmpty()) return
         var button: View? = null
         var cell: View? = null
         walk(root) { v ->
             if (v.width == 0) return@walk
-            when (runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()) {
+            when (entryOf(v)) {
                 CREATE_BUTTON -> button = v
                 CREATE_CELL -> cell = v
             }
@@ -263,7 +279,7 @@ object ViewHider {
         val sb = StringBuilder("NAV bar w=${bar.width}")
         walk(root) { v ->
             if (v.width == 0) return@walk
-            val entry = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+            val entry = entryOf(v)
                 ?: return@walk
             if (!entry.startsWith("viewer_bottom_nav") && entry != CREATE_BUTTON) return@walk
             v.getLocationInWindow(pos)
@@ -311,11 +327,26 @@ object ViewHider {
     private var passCount = 0
     private var passSecond = 0L
 
+    /** Time spent per part of the pass in the current second: name -> (total ns, worst ns). */
+    private val prof = LinkedHashMap<String, LongArray>()
+
+    private inline fun <T> timed(name: String, block: () -> T): T {
+        val t0 = System.nanoTime()
+        try { return block() } finally {
+            val d = System.nanoTime() - t0
+            val a = prof.getOrPut(name) { LongArray(2) }
+            a[0] += d; if (d > a[1]) a[1] = d
+        }
+    }
+
     private fun countPass() {
         val sec = android.os.SystemClock.uptimeMillis() / 1000
         if (sec != passSecond) {
-            if (passCount > 30) log("VH layout storm: $passCount passes in one second")
-            passSecond = sec; passCount = 0
+            val total = prof.values.sumOf { it[0] } / 1_000_000
+            if (total > 60) log("VH load: $passCount passes, ${total}ms in one second; " +
+                prof.entries.sortedByDescending { it.value[0] }.take(5)
+                    .joinToString { "${it.key} ${it.value[0] / 1_000_000}ms (worst ${it.value[1] / 1_000_000})" })
+            passSecond = sec; passCount = 0; prof.clear()
         }
         passCount++
     }
@@ -326,21 +357,21 @@ object ViewHider {
         val active = RULES.filter { it.active() }
         val root = act.window?.decorView ?: return
         // Menu-backed rather than view-backed, so it runs every pass regardless of the view rules.
-        runCatching { hideBrowseItem(act, Settings.get(KEY_BROWSE, false)) }
-        runCatching { recentreCreateButton(root) }
+        timed("browse") { runCatching { hideBrowseItem(act, Settings.get(KEY_BROWSE, false)) } }
+        timed("create") { runCatching { recentreCreateButton(root) } }
 
         // Report whenever the enabled set CHANGES rather than once ever. A one-shot log fired on
         // the first layout pass and then went stale, which made it report "(none)" while a rule
         // was in fact switched on -- a diagnostic that lies is worse than none at all.
-        runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) }
-        runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) }
-        runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) }
-        runCatching { SleepTimer.attach(root) }.onFailure { log("sleep timer: $it") }
-        runCatching { VideoFilters.attach(root) }.onFailure { log("video filters: $it") }
-        runCatching { RefreshButton.attach(root) }.onFailure { log("refresh button: $it") }
-        runCatching { PinnedChat.apply(root) }.onFailure { log("pinned chat: $it") }
-        runCatching { VodSeek.attach(root) }.onFailure { log("vod seek: $it") }
-        runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") }
+        timed("hype") { runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) } }
+        timed("unfollow") { runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) } }
+        timed("mature") { runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) } }
+        timed("sleep") { runCatching { SleepTimer.attach(root) }.onFailure { log("sleep timer: $it") } }
+        timed("filters") { runCatching { VideoFilters.attach(root) }.onFailure { log("video filters: $it") } }
+        timed("refresh") { runCatching { RefreshButton.attach(root) }.onFailure { log("refresh button: $it") } }
+        timed("pinned") { runCatching { PinnedChat.apply(root) }.onFailure { log("pinned chat: $it") } }
+        timed("seek") { runCatching { VodSeek.attach(root) }.onFailure { log("vod seek: $it") } }
+        timed("following") { runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") } }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")
@@ -355,12 +386,12 @@ object ViewHider {
 
         // One walk, collecting every view whose entry name is referenced by any rule.
         val found = HashMap<String, MutableList<View>>()
-        walk(root) { v ->
-            val entry = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+        timed("walk") { walk(root) { v ->
+            val entry = entryOf(v)
             if (entry != null && entry in ALL_ENTRIES) {
                 found.getOrPut(entry) { mutableListOf() }.add(v)
             }
-        }
+        } }
         if (found.isEmpty()) return
 
         // An entry is hidden if ANY enabled rule naming it applies in the current orientation.
@@ -466,10 +497,6 @@ object ViewHider {
             }
         }
     }
-
-    private fun entryOf(v: View): String? =
-        if (v.id == View.NO_ID) null
-        else runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
 
     private fun containsVisibleEntry(root: ViewGroup, entry: String): Boolean {
         var hit = false

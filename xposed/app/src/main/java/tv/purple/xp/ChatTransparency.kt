@@ -97,7 +97,7 @@ object ChatTransparency {
         // Collect every matching container by name (PANEL_IDS is already ordered outermost-first).
         val matches = HashMap<String, View>()
         walk(root) { v ->
-            val entry = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+            val entry = Res.entry(v)
             if (entry != null && entry in PANEL_IDS) matches[entry] = v
         }
         if (matches.isEmpty()) return
@@ -196,7 +196,7 @@ object ChatTransparency {
             for (i in 0 until parent.childCount) {
                 val c = parent.getChildAt(i)
                 // A Guideline sets itself GONE in its constructor -- don't skip GONE views.
-                val e = runCatching { c.resources.getResourceEntryName(c.id) }.getOrNull()
+                val e = Res.entry(c)
                 if (e == "chat_guideline") { guide = c; break }
             }
             val guideline = guide ?: return

@@ -28,7 +28,7 @@ object FollowingSections {
 
     fun attach(root: View) {
         val ctx = root.context
-        val id = ctx.resources.getIdentifier("following_list_recycler_view", "id", ctx.packageName)
+        val id = Res.id(ctx, "following_list_recycler_view")
         if (id == 0) return
         val rv = (root as? ViewGroup)?.findViewById<ViewGroup>(id) ?: return
         if (wired.containsKey(rv)) return
@@ -46,8 +46,8 @@ object FollowingSections {
         val any = Settings.get(KEY_RESUME, false) || Settings.get(KEY_GAMES, false) || Settings.get(KEY_OFFLINE, false)
         if (!any && saved.isEmpty()) return false
         val ctx = rv.context
-        fun id(n: String) = ctx.resources.getIdentifier(n, "id", ctx.packageName)
-        fun str(n: String) = ctx.resources.getIdentifier(n, "string", ctx.packageName).takeIf { it != 0 }
+        fun id(n: String) = Res.id(ctx, n)
+        fun str(n: String) = Res.id(ctx, n, "string").takeIf { it != 0 }
             ?.let { runCatching { ctx.getString(it).trim() }.getOrNull() }
         val hdrId = id("following_tab_section_header")
         val hidden = HashMap<String, String?>()

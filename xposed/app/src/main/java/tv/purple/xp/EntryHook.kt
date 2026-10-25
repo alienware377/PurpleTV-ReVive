@@ -65,6 +65,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         }
 
         log("Twitch context ready; wiring features")
+        runCatching { StallSampler.start() }
         runCatching { EmoteRepo.loadGlobalsAsync() }.onFailure { log("emote fetch wire failed: $it") }
         runCatching { EmoteRepo.harvestTwitchAsync(ctx) }.onFailure { log("twitch harvest wire failed: $it") }
         runCatching { EmoteRepo.loadTwitchGlobalAsync() }.onFailure { log("twitch global wire failed: $it") }
