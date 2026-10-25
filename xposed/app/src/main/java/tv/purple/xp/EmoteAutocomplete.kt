@@ -158,6 +158,7 @@ object EmoteAutocomplete {
             val insert = if (needPre) " $name " else "$name "
             ed.insert(pos, insert)
             input.setSelection((pos + insert.length).coerceAtMost(input.text.length))
+            FrequentEmotes.noteInserted(name)
             true
         }.getOrDefault(false)
     }
@@ -257,6 +258,7 @@ object EmoteAutocomplete {
             val safeStart = start.coerceAtMost(safeEnd)
             ed.replace(safeStart, safeEnd, "$name ")
             input.setSelection((safeStart + name.length + 1).coerceAtMost(input.text.length))
+            FrequentEmotes.noteInserted(name)
         }.onFailure { log("AC insert error: $it") }
     }
 
