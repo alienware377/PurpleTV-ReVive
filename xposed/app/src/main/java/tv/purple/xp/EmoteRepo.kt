@@ -206,7 +206,7 @@ object EmoteRepo {
      * close to a thousand emotes, and fetching them in a single line meant the last ones could
      * take many minutes to appear.
      */
-    private val imgPool = Executors.newFixedThreadPool(6) { r ->
+    private val imgPool = Executors.newFixedThreadPool(4) { r ->
         Thread(r, "ptv-img").apply { isDaemon = true }
     }
 
@@ -235,6 +235,32 @@ object EmoteRepo {
      *  which is what lets the fast lane overtake it. */
     private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * When lookups or connections start failing (the network waking up, a busy Private DNS), the
+     * picture downloads pause instead of racing through the whole queue. Before this, one bad
+     * moment turned into hundreds of failed lookups in two seconds, which also starved Twitch's
+     * own requests: chat took half a minute to load on a phone. Pauses grow from 2 s to 60 s.
+     */
+    @Volatile private var netDownUntil = 0L
+    @Volatile private var netBackoff = 2000L
+
+    private fun isNetTrouble(t: Throwable) = t is java.net.UnknownHostException ||
+        t is java.net.ConnectException || t is java.net.SocketTimeoutException || t is java.net.NoRouteToHostException
+
+    private fun waitForNetwork() {
+        val wait = netDownUntil - android.os.SystemClock.uptimeMillis()
+        if (wait > 0) runCatching { Thread.sleep(wait.coerceAtMost(60_000)) }
+    }
+
+    private fun noteNetTrouble(t: Throwable) = synchronized(this) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now >= netDownUntil) {
+            netDownUntil = now + netBackoff
+            log("img: network trouble (${t.javaClass.simpleName}), pausing picture downloads ${netBackoff / 1000}s")
+            netBackoff = (netBackoff * 2).coerceAtMost(60_000)
+        }
+    }
+
     /** Download and decode one emote, unless it is already here or already downloading. A queued
      *  background task re-checks at start, so if the fast lane got there first it just skips. */
     private fun fetch(name: String) {
@@ -243,11 +269,22 @@ object EmoteRepo {
         if (url in gone) return
         if (!inflight.add(name)) return
         try {
-            val d = buildDrawable(name, getBytes(url), Resources.getSystem())
-            if (d != null) { builtFrom[name] = url; drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
-        } catch (t: Throwable) {
-            if (isGone(t)) gone.add(url)
-            log("img fail '$name': $t")
+            var tries = 0
+            while (true) {
+                waitForNetwork()
+                try {
+                    val d = buildDrawable(name, getBytes(url), Resources.getSystem())
+                    if (d != null) { builtFrom[name] = url; drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
+                    netBackoff = 2000L
+                    break
+                } catch (t: Throwable) {
+                    if (isNetTrouble(t) && ++tries < 4) { noteNetTrouble(t); continue }
+                    if (isGone(t)) gone.add(url)
+                    if (isNetTrouble(t)) noteNetTrouble(t)
+                    log("img fail '$name': $t")
+                    break
+                }
+            }
         } finally {
             inflight.remove(name)
         }
@@ -693,6 +730,10 @@ object EmoteRepo {
             runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post { PinnedChat.channelChanged() } }
             log("channel $myId ($channelName) published: +${cMap.size} inject, +${cTwitch.size} twitch (map=${map.size}); prefetching")
             // Download channel images into the live maps; aborts mid-loop if the user switches.
+            // A short head start first, so Twitch's own chat and stream requests go out before
+            // hundreds of picture downloads join them.
+            runCatching { Thread.sleep(2500) }
+            if (activeChannel != myId) return@Thread
             prefetchDrawables(myId)
             if (activeChannel != myId) return@Thread
             prefetchSuggestDrawables(myId)
