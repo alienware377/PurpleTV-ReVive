@@ -171,7 +171,7 @@ object GlVideoFilter {
     class Params(
         val uniforms: Map<String, FloatArray>,
         val ovlKey: String, val ovlBitmap: Bitmap?, val ovlColor: Int, val ovlTiled: Boolean, val ovlScale: Float,
-        val grad: IntArray, val mono: IntArray, val animatedGrain: Boolean
+        val grad: IntArray, val mono: IntArray, val animatedGrain: Boolean, val active: Set<String>
     ) {
         companion object {
             fun snapshot(tv: TextureView): Params {
@@ -183,7 +183,8 @@ object GlVideoFilter {
                 return Params(VideoFilters.uniforms(w, h), src + "|" + (bmp?.generationId ?: color), bmp, color,
                     VideoFilters.overlayTiled(), FilterDefs.extraInt("ovl", "scale", 50).coerceIn(10, 400) / 100f,
                     VideoFilters.gradientColors(), VideoFilters.monoColors(),
-                    FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true))
+                    FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true),
+                    VideoFilters.activeKeys())
             }
         }
     }
@@ -201,6 +202,8 @@ object GlVideoFilter {
         private var prog = 0
         private var vao = 0
         private val locs = HashMap<String, Int>()
+        /** Programs built for a set of active filters (see FilterShader.glsl), by set. */
+        private val progs = HashMap<String, Int>()
         private var seed = 0f
 
         fun warmUp() = h.post {
@@ -218,7 +221,7 @@ object GlVideoFilter {
                 check(ctx != EGL14.EGL_NO_CONTEXT) { "no EGL context" }
                 pbuf = EGL14.eglCreatePbufferSurface(dpy, cfg, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
                 check(EGL14.eglMakeCurrent(dpy, pbuf, pbuf, ctx))
-                prog = link(VERT, FilterShader.GLSL)
+                prog = programFor(emptySet())
                 val va = IntArray(1); GLES30.glGenVertexArrays(1, va, 0); vao = va[0]
                 ok = true
                 log("GL filter ready: ${GLES30.glGetString(GLES30.GL_RENDERER)}")
@@ -243,7 +246,18 @@ object GlVideoFilter {
             return p
         }
 
-        private fun loc(name: String) = locs.getOrPut(name) { GLES30.glGetUniformLocation(prog, name) }
+        private fun loc(name: String) = locs.getOrPut("$prog:$name") { GLES30.glGetUniformLocation(prog, name) }
+
+        /** The program with only [active] filters compiled in; built once per set, the last few kept. */
+        private fun programFor(active: Set<String>): Int {
+            val id = active.sorted().joinToString(",")
+            progs[id]?.let { return it }
+            if (progs.size >= 6) {
+                for (old in progs.values) if (old != prog) GLES30.glDeleteProgram(old)
+                progs.values.retainAll(setOf(prog)); locs.clear()
+            }
+            return link(VERT, FilterShader.glsl(active)).also { progs[id] = it }
+        }
 
         fun start(p: Pipe) = h.post {
             try {
@@ -296,13 +310,15 @@ object GlVideoFilter {
             EGL14.eglQuerySurface(dpy, p.win, EGL14.EGL_HEIGHT, wh, 1)
             val w = wh[0].coerceAtLeast(1); val hh = wh[1].coerceAtLeast(1)
             GLES30.glViewport(0, 0, w, hh)
+            val par0 = p.params
+            prog = programFor(par0?.active ?: emptySet())
             GLES30.glUseProgram(prog)
             GLES30.glBindVertexArray(vao)
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, p.oes)
             GLES30.glUniform1i(loc("uVideo"), 0)
             GLES30.glUniformMatrix4fv(loc("uTexMatrix"), 1, false, p.stm, 0)
-            val par = p.params
+            val par = par0
             if (par == null) {
                 // Off: every filter at zero, so the body passes the picture straight through.
                 for (u in FilterShader.FILTER_UNIFORMS) GLES30.glUniform3f(loc(u), 0f, 0f, 1f)

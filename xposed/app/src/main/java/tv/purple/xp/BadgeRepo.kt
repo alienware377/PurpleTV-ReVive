@@ -13,7 +13,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Third-party chat badges (FFZ / Chatterino / DankChat / Chatsen / Homies).
+ * Third-party chat badges (FFZ / Chatterino / DankChat / Chatsen / Homies / BTTV).
  *
  * Every supported provider ships a GLOBAL manifest keyed by numeric Twitch user id, so this is
  * fetch-once-at-startup: there is never a per-message or per-user HTTP call. That is the whole
@@ -25,14 +25,14 @@ import java.util.concurrent.ConcurrentHashMap
  *   DankChat   flxrs.com/api/badges                 [ {type,url,users:["uid",..]} ]
  *   Chatsen    raw.githubusercontent.com/chatsen/…  { badges:[{name,image}], users:[{id,badges:[{badgeName}]}] }
  *   Homies     chatterinohomies.com/api/badges/list { badges:[{userId,tooltip,image1,image2,..}] } (2026-10-19)
+ *   BTTV       api.betterttv.net/3/cached/badges/twitch [ {providerId, badge:{description,svg}} ] (2026-10-25)
  *
  * Homies is the odd one out: almost every badge is a personal one (about 9.6k users, 9.6k
  * images), so its images are NOT prefetched. The first message from a Homies user starts a
  * download of just that user's image, and the badge shows from their next message on.
  *
  * NOT supported, deliberately:
- *   BTTV  — its badge images are SVG, which neither ImageDecoder nor BitmapFactory can decode.
- *           Supporting it means shipping a rasterizer, so the toggle stays greyed out.
+ *   (BTTV's images are SVG, which Android cannot decode; SvgBadge draws them instead.)
  *   7TV   — the bulk cosmetics endpoint (7tv.io/v3/cosmetics) returns 404. The only route left is
  *           one request per distinct chatter, which is exactly what this design refuses to do.
  *
@@ -46,9 +46,10 @@ object BadgeRepo {
     const val KEY_DANK = "dankchat_badges"
     const val KEY_CHATSEN = "chatsen_badges"
     const val KEY_HOMIES = "homies_badges"
+    const val KEY_BTTV = "bttv_badges"
 
     private val ALL_SRC = listOf("ffz" to KEY_FFZ, "cha" to KEY_CHA,
-        "dank" to KEY_DANK, "chatsen" to KEY_CHATSEN, "homies" to KEY_HOMIES)
+        "dank" to KEY_DANK, "chatsen" to KEY_CHATSEN, "homies" to KEY_HOMIES, "bttv" to KEY_BTTV)
 
     /** Sources whose images are fetched on first sight instead of up front. */
     private val LAZY = setOf("homies")
@@ -81,6 +82,7 @@ object BadgeRepo {
         "dank" -> Settings.get(KEY_DANK, true)
         "chatsen" -> Settings.get(KEY_CHATSEN, true)
         "homies" -> Settings.get(KEY_HOMIES, false)
+        "bttv" -> Settings.get(KEY_BTTV, true)
         else -> false
     }
 
@@ -122,6 +124,7 @@ object BadgeRepo {
                         "dank" -> loadDankChat()
                         "chatsen" -> loadChatsen()
                         "homies" -> loadHomies()
+                        "bttv" -> loadBttv()
                     }
                 }.onFailure { loaded.remove(src); log("BADGE $src manifest failed: $it") }
             }
@@ -253,6 +256,19 @@ object BadgeRepo {
     private val lazyReady = java.util.concurrent.atomic.AtomicInteger()
 
     /** One background download per image, ever; a failure is not retried this session. */
+    // [ {providerId, badge:{description, svg}} ]: one entry per badged user, only a few hundred.
+    private fun loadBttv() {
+        val arr = JSONArray(EmoteRepo.httpGet("https://api.betterttv.net/3/cached/badges/twitch"))
+        var n = 0
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val b = e.optJSONObject("badge") ?: continue
+            val url = b.optString("svg").takeIf { it.isNotEmpty() } ?: continue
+            add(e.optString("providerId"), Badge("bttv", b.optString("description"), url)); n++
+        }
+        log("BADGE bttv: $n assignments")
+    }
+
     private fun fetchLater(url: String) {
         if (!inflight.add(url)) return
         lazyPool.execute {
@@ -289,6 +305,16 @@ object BadgeRepo {
      * first frame, exactly like EmoteRepo does for animated emotes.
      */
     private fun build(url: String, bytes: ByteArray, res: Resources): Drawable? {
+        if (SvgBadge.isSvg(bytes)) {
+            val bmp = SvgBadge.render(bytes, heightPx) ?: return null
+            // Hidden test switch: save what was drawn, to check it against the real badge.
+            if (Settings.get("dev_dump_svg", false)) runCatching {
+                val dir = Settings.ctx()?.getExternalFilesDir(null) ?: return@runCatching
+                java.io.FileOutputStream(java.io.File(dir, "svg_" + url.substringAfterLast('/') + ".png"))
+                    .use { SvgBadge.render(bytes, 256)?.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            return BitmapDrawable(res, bmp).apply { setBounds(0, 0, heightPx, heightPx) }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val d = runCatching {
                 var tw = heightPx

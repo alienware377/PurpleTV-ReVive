@@ -135,8 +135,6 @@ object PurpleMenu {
             def = EmoteQuality.DEFAULT, done = true)
     )
 
-    // BTTV badges stay greyed out: its badge images are SVG, which Android's image decoders can't
-    // read, so it needs a rasterizer rather than another manifest parser. See BadgeRepo.
     private val BADGES = listOf(
         Toggle("FFZ badges", "Enable support for FrankerFaceZ (FFZ) badges in the chat",
             BadgeRepo.KEY_FFZ, def = true, done = true),
@@ -144,7 +142,8 @@ object PurpleMenu {
             BadgeRepo.KEY_CHA, def = true, done = true),
         Toggle("Homies badges", "Enable support for Homies badges in the chat",
             BadgeRepo.KEY_HOMIES, done = true),
-        Toggle("BTTV Badges", "Enable support for BetterTTV (BTTV) badges in the chat", "bttv_badges"),
+        Toggle("BTTV Badges", "Enable support for BetterTTV (BTTV) badges in the chat",
+            BadgeRepo.KEY_BTTV, def = true, done = true),
         Toggle("DankChat badges", "Enable support for DankChat badges in the chat",
             BadgeRepo.KEY_DANK, def = true, done = true),
         Toggle("Chatsen badges", "Enable support for Chatsen badges in the chat",

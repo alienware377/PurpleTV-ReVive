@@ -307,7 +307,21 @@ object ViewHider {
         return null
     }
 
+    /** Passes in the current second, to report a layout loop (a pass that keeps causing passes). */
+    private var passCount = 0
+    private var passSecond = 0L
+
+    private fun countPass() {
+        val sec = android.os.SystemClock.uptimeMillis() / 1000
+        if (sec != passSecond) {
+            if (passCount > 30) log("VH layout storm: $passCount passes in one second")
+            passSecond = sec; passCount = 0
+        }
+        passCount++
+    }
+
     private fun apply(act: Activity) {
+        countPass()
         // Cheap exit: if nothing is switched on there's no reason to walk the tree at all.
         val active = RULES.filter { it.active() }
         val root = act.window?.decorView ?: return

@@ -23,7 +23,8 @@ float bandw(vec3 f, float L) {
     return smoothstep(f.y - 0.15, f.y, L) * (1.0 - smoothstep(f.z, f.z + 0.15, L));
 }
 float lum3(vec3 c) { return dot(c, LW); }
-float hash(vec2 q) { return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453); }
+// Arithmetic hash (Dave Hoskins), much cheaper on phone GPUs than the classic fract(sin()) one.
+float hash(vec2 q) { vec3 p3 = fract(vec3(q.x, q.y, q.x) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 
 vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -372,14 +373,24 @@ vec4 filterMain(vec2 p) {
     private const val EXTRA_UNIFORMS =
         "uniform float uTime;\nuniform float uBokehMode;\nuniform vec3 uBokehColor;\nuniform float uBokehDensity;\n"
 
-    /** AGSL for RuntimeShader. Children: content (video), ovl, grad, mono. */
-    val AGSL: String by lazy {
+    /** AGSL for RuntimeShader with every filter available. Children: content (video), ovl, grad, mono. */
+    val AGSL: String by lazy { agsl(null) }
+
+    /**
+     * AGSL with only the filters in [active] left adjustable. Every other filter's uniform becomes
+     * a zero constant, so the compiler drops its code entirely. One big shader with every filter
+     * behind a branch made the GPU about 6 ms slower per frame, enough to stutter the video.
+     */
+    fun agsl(active: Set<String>?): String =
         buildString {
             append("uniform shader content;\nuniform shader ovl;\nuniform shader grad;\nuniform shader mono;\n")
             append("uniform vec2 uSize;\nuniform float uBlur;\nuniform float uBlend;\nuniform float uSeed;\n")
             append("uniform float uGrainSize;\nuniform float uGrainColor;\nuniform float uVigSize;\n")
             append(EXTRA_UNIFORMS)
-            for (u in FILTER_UNIFORMS) append("uniform vec3 ").append(u).append(";\n")
+            for (f in FilterDefs.FILTERS) {
+                if (active == null || f.key in active) append("uniform vec3 f_").append(f.key).append(";\n")
+                else append("const vec3 f_").append(f.key).append(" = vec3(0.0);\n")
+            }
             append("vec3 SRC(vec2 p) { return content.eval(p).rgb; }\n")
             append("vec4 OVL(vec2 p) { return ovl.eval(p); }\n")
             append("vec3 GRAD(float t) { return grad.eval(vec2(clamp(t, 0.0, 1.0) * 255.0 + 0.5, 0.5)).rgb; }\n")
@@ -387,14 +398,16 @@ vec4 filterMain(vec2 p) {
             append(BODY)
             append("half4 main(vec2 p) { half4 src = content.eval(p); vec4 o = filterMain(p); return half4(half3(o.rgb), src.a); }\n")
         }
-    }
 
     /**
      * GLSL ES 3.0 fragment shader for our own GL pass. The video comes in as an external OES
      * texture with its SurfaceTexture transform; overlay, gradient and monotone ramps are plain 2D
      * textures. vUv is 0..1 over the output, uSize the output size in pixels.
      */
-    val GLSL: String by lazy {
+    val GLSL: String by lazy { glsl(null) }
+
+    /** GLSL with only the filters in [active] adjustable, like [agsl]. */
+    fun glsl(active: Set<String>?): String =
         buildString {
             append("#version 300 es\n#extension GL_OES_EGL_image_external_essl3 : require\nprecision highp float;\n")
             append("in vec2 vUv;\nout vec4 fragColor;\n")
@@ -403,7 +416,10 @@ vec4 filterMain(vec2 p) {
             append("uniform vec2 uSize;\nuniform float uBlur;\nuniform float uBlend;\nuniform float uSeed;\n")
             append("uniform float uGrainSize;\nuniform float uGrainColor;\nuniform float uVigSize;\n")
             append(EXTRA_UNIFORMS)
-            for (u in FILTER_UNIFORMS) append("uniform vec3 ").append(u).append(";\n")
+            for (f in FilterDefs.FILTERS) {
+                if (active == null || f.key in active) append("uniform vec3 f_").append(f.key).append(";\n")
+                else append("const vec3 f_").append(f.key).append(" = vec3(0.0);\n")
+            }
             append("vec3 SRC(vec2 p) { vec2 uv = clamp(p / uSize, 0.0, 1.0); uv.y = 1.0 - uv.y; ")
             append("return texture(uVideo, (uTexMatrix * vec4(uv, 0.0, 1.0)).xy).rgb; }\n")
             append("vec4 OVL(vec2 p) { return texture(uOvl, p * uOvlScale + uOvlOff); }\n")
@@ -412,7 +428,6 @@ vec4 filterMain(vec2 p) {
             append(BODY)
             append("void main() { vec2 p = vec2(vUv.x, 1.0 - vUv.y) * uSize; fragColor = filterMain(p); }\n")
         }
-    }
 
     val ALL_UNIFORMS: List<String> get() = COMMON_UNIFORMS + FILTER_UNIFORMS
 }

@@ -225,13 +225,28 @@ object VideoFilters {
         return b
     }
 
-    private var shader: RuntimeShader? = null
+    /** Shaders built for a given set of active filters, most recently used last. Building one
+     *  takes a moment, so the last few are kept for switching back and forth in the panel. */
+    private val shaders = object : LinkedHashMap<String, RuntimeShader>(8, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, RuntimeShader>?) = size > 6
+    }
+
+    /** Keys of the filters that currently do something. */
+    fun activeKeys(): Set<String> {
+        val out = HashSet<String>()
+        if (!Settings.get(KEY_ON, true)) return out
+        for (i in FilterDefs.FILTERS.indices) if (usable(i) && FilterDefs.amount(i) != 0) out.add(FilterDefs.FILTERS[i].key)
+        return out
+    }
 
     private fun buildShader(tv: TextureView): RuntimeShader {
-        val s = shader ?: RuntimeShader(FilterShader.AGSL).also { shader = it }
+        val active = activeKeys()
+        val id = active.sorted().joinToString(",")
+        val s = shaders[id] ?: RuntimeShader(FilterShader.agsl(active)).also { shaders[id] = it }
         val w = tv.width.takeIf { it > 0 } ?: 1920
         val h = tv.height.takeIf { it > 0 } ?: 1080
         for ((k, v) in uniforms(w, h)) {
+            if (k.startsWith("f_") && k.substring(2) !in active) continue
             when (v.size) {
                 1 -> s.setFloatUniform(k, v[0])
                 2 -> s.setFloatUniform(k, v[0], v[1])
