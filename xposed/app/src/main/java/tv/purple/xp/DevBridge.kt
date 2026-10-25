@@ -196,7 +196,8 @@ object DevBridge {
                 val v = stack.removeFirst()
                 if (!v.isShown || !v.getGlobalVisibleRect(r) || !r.contains(x, y)) continue
                 val e = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
-                if (e != null) log("DEV at: $e ${v.javaClass.simpleName} $r parent=${runCatching { (v.parent as View).resources.getResourceEntryName((v.parent as View).id) }.getOrNull()}")
+                if (e != null || v is android.view.SurfaceView || v is android.view.TextureView)
+                    log("DEV at: $e ${v.javaClass.name} $r")
                 if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
             }
             log("DEV at ($x,$y) done")

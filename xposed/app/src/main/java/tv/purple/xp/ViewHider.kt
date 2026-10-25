@@ -322,6 +322,7 @@ object ViewHider {
         runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) }
         runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) }
         runCatching { SleepTimer.attach(root) }.onFailure { log("sleep timer: $it") }
+        runCatching { VideoFilters.attach(root) }.onFailure { log("video filters: $it") }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")

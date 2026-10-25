@@ -288,6 +288,9 @@ object PurpleMenu {
         Toggle("Hide \"Share button\" for Live streams", "", "hide_player_live_share_button",
             done = true),
         Toggle("Disable chromecast", "", "disable_cast", done = true),
+        Toggle("Show video filters button",
+            "A button in the player controls with brightness, contrast, clarity, texture, saturation and vibrance for lives and VODs",
+            VideoFilters.KEY_BUTTON, def = true, done = true),
         Slide("Player forward seek", "", "forward_seek", min = 5, max = 120, def = 30, step = 5),
         Slide("Player backward seek", "", "backward_seek", min = 5, max = 120, def = 10, step = 5)
     )

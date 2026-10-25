@@ -31,7 +31,8 @@ object SleepTimer {
     const val KEY = "show_timer_button"
 
     private const val TAG = "ptv_sleep_timer"
-    private val ROW = arrayOf("create_clip_text_button", "switch_to_vertical_view", "cast_button",
+    private val ROW = arrayOf("create_clip_text_button", "create_clip_button_compose_view", "switch_to_vertical_view",
+        "cast_button", "media_route_button",
         "share_button", "settings_button", "audio_and_subtitles")
     private val MINUTES = intArrayOf(15, 30, 45, 60, 90, 120)
 
