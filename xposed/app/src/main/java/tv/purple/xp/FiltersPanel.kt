@@ -55,6 +55,123 @@ object FiltersPanel {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    /** Which tab the panel last showed: 0 video, 1 audio. */
+    private const val KEY_TAB = "vf_ui_tab"
+
+    private fun tabPill(ctx: Context, label: String) = TextView(ctx).apply {
+        text = label; textSize = 14f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER
+        setPadding(0, dp(ctx, 8f), 0, dp(ctx, 8f))
+    }
+
+    private fun styleTab(ctx: Context, t: TextView, selected: Boolean) {
+        t.setTextColor(if (selected) 0xFF140C1F.toInt() else TEXT)
+        t.background = GradientDrawable().apply {
+            setColor(if (selected) PURPLE else CARD); cornerRadius = dp(ctx, 18f).toFloat()
+        }
+    }
+
+    /** One audio filter: icon, name, value (tap to reset), help, slider. */
+    private class AudioRow(val ctx: Context, val fx: AudioFilters.Fx) {
+        val value = TextView(ctx).apply { setTextColor(MUTED); textSize = 13f; gravity = Gravity.END }
+        val seek = slider(ctx)
+        val icon = AudioIcon(fx.key)
+        val view: View
+
+        init {
+            seek.max = fx.max - fx.min
+            seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    val v = p + fx.min
+                    AudioFilters.setAmount(fx.key, v); show(v); AudioFilters.refresh()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+            value.setOnClickListener { AudioFilters.setAmount(fx.key, 0); load(); AudioFilters.refresh() }
+            view = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                background = GradientDrawable().apply { setColor(CARD); cornerRadius = dp(ctx, 14f).toFloat() }
+                setPadding(dp(ctx, 12f), dp(ctx, 10f), dp(ctx, 12f), dp(ctx, 8f))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(ctx, 8f) }
+                addView(LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(ImageView(ctx).apply { setImageDrawable(icon) },
+                        LinearLayout.LayoutParams(dp(ctx, 22f), dp(ctx, 22f)).apply { rightMargin = dp(ctx, 10f) })
+                    addView(TextView(ctx).apply { text = fx.name; setTextColor(TEXT); textSize = 15.5f },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(value, LinearLayout.LayoutParams(dp(ctx, 60f), ViewGroup.LayoutParams.WRAP_CONTENT))
+                    addView(helpChip(ctx, fx.name, fx.help), LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f))
+                        .apply { leftMargin = dp(ctx, 8f) })
+                })
+                addView(seek)
+            }
+            load()
+        }
+
+        fun show(v: Int) {
+            value.text = if (v == 0) "Off" else (if (v > 0 && fx.min < 0) "+" else "") + v + fx.unit
+            icon.color = if (v != 0) PURPLE else Color.WHITE; icon.invalidateSelf()
+        }
+
+        fun load() { val v = AudioFilters.amount(fx.key); seek.progress = v - fx.min; show(v) }
+
+        fun setEnabled(on: Boolean) { seek.isEnabled = on; view.alpha = if (on) 1f else 0.45f }
+    }
+
+    /** Line icons for the audio filters. */
+    private class AudioIcon(val key: String) : FilterIcons.Icon() {
+        override fun paint(c: Canvas, s: Float) {
+            fun line(x1: Float, y1: Float, x2: Float, y2: Float) = c.drawLine(s * x1, s * y1, s * x2, s * y2, stroke)
+            when (key) {
+                "boost" -> {   // speaker with waves
+                    val p = android.graphics.Path().apply {
+                        moveTo(s * 0.14f, s * 0.38f); lineTo(s * 0.3f, s * 0.38f); lineTo(s * 0.5f, s * 0.2f)
+                        lineTo(s * 0.5f, s * 0.8f); lineTo(s * 0.3f, s * 0.62f); lineTo(s * 0.14f, s * 0.62f); close()
+                    }
+                    c.drawPath(p, stroke)
+                    c.drawArc(RectF(s * 0.5f, s * 0.32f, s * 0.72f, s * 0.68f), -60f, 120f, false, stroke)
+                    c.drawArc(RectF(s * 0.5f, s * 0.18f, s * 0.88f, s * 0.82f), -60f, 120f, false, stroke)
+                }
+                "level" -> {   // bars evened out
+                    val hs = floatArrayOf(0.3f, 0.42f, 0.38f, 0.44f, 0.36f)
+                    for (k in 0..4) { val x = 0.18f + k * 0.16f; line(x, 0.5f - hs[k] / 2, x, 0.5f + hs[k] / 2) }
+                }
+                "comp" -> {    // arrows squeezing a line
+                    line(0.15f, 0.5f, 0.85f, 0.5f)
+                    line(0.5f, 0.12f, 0.5f, 0.36f); line(0.4f, 0.27f, 0.5f, 0.37f); line(0.6f, 0.27f, 0.5f, 0.37f)
+                    line(0.5f, 0.88f, 0.5f, 0.64f); line(0.4f, 0.73f, 0.5f, 0.63f); line(0.6f, 0.73f, 0.5f, 0.63f)
+                }
+                "limit" -> {   // a wave under a ceiling
+                    line(0.12f, 0.26f, 0.88f, 0.26f)
+                    val p = android.graphics.Path(); p.moveTo(s * 0.12f, s * 0.6f)
+                    for (k in 1..30) { val x = 0.12f + k * 0.0253f; p.lineTo(s * x, s * (0.6f - 0.3f * kotlin.math.abs(kotlin.math.sin(k * 0.42f)))) }
+                    c.drawPath(p, stroke)
+                }
+                "voice" -> {   // microphone
+                    c.drawRoundRect(RectF(s * 0.38f, s * 0.12f, s * 0.62f, s * 0.58f), s * 0.12f, s * 0.12f, stroke)
+                    c.drawArc(RectF(s * 0.26f, s * 0.3f, s * 0.74f, s * 0.72f), 0f, 180f, false, stroke)
+                    line(0.5f, 0.72f, 0.5f, 0.86f); line(0.36f, 0.86f, 0.64f, 0.86f)
+                }
+                "bass", "treble" -> {   // a slow or fast wave
+                    val f = if (key == "bass") 0.25f else 0.9f
+                    val p = android.graphics.Path(); p.moveTo(s * 0.12f, s * 0.5f)
+                    for (k in 1..40) { val x = 0.12f + k * 0.019f; p.lineTo(s * x, s * (0.5f + 0.26f * kotlin.math.sin(k * f))) }
+                    c.drawPath(p, stroke)
+                }
+                else -> {      // rumble cut: a slope rising from the left
+                    val p = android.graphics.Path().apply {
+                        moveTo(s * 0.12f, s * 0.82f); quadTo(s * 0.3f, s * 0.36f, s * 0.48f, s * 0.36f); lineTo(s * 0.88f, s * 0.36f)
+                    }
+                    c.drawPath(p, stroke)
+                    line(0.18f, 0.2f, 0.36f, 0.2f)
+                }
+            }
+        }
+    }
+
     @SuppressLint("SetTextI18n")
     fun show(anchor: View) {
         val ctx = anchor.context
@@ -77,21 +194,29 @@ object FiltersPanel {
             trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                 intArrayOf(0x88A970FF.toInt(), 0x55FFFFFF))
         }
+        val title = TextView(ctx).apply { setTextColor(TEXT); textSize = 19f; typeface = Typeface.DEFAULT_BOLD }
         root.addView(LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(ImageView(ctx).apply { setImageDrawable(FilterIcons.Tune().apply { color = PURPLE }) },
                 LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f)).apply { rightMargin = dp(ctx, 10f) })
-            addView(TextView(ctx).apply {
-                text = "Video filters"; setTextColor(TEXT); textSize = 19f; typeface = Typeface.DEFAULT_BOLD
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(master)
         })
-        root.addView(TextView(ctx).apply {
-            text = "Only changes how the stream looks on your screen. Works on lives and VODs."
-            setTextColor(MUTED); textSize = 12.5f
-            setPadding(0, dp(ctx, 4f), 0, dp(ctx, 8f))
+        // Video / Audio tabs.
+        val tabVideo = tabPill(ctx, "Video")
+        val tabAudio = tabPill(ctx, "Audio")
+        root.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(ctx, 10f), 0, dp(ctx, 2f))
+            addView(tabVideo, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(ctx, 4f) })
+            addView(tabAudio, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(ctx, 4f) })
         })
+        val blurb = TextView(ctx).apply {
+            setTextColor(MUTED); textSize = 12.5f
+            setPadding(0, dp(ctx, 6f), 0, dp(ctx, 8f))
+        }
+        root.addView(blurb)
 
         val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         for (g in FilterDefs.Group.values()) {
@@ -128,15 +253,24 @@ object FiltersPanel {
             list.addView(body)
             syncHead()
         }
-        root.addView(ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(list) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val videoPane = ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(list) }
+        root.addView(videoPane, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val audioRows = ArrayList<AudioRow>()
+        val audioList = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        if (AudioFilters.supported()) {
+            for (fx in AudioFilters.FX) { val r = AudioRow(ctx, fx); audioRows.add(r); audioList.addView(r.view) }
+        } else audioList.addView(TextView(ctx).apply {
+            text = "Audio filters need Android 9 or newer."; setTextColor(MUTED); textSize = 13f
+        })
+        val audioPane = ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(audioList) }
+        root.addView(audioPane, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        if (!VideoFilters.fullSupport()) {
-            root.addView(TextView(ctx).apply {
-                text = "Some filters need Android 13 or newer and are greyed out on this device."
-                setTextColor(MUTED); textSize = 12f; setPadding(0, dp(ctx, 8f), 0, 0)
-            })
+        val note = TextView(ctx).apply {
+            text = "Some filters need Android 13 or newer and are greyed out on this device."
+            setTextColor(MUTED); textSize = 12f; setPadding(0, dp(ctx, 8f), 0, 0)
+            visibility = if (VideoFilters.fullSupport()) View.GONE else View.VISIBLE
         }
+        root.addView(note)
 
         root.addView(LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -145,7 +279,11 @@ object FiltersPanel {
             addView(TextView(ctx).apply {
                 text = "Reset all"; setTextColor(PURPLE); textSize = 15f; typeface = Typeface.DEFAULT_BOLD
                 setPadding(dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 12f), dp(ctx, 10f))
-                setOnClickListener { FilterDefs.resetAll(); rows.forEach { it.load() }; changed() }
+                setOnClickListener {
+                    if (audioPane.visibility == View.VISIBLE) {
+                        AudioFilters.resetAll(); audioRows.forEach { it.load() }; AudioFilters.refresh(); changed()
+                    } else { FilterDefs.resetAll(); rows.forEach { it.load() }; changed() }
+                }
             })
             addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
             addView(TextView(ctx).apply {
@@ -157,10 +295,32 @@ object FiltersPanel {
             })
         })
 
-        fun syncEnabled() { val on = master.isChecked; rows.forEach { it.setEnabled(on) } }
-        master.setOnCheckedChangeListener { _, v ->
-            Settings.set(VideoFilters.KEY_ON, v); syncEnabled(); changed()
+        fun syncEnabled() {
+            rows.forEach { it.setEnabled(Settings.get(VideoFilters.KEY_ON, true)) }
+            audioRows.forEach { it.setEnabled(Settings.get(AudioFilters.KEY_ON, true)) }
         }
+        fun showTab(audio: Boolean) {
+            Settings.setInt(KEY_TAB, if (audio) 1 else 0)
+            videoPane.visibility = if (audio) View.GONE else View.VISIBLE
+            audioPane.visibility = if (audio) View.VISIBLE else View.GONE
+            note.visibility = if (audio || VideoFilters.fullSupport()) View.GONE else View.VISIBLE
+            styleTab(ctx, tabVideo, !audio); styleTab(ctx, tabAudio, audio)
+            title.text = if (audio) "Audio filters" else "Video filters"
+            blurb.text = if (audio) "Only changes how the stream sounds on your device. Great for voice: even out the volume, tame loud moments, make speech clearer." +
+                    (if (AudioFilters.blocked()) "\n\nAnother audio app (an equaliser or sound effects app) is in control of Twitch's sound right now, so these can't take effect until it lets go." else "")
+                else "Only changes how the stream looks on your screen. Works on lives and VODs."
+            val key = if (audio) AudioFilters.KEY_ON else VideoFilters.KEY_ON
+            master.setOnCheckedChangeListener(null)
+            master.isChecked = Settings.get(key, true)
+            master.setOnCheckedChangeListener { _, v ->
+                Settings.set(key, v); syncEnabled()
+                if (audio) AudioFilters.refresh()
+                changed()
+            }
+        }
+        tabVideo.setOnClickListener { showTab(false) }
+        tabAudio.setOnClickListener { showTab(true) }
+        showTab(Settings.getInt(KEY_TAB, 0) == 1)
         syncEnabled()
 
         d.setContentView(root)

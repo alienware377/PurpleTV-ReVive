@@ -97,6 +97,7 @@ object DevBridge {
         runCatching { ViewHider.reapply() }
         runCatching { ChatAppearance.reapply() }
         runCatching { HomeTabs.reapply() }
+        if (key.startsWith("af_")) runCatching { AudioFilters.refresh() }
         if (key == EmoteQuality.KEY || key == EmoteQuality.KEY_BTTV_WEBP || key == EmoteRepo.KEY_HOMIES)
             EmoteRepo.refetch()
     }

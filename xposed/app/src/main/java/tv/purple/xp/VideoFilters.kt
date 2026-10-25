@@ -39,7 +39,8 @@ object VideoFilters {
 
     const val KEY_BUTTON = "show_filters_button"
     const val KEY_ON = "vf_on"
-    const val KEY_TIP = "vf_tip_dismissed"
+    /** A new key for the audio announcement, so people who closed the first tip see it once more. */
+    const val KEY_TIP = "vf_tip_audio_dismissed"
 
     val FILTERS get() = FilterDefs.FILTERS
 
@@ -392,7 +393,7 @@ object VideoFilters {
                     setImageDrawable(FilterIcons.Tune())
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
-                    contentDescription = "Video filters"
+                    contentDescription = "Video and audio filters"
                     setOnClickListener { FiltersPanel.show(it) }
                 }
                 bar.addView(btn, ViewGroup.LayoutParams(ref.height, ref.height))
@@ -402,7 +403,7 @@ object VideoFilters {
             if (btn.x != x) btn.x = x
             if (btn.y != ref.y) btn.y = ref.y
             if (btn.visibility != View.VISIBLE) btn.visibility = View.VISIBLE
-            (btn.drawable as? FilterIcons.Tune)?.setActive(cachedSignature() != "off")
+            (btn.drawable as? FilterIcons.Tune)?.setActive(cachedSignature() != "off" || AudioFilters.anyActive())
             runCatching { placeTip(bar, btn, ref) }
         }
     }
@@ -429,7 +430,7 @@ object VideoFilters {
                 setPadding(dp(12f), dp(9f) + dp(9f), dp(4f), dp(9f))
                 elevation = dp(6f).toFloat()
                 addView(TextView(ctx).apply {
-                    text = "New: video filters! Tap here to tweak brightness, colours, textures and more."
+                    text = "New: video and audio filters! Tap here to tweak brightness, colours and textures, or even out the sound and make voices clearer."
                     setTextColor(Color.WHITE); textSize = 13f
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(TextView(ctx).apply {

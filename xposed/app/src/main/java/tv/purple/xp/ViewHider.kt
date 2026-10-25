@@ -373,6 +373,7 @@ object ViewHider {
         timed("seek") { runCatching { VodSeek.attach(root) }.onFailure { log("vod seek: $it") } }
         timed("following") { runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") } }
         timed("points") { runCatching { PointsWatch.check(root) } }
+        timed("backspace") { runCatching { PickerBackspace.attach(root) } }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")

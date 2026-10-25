@@ -81,6 +81,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { RefreshButton.install(lpparam) }.onFailure { log("refresh button failed: $it") }
         runCatching { VodSeek.install(lpparam) }.onFailure { log("vod seek failed: $it") }
         runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
+        runCatching { AudioFilters.install() }.onFailure { log("audio filters failed: $it") }
         runCatching { RaidCard.install(lpparam) }.onFailure { log("raid card failed: $it") }
         runCatching { UpdateChecker.schedule() }.onFailure { log("update check failed: $it") }
         runCatching { PickerFavorites.install(lpparam) }.onFailure { log("picker favorites failed: $it") }

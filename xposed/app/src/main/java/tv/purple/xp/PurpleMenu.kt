@@ -235,6 +235,8 @@ object PurpleMenu {
             listOf("Default", "Mod", "Strikethrough", "Grey"), done = true),
         Drop("Pinned messages", "Choose the behavior of pinned messages in the chat",
             PinnedChat.KEY, listOf("Default", "Disabled", "30 sec."), done = true),
+        Drop("Emote picker backspace", "What the backspace button in the emote picker deletes",
+            PickerBackspace.KEY, listOf("Twitch's own", "Whole word or emote", "One letter"), def = PickerBackspace.MODE_WORD, done = true),
         Toggle("Raid card when you arrive with a raid",
             "Twitch moves raiders over a few seconds late, so they miss the raid card in the new chat. This adds it back",
             RaidCard.KEY, def = true, done = true),
