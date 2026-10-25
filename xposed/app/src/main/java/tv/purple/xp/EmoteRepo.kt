@@ -971,6 +971,18 @@ object EmoteRepo {
         it.optString("display_name").ifEmpty { it.optString("username") }.ifEmpty { it.optString("name") }
     }?.takeIf { it.isNotEmpty() }
 
+    /** The emote's own page on its service's website, worked out from its picture address. */
+    fun pageOf(name: String): String? {
+        val url = map[name] ?: return null
+        fun id(re: String) = Regex(re).find(url)?.groupValues?.get(1)
+        return when (srcOf[name]) {
+            "7tv", "homies" -> id("cdn\\.7tv\\.app/emote/([^/]+)/")?.let { "https://7tv.app/emotes/$it" }
+            "bttv" -> id("cdn\\.betterttv\\.net/emote/([^/]+)")?.let { "https://betterttv.com/emotes/$it" }
+            "ffz" -> id("frankerfacez\\.com/emote/(\\d+)/")?.let { "https://www.frankerfacez.com/emoticon/$it-$name" }
+            else -> null
+        }
+    }
+
     /** For the emote popup: (service, uploader, whether it is a global emote rather than this channel's). */
     fun infoOf(name: String): Triple<String, String?, Boolean>? {
         val src = srcOf[name] ?: return null

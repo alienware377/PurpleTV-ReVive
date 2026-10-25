@@ -37,6 +37,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a scrolling list just above the input. 7TV, BTTV and FFZ emotes come first, then your sub emotes, then other Twitch emotes. Hold one to pin it to the top whenever it matches, or to add it to the favorites bar. Pins can be kept per streamer. |
 | **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Can be kept per streamer. |
 | **7TV, BTTV and FFZ in the emote picker** | This channel's and the global 7TV, BTTV, FFZ and Homies emotes appear as their own sections at the bottom of Twitch's emote picker. |
+| **Emote details** | Tap a 7TV, BTTV or FFZ emote in chat to see it big, with where it comes from (global or this channel's), who uploaded it, and a link to its page on 7TV, BetterTTV or FrankerFaceZ. |
 | **Frequently Used** | Emotes you send from the favorites bar or the suggestion list count towards Twitch's Frequently Used row, like ones picked in Twitch's own picker. |
 | **Emote picker backspace** | The backspace button in the emote picker deletes the whole last word or emote at once, or one letter, or keeps Twitch's own behaviour. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |

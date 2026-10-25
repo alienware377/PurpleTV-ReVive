@@ -382,7 +382,7 @@ object PurpleMenu {
     )
 
     /** Every "closed for good" tip, so they can all be brought back at once. */
-    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED)
+    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED, EmoteHooks.KEY_LINK_TIP)
 
     // ---------------------------------------------------------------- entry point
 

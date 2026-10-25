@@ -461,7 +461,7 @@ object VideoFilters {
     }
 
     /** A rounded speech bubble with a small arrow on top, at [arrowX] from its left edge. */
-    private class BubbleDrawable(val fill: Int, val strokeColor: Int, val radius: Float, val strokeW: Float,
+    class BubbleDrawable(val fill: Int, val strokeColor: Int, val radius: Float, val strokeW: Float,
                                  val arrowH: Float) : android.graphics.drawable.Drawable() {
         var arrowX = -1f
         private val fp = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = fill }

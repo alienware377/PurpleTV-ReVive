@@ -424,13 +424,23 @@ object EmoteHooks {
                 addView(img); addView(label)
                 // Where the emote comes from: the service, global or this channel's, and who made it.
                 EmoteRepo.infoOf(name)?.let { (svc, by, global) ->
+                    val page = EmoteRepo.pageOf(name)
                     addView(TextView(ctx).apply {
-                        text = svc + if (global) " global emote" else " channel emote"
+                        val label = svc + if (global) " global emote" else " channel emote"
+                        // A link to the emote's own page on 7TV, BetterTTV or FrankerFaceZ.
+                        text = if (page != null) android.text.SpannableString(label).apply {
+                            setSpan(android.text.style.UnderlineSpan(), 0, label.length, 0)
+                        } else label
                         setTextColor(Color.parseColor("#BF94FF"))
                         gravity = Gravity.CENTER
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                        setPadding(0, dp(ctx, 6f), 0, 0)
+                        setPadding(dp(ctx, 8f), dp(ctx, 6f), dp(ctx, 8f), dp(ctx, 2f))
+                        if (page != null) {
+                            contentDescription = "Open $name on $svc"
+                            setOnClickListener { openPage(ctx, page); dismissPreview() }
+                        }
                     })
+                    if (page != null && !Settings.get(KEY_LINK_TIP, false)) addView(linkTip(ctx, svc, page))
                     if (!by.isNullOrBlank()) addView(TextView(ctx).apply {
                         text = "Uploaded by $by"
                         setTextColor(Color.parseColor("#ADADB8"))
@@ -441,6 +451,7 @@ object EmoteHooks {
                 }
             }
             val dialog = AlertDialog.Builder(ctx).setView(box).create()
+            openPreview = java.lang.ref.WeakReference(dialog)
             dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             box.setOnClickListener { runCatching { dialog.dismiss() } }
             dialog.show()
@@ -457,6 +468,52 @@ object EmoteHooks {
             }, "ptv-preview-$name").start()
             log("emote preview opened: $name")
         }.onFailure { log("emote preview error: $it") }
+    }
+
+    /** Set once the "tap here for the emote's page" tip has been closed. */
+    const val KEY_LINK_TIP = "emote_link_tip_dismissed"
+    private var openPreview: java.lang.ref.WeakReference<android.app.Dialog>? = null
+    private fun dismissPreview() { runCatching { openPreview?.get()?.dismiss() } }
+
+    private fun openPage(ctx: Context, url: String) {
+        runCatching {
+            ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { toast(ctx, "Could not open the emote's page") }
+    }
+
+    /** A one-time speech bubble under the purple line, pointing up at it. Its X closes it for good. */
+    private fun linkTip(ctx: Context, svc: String, page: String): View {
+        val box = LinearLayout(ctx)
+        return box.apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val arrow = dp(ctx, 8f).toFloat()
+            background = VideoFilters.BubbleDrawable(0xF2241B31.toInt(), FilterIcons.PURPLE, dp(ctx, 10f).toFloat(),
+                dp(ctx, 1.5f).toFloat(), arrow)
+            setPadding(dp(ctx, 12f), dp(ctx, 8f) + arrow.toInt(), dp(ctx, 4f), dp(ctx, 8f))
+            layoutParams = LinearLayout.LayoutParams(dp(ctx, 250f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(ctx, 2f); bottomMargin = dp(ctx, 4f)
+            }
+            addView(TextView(ctx).apply {
+                text = "New: tap the purple line to open this emote's page on $svc."
+                setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(ctx).apply {
+                text = "\u2715"; setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                gravity = Gravity.CENTER; contentDescription = "Dismiss tip"
+                setPadding(dp(ctx, 10f), dp(ctx, 2f), dp(ctx, 10f), dp(ctx, 2f))
+                setOnClickListener { Settings.set(KEY_LINK_TIP, true); (box.parent as? ViewGroup)?.removeView(box) }
+            })
+            setOnClickListener { openPage(ctx, page); dismissPreview() }
+            // Point the arrow at the middle, where the purple line sits.
+            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                (v.background as? VideoFilters.BubbleDrawable)?.let { d ->
+                    val x = v.width / 2f
+                    if (d.arrowX != x) { d.arrowX = x; d.invalidateSelf() }
+                }
+            }
+        }
     }
 
     private fun dp(ctx: Context, v: Float): Int =
