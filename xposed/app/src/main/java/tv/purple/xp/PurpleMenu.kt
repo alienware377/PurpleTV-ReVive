@@ -284,7 +284,7 @@ object PurpleMenu {
             "show_stats_button"),
         Toggle("Show refresh button",
             "Enable the display of a refresh button, allowing you to manually refresh the stream",
-            "show_refresh_button_v2"),
+            RefreshButton.KEY, done = true),
         Toggle("Hide Unfollow button", "", "hide_unfollow_button", done = true),
         Toggle("Hide \"Follow/Subscribe\" button", "", "hide_fsb", done = true),
         Toggle("Hide \"Create clip button\"", "", "hide_player_create_clip_button", done = true),
@@ -294,8 +294,10 @@ object PurpleMenu {
         Toggle("Show video filters button",
             "A button in the player controls with brightness, contrast, clarity, texture, saturation and vibrance for lives and VODs",
             VideoFilters.KEY_BUTTON, def = true, done = true),
-        Slide("Player forward seek", "", "forward_seek", min = 5, max = 120, def = 30, step = 5),
-        Slide("Player backward seek", "", "backward_seek", min = 5, max = 120, def = 10, step = 5)
+        Slide("Player forward seek", "How far the VOD forward button jumps, in seconds", VodSeek.KEY_FWD,
+            min = 5, max = 120, def = 30, step = 5, done = true),
+        Slide("Player backward seek", "How far the VOD back button jumps, in seconds", VodSeek.KEY_BACK,
+            min = 5, max = 120, def = 10, step = 5, done = true)
     )
 
     private val GESTURES = listOf(
@@ -320,10 +322,12 @@ object PurpleMenu {
         Toggle("Hide Live & Clips tabs on Home",
             "Removes the Live and Clips tabs and keeps you on Following",
             HomeTabs.KEY, done = true),
-        Toggle("Hide \"Followed Games\"", "", "hide_game_section"),
-        Toggle("Hide \"Recent Watching\"", "", "hide_resume_watching_section"),
-        Toggle("Hide \"Offline Channels\"", "", "hide_offline_channel_section"),
-        Toggle("Hide \"Featured Clips\"", "", "hide_featured_clips_section"),
+        Toggle("Hide \"Categories\" on Following", "Removes the followed categories row from the Following page",
+            FollowingSections.KEY_GAMES, done = true),
+        Toggle("Hide \"Continue Watching\" on Following", "Removes the videos you started from the Following page",
+            FollowingSections.KEY_RESUME, done = true),
+        Toggle("Hide \"Offline Channels\" on Following", "Removes your offline channels from the Following page",
+            FollowingSections.KEY_OFFLINE, done = true),
         Toggle("Show timer button", "A sleep timer in the player controls that pauses the stream after a chosen time",
             SleepTimer.KEY, done = true),
         Toggle("Hide \"Create\" (plus) button", "Removes the plus button from the navigation bar, in portrait and landscape",
