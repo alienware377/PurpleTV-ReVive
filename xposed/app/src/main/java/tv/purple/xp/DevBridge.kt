@@ -35,6 +35,7 @@ object DevBridge {
     private const val ACTION_MODLOG = "tv.purple.xp.DEV_MODLOG"
     private const val ACTION_EMOTE = "tv.purple.xp.DEV_EMOTE"
     private const val ACTION_UPDATE = "tv.purple.xp.DEV_UPDATE"
+    private const val ACTION_VIEW = "tv.purple.xp.DEV_VIEW"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -60,6 +61,7 @@ object DevBridge {
                         ACTION_MODLOG -> ModLogs.test(i.getStringExtra("text").orEmpty())
                         ACTION_FREQ -> FrequentEmotes.test(app, i.getStringExtra("name").orEmpty())
                         ACTION_RAID -> RaidCard.simulate(i.getStringExtra("src").orEmpty(), i.getStringExtra("dst").orEmpty(), i.getIntExtra("n", 5))
+                        ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
                     }
@@ -68,7 +70,7 @@ object DevBridge {
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE); addAction(ACTION_VIEW)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -142,6 +144,46 @@ object DevBridge {
      * the first match that carries a link has that link's own onClick run, which is exactly
      * what a tap on the link does, so link handling can be tested without hunting for pixels.
      */
+    /**
+     * Test aid for screens with live video, where uiautomator cannot dump: list the shown views
+     * (in every window of the app, picker sheets included) whose id name, description or hint
+     * matches [re], with their centres; [click] taps the first; [text] replaces an EditText's
+     * text (never sends anything).
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun view(re: String, click: Boolean, text: String?) {
+        val rx = runCatching { Regex(re) }.getOrNull() ?: return
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            val roots = runCatching {
+                val g = Class.forName("android.view.WindowManagerGlobal")
+                val inst = g.getMethod("getInstance").invoke(null)
+                (g.getDeclaredField("mRoots").apply { isAccessible = true }.get(inst) as List<Any>)
+                    .mapNotNull { r -> runCatching { r.javaClass.getMethod("getView").invoke(r) as? View }.getOrNull() }
+            }.getOrNull() ?: listOfNotNull(ViewHider.currentActivity()?.window?.decorView)
+            var n = 0; var done = false
+            for (root in roots) {
+                val stack = ArrayDeque<View>(); stack.add(root)
+                while (stack.isNotEmpty()) {
+                    val v = stack.removeLast()
+                    if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
+                    if (!v.isShown) continue
+                    val name = Res.entry(v).orEmpty()
+                    val desc = v.contentDescription?.toString().orEmpty()
+                    val hint = (v as? android.widget.TextView)?.hint?.toString().orEmpty()
+                    val label = listOf(name, desc, hint).filter { it.isNotEmpty() }.joinToString(" | ")
+                    if (label.isEmpty() || !rx.containsMatchIn(label)) continue
+                    val loc = IntArray(2).also { v.getLocationOnScreen(it) }
+                    val shown = (v as? android.widget.TextView)?.text?.toString()?.take(80)
+                    log("DEV view: (${loc[0] + v.width / 2},${loc[1] + v.height / 2}) $label${shown?.let { " text=\"$it\"" } ?: ""}")
+                    n++
+                    if (!done && text != null && v is android.widget.EditText) { v.setText(text); v.setSelection(v.text.length); done = true }
+                    else if (!done && click) { v.performClick(); log("DEV view: clicked $label"); done = true }
+                }
+            }
+            log("DEV view '$re': $n match(es)")
+        }
+    }
+
     private fun find(re: String, click: Boolean, url: String?) {
         val act = top?.get() ?: ViewHider.currentActivity() ?: return
         val rx = runCatching { Regex(re) }.getOrNull() ?: return

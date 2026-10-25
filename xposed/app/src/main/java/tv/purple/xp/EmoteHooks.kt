@@ -232,26 +232,39 @@ object EmoteHooks {
 
     private fun injectBody(model: Any?) {
         model ?: return
-        if (EmoteRepo.drawables.isEmpty()) return
+        val waiting = fill(model, first = true)
+        // Drawn before its channel's emotes or their pictures arrived: filled in once they do.
+        if (waiting || EmoteRepo.channelPending()) LateEmotes.add(model)
+    }
+
+    /**
+     * Put an emote picture on each word of the line's body that has one. [first] is the line's
+     * first pass, which skips a body already done; later passes only add words still drawn as
+     * text. Returns true when a word is an emote whose picture is still downloading.
+     */
+    internal fun fill(model: Any, first: Boolean): Boolean {
         val body = runCatching {
             XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence
-        }.getOrNull() ?: return
-        if (body.isEmpty()) return
+        }.getOrNull() ?: return false
+        if (body.isEmpty()) return false
+        val spanned = body as? Spanned
 
         // already processed?
-        if (body is Spanned && body.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return
+        if (first && spanned != null && spanned.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return false
 
         // quick reject: any whole word a known (prefetched) emote?
         val hits = ArrayList<Triple<Int, Int, String>>(2)
+        var waiting = false
         for (m in word.findAll(body)) {
-            if (!EmoteRepo.enabled(m.value)) continue
-            if (EmoteRepo.drawables.containsKey(m.value))
-                hits.add(Triple(m.range.first, m.range.last + 1, m.value))
+            if (!EmoteRepo.map.containsKey(m.value) || !EmoteRepo.enabled(m.value)) continue
+            val s = m.range.first; val e = m.range.last + 1
+            if (!first && spanned != null && spanned.getSpans(s, e, PtvEmoteSpan::class.java).isNotEmpty()) continue
+            if (EmoteRepo.drawables.containsKey(m.value)) hits.add(Triple(s, e, m.value))
             // In the set but its picture is not here yet: jump it to the front of the queue so
-            // the next time it is used it renders.
-            else EmoteRepo.ensure(m.value)
+            // the line can be filled in when it lands.
+            else { waiting = true; EmoteRepo.ensure(m.value) }
         }
-        if (hits.isEmpty()) return
+        if (hits.isEmpty()) return waiting
 
         val out = SpannableStringBuilder(body) // copies existing (native emote) spans
         for ((s, e, name) in hits) {
@@ -261,9 +274,11 @@ object EmoteHooks {
             val d = EmoteRepo.makeAnimated(name) ?: EmoteRepo.drawables[name] ?: continue
             out.setSpan(PtvEmoteSpan(d, name), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        out.setSpan(Marker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+        if (out.getSpans(0, out.length, Marker::class.java).isEmpty())
+            out.setSpan(Marker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
         XposedHelpers.setObjectField(model, Names.BODY_FIELD, out)
-        log("injected ${hits.size} emote(s): ${hits.joinToString(",") { it.third }}")
+        log("injected ${hits.size} emote(s)${if (first) "" else " late"}: ${hits.joinToString(",") { it.third }}")
+        return waiting
     }
 
     // --- tap-to-preview + long-press-to-favorite ---

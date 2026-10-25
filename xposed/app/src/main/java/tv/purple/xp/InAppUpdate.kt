@@ -64,10 +64,16 @@ object InAppUpdate {
     }.getOrDefault(false)
 
     /** From startup: follow the screen in front, and offer an already downloaded update once. */
+    private var installTries = 0
+
     fun install(ctx: Context) {
         if (installed) return
+        // Called while Twitch is still starting, before Android has made its Application; it
+        // exists a moment later.
+        val app = ctx as? Application ?: ctx.applicationContext as? Application
+        if (app == null) { if (++installTries < 20) main.postDelayed({ install(ctx) }, 250); return }
         installed = true
-        val app = ctx.applicationContext as? Application ?: return
+        log("update: watching for downloaded updates")
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(a: Activity) {
                 current = WeakReference(a)
@@ -155,13 +161,15 @@ object InAppUpdate {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply { setColor(0xE6241B31.toInt()); cornerRadius = dp(a, 14f).toFloat(); setStroke(dp(a, 1f), FilterIcons.PURPLE) }
             setPadding(dp(a, 12f), dp(a, 6f), dp(a, 12f), dp(a, 7f))
+            minimumWidth = dp(a, 260f)
             elevation = dp(a, 6f).toFloat()
             isClickable = false; isFocusable = false
-            addView(TextView(a).apply { tag = "text"; setTextColor(Color.WHITE); textSize = 12f })
+            addView(TextView(a).apply { tag = "text"; setTextColor(Color.WHITE); textSize = 12f; isSingleLine = true },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(ProgressBar(a, null, android.R.attr.progressBarStyleHorizontal).apply {
                 tag = "progress"; max = 100
                 progressTintList = android.content.res.ColorStateList.valueOf(FilterIcons.PURPLE)
-            }, LinearLayout.LayoutParams(dp(a, 220f), dp(a, 6f)).apply { topMargin = dp(a, 4f) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 6f)).apply { topMargin = dp(a, 4f) })
         }
         content.addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(a, 30f) })
@@ -171,7 +179,7 @@ object InAppUpdate {
 
     private fun updateBar() {
         val b = bar?.get() ?: return
-        b.findViewWithTag<TextView>("text")?.text = "Downloading PurpleTV ReVive $label  $progress%"
+        b.findViewWithTag<TextView>("text")?.text = "Downloading ReVive $label   $progress%"
         b.findViewWithTag<ProgressBar>("progress")?.progress = progress
     }
 
@@ -220,7 +228,7 @@ object InAppUpdate {
     private fun installNow(a: Activity, f: File) {
         // Android asks once to allow Twitch to install apps; send the user there first if needed.
         if (android.os.Build.VERSION.SDK_INT >= 26 && !a.packageManager.canRequestPackageInstalls()) {
-            Toast.makeText(a, "Allow Twitch to install apps, then come back: the update will be offered again", Toast.LENGTH_LONG).show()
+            Toast.makeText(a, "Allow Twitch to install apps, then come back", Toast.LENGTH_LONG).show()
             Settings.setString(KEY_REMIND_AT, "0")
             runCatching {
                 a.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${a.packageName}")))

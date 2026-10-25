@@ -114,6 +114,7 @@ object BadgeRepo {
         heightPx = (18f * Resources.getSystem().displayMetrics.density).toInt().coerceAtLeast(24)
         Thread({
             var fetched = false
+            var failed = false
             for ((src, _) in ALL_SRC) {
                 if (!enabled(src) || !loaded.add(src)) continue
                 fetched = true
@@ -126,7 +127,12 @@ object BadgeRepo {
                         "homies" -> loadHomies()
                         "bttv" -> loadBttv()
                     }
-                }.onFailure { loaded.remove(src); log("BADGE $src manifest failed: $it") }
+                }.onFailure { failed = true; loaded.remove(src); log("BADGE $src manifest failed: $it") }
+            }
+            // A server that timed out is asked again later, so its badges come back without a restart.
+            if (failed && retries < RETRY_S.size) {
+                val wait = RETRY_S[retries++]
+                Thread({ runCatching { Thread.sleep(wait * 1000L) }; loadAsync() }, "ptv-badge-retry").apply { isDaemon = true }.start()
             }
             if (!fetched) return@Thread
             log("BADGE manifests ready: ${byUser.size} users tagged; prefetching images")
@@ -144,6 +150,9 @@ object BadgeRepo {
             }
         }, "ptv-badge-fetch").apply { isDaemon = true }.start()
     }
+
+    private val RETRY_S = longArrayOf(30, 90, 300)
+    @Volatile private var retries = 0
 
     /** Called when a badge toggle flips, so switching a source on fetches it without a restart. */
     fun refresh() = loadAsync()

@@ -164,6 +164,11 @@ object EmoteRepo {
     private val gSuggestDraw = ConcurrentHashMap<String, Drawable>()
     /** Numeric id of the channel whose emotes are currently merged into the live maps. */
     @Volatile private var activeChannel: String? = null
+    /** The channel whose emotes are in the live set; differs from [activeChannel] while loading. */
+    @Volatile private var publishedFor: String? = null
+
+    /** True while a channel's own emotes are still on their way. */
+    fun channelPending(): Boolean = activeChannel != null && activeChannel != publishedFor
     /** Login of [activeChannel], kept so [refetch] can reload the same channel. */
     @Volatile private var activeName: String? = null
 
@@ -341,9 +346,10 @@ object EmoteRepo {
     private fun loadGlobalsNow() {
         emoteHeightPx = (28f * Resources.getSystem().displayMetrics.density).toInt().coerceAtLeast(36)
         run {
-            runCatching { loadSevenTvGlobal() }.onFailure { log("7TV global failed: $it") }
-            runCatching { loadBttvGlobal() }.onFailure { log("BTTV global failed: $it") }
-            runCatching { loadFfzGlobal() }.onFailure { log("FFZ global failed: $it") }
+            val failed = ArrayList<Pair<String, () -> Unit>>()
+            runCatching { loadSevenTvGlobal() }.onFailure { failed += "7TV" to ::loadSevenTvGlobal; log("7TV global failed: $it") }
+            runCatching { loadBttvGlobal() }.onFailure { failed += "BTTV" to ::loadBttvGlobal; log("BTTV global failed: $it") }
+            runCatching { loadFfzGlobal() }.onFailure { failed += "FFZ" to ::loadFfzGlobal; log("FFZ global failed: $it") }
             if (Settings.get(KEY_HOMIES, false))
                 runCatching { loadHomies(null, map, srcOf) }.onFailure { log("Homies global failed: $it") }
             // Snapshot the global NAMES now (before any channel can merge in) so a later
@@ -354,6 +360,41 @@ object EmoteRepo {
             prefetchDrawables()
             gDraw.putAll(drawables); gSuggestDraw.putAll(suggestDrawables)
             log("emote drawables ready: ${drawables.size}/${map.size}")
+            if (failed.isNotEmpty()) retryGlobals(failed)
+        }
+    }
+
+    /**
+     * Ask again for the global sets whose server timed out at startup (FFZ is often slow), at
+     * growing intervals, so they come back without restarting the app. New names join the global
+     * snapshot, and the live set too unless the channel already uses that name.
+     */
+    private fun retryGlobals(failed: List<Pair<String, () -> Unit>>) {
+        val todo = ArrayList(failed)
+        for (wait in longArrayOf(20, 60, 180, 600)) {
+            runCatching { Thread.sleep(wait * 1000L) }
+            val it = todo.iterator()
+            while (it.hasNext()) {
+                val (name, load) = it.next()
+                val before = HashSet(map.keys)
+                if (runCatching { load() }.onFailure { log("$name global retry failed: $it") }.isFailure) continue
+                it.remove()
+                val added = map.keys.filter { n -> n !in before }
+                synchronized(publishLock) {
+                    for (n in added) {
+                        val u = map[n] ?: continue
+                        gMap.putIfAbsent(n, u)
+                        srcOf[n]?.let { s -> gSrc.putIfAbsent(n, s) }
+                        uploaderOf[n]?.let { s -> gUploader.putIfAbsent(n, s) }
+                    }
+                }
+                log("$name global back on retry: +${added.size}")
+                bumpPicker()
+                prefetchDrawables()
+                for (n in added) drawables[n]?.let { d -> gDraw.putIfAbsent(n, d) }
+                for (n in added) suggestDrawables[n]?.let { d -> gSuggestDraw.putIfAbsent(n, d) }
+            }
+            if (todo.isEmpty()) return
         }
     }
 
@@ -721,6 +762,7 @@ object EmoteRepo {
                 uploaderOf.clear(); uploaderOf.putAll(gUploader); uploaderOf.putAll(cUp)
                 chNames = cMap.keys.toSet()
                 twitch.clear(); twitch.putAll(gTwitch); twitch.putAll(cTwitch)
+                publishedFor = myId
                 drawables.clear(); drawables.putAll(gDraw)
                 suggestDrawables.clear(); suggestDrawables.putAll(gSuggestDraw)
                 // A channel emote that reuses a global name has its own picture: drop the

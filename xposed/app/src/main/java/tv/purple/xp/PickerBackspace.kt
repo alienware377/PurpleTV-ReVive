@@ -1,9 +1,11 @@
 package tv.purple.xp
 
 import android.view.View
-import android.view.ViewGroup
 import android.widget.EditText
-import java.util.WeakHashMap
+import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.XposedHelpers
+import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 
 /**
  * The backspace button in the emote picker: delete the whole last word or emote (the default), one
@@ -17,29 +19,41 @@ object PickerBackspace {
     const val MODE_WORD = 1
     const val MODE_LETTER = 2
 
-    private val wrapped = WeakHashMap<View, View.OnClickListener?>()
-
-    /** From each layout pass. */
-    fun attach(root: View) {
-        val ctx = root.context
-        val id = Res.id(ctx, "delete_emote_button")
-        if (id == 0) return
-        val btn = (root as? ViewGroup)?.findViewById<View>(id) ?: return
-        if (wrapped.containsKey(btn)) return
-        val original = listenerOf(btn)
-        wrapped[btn] = original
-        btn.setOnClickListener { v ->
-            val mode = Settings.getInt(KEY, MODE_WORD)
-            val input = inputFor(v)
-            if (mode == MODE_TWITCH || input == null) { original?.onClick(v); return@setOnClickListener }
-            if (mode == MODE_WORD) deleteWord(input) else deleteLetter(input)
-        }
+    /**
+     * Taken over at the click itself, so it works wherever Twitch puts the picker: in the stream
+     * screen's own window (31.1.2) or in a bottom sheet window of its own (31.7.0), which the
+     * layout-pass walks never see.
+     */
+    fun install(lp: LoadPackageParam) {
+        // Twitch hides its button when the picker opens without the keyboard (on tablets and
+        // unfolded phones, for one). Its picker mode enum keeps readable getters.
+        runCatching {
+            XposedHelpers.findAndHookMethod(TwitchVersion.pick("rpf", "oxf"), lp.classLoader, "getDeleteButtonEnabled", object : XC_MethodHook() {
+                override fun afterHookedMethod(p: MethodHookParam) {
+                    if (Settings.getInt(KEY, MODE_WORD) != MODE_TWITCH) p.result = true
+                }
+            })
+        }.onFailure { log("PB show button failed: $it") }
+        XposedBridge.hookAllMethods(View::class.java, "performClick", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                val v = p.thisObject as? View ?: return
+                if (v.id == View.NO_ID || v.id != Res.id(v.context, "delete_emote_button")) return
+                val mode = Settings.getInt(KEY, MODE_WORD)
+                if (mode == MODE_TWITCH) return
+                val input = inputFor(v) ?: return
+                if (mode == MODE_WORD) deleteWord(input) else deleteLetter(input)
+                p.result = true
+            }
+        })
+        log("PB picker backspace installed")
     }
 
+    /** The chat box, in the picker's own window or the stream screen's. */
     private fun inputFor(v: View): EditText? {
-        val root = v.rootView ?: return null
         val id = Res.id(v.context, "message_input")
-        return (if (id != 0) root.findViewById<View>(id) else null) as? EditText
+        if (id == 0) return null
+        return (v.rootView?.findViewById<View>(id)
+            ?: ViewHider.currentActivity()?.window?.decorView?.findViewById(id)) as? EditText
     }
 
     /** Deletes the selection, or the last word or emote before the cursor with the space after it. */
@@ -66,9 +80,4 @@ object PickerBackspace {
         val start = it.preceding(end).takeIf { p -> p != android.icu.text.BreakIterator.DONE } ?: (end - 1)
         e.delete(start, end)
     }
-
-    private fun listenerOf(v: View): View.OnClickListener? = runCatching {
-        val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(v)
-        li?.javaClass?.getDeclaredField("mOnClickListener")?.apply { isAccessible = true }?.get(li) as? View.OnClickListener
-    }.getOrNull()
 }
