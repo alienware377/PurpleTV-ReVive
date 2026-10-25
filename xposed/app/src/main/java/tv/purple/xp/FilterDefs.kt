@@ -10,7 +10,8 @@ package tv.purple.xp
 object FilterDefs {
 
     enum class Group(val title: String) {
-        LIGHT("Light"), DETAIL("Detail"), COLOR("Colour"), STYLE("Style"), EFFECTS("Effects")
+        LIGHT("Light"), DETAIL("Detail"), COLOR("Colour"), STYLE("Style"), EFFECTS("Effects"),
+        GLITCH("Effects: glitch")
     }
 
     /**
@@ -77,6 +78,9 @@ object FilterDefs {
             bipolar = false),
         Filter("grain", "Noise", Group.EFFECTS,
             "Adds film grain or digital noise. A little can hide compression blockiness.", bipolar = false),
+        Filter("bokeh", "Moving bokeh", Group.EFFECTS,
+            "Soft, glowing out-of-focus lights that drift slowly across the picture, like fairy lights behind a camera. The slider is how strong they are.",
+            bipolar = false, ranged = false, colorIcon = true),
         Filter("vignette", "Vignette", Group.EFFECTS,
             "Darkens the edges to draw your eye to the middle, or lightens them for a faded look.",
             ranged = false),
@@ -84,8 +88,34 @@ object FilterDefs {
             "Splits red and blue slightly apart, like a cheap lens or a glitchy VHS tape.",
             bipolar = false, ranged = false, colorIcon = true),
         Filter("pixel", "Pixelate", Group.EFFECTS,
-            "Turns the picture into big square pixels for a retro game look.", bipolar = false, ranged = false)
+            "Turns the picture into big square pixels for a retro game look.", bipolar = false, ranged = false),
+        // ---- Glitch (all animated; each has its own speed) ----
+        Filter("g_shift", "Slice shift", Group.GLITCH,
+            "Random horizontal strips of the picture jump sideways, like a broken digital signal.", bipolar = false, ranged = false),
+        Filter("g_rgb", "RGB split", Group.GLITCH,
+            "Red and blue jump apart and snap back, a jittery colour split.", bipolar = false, ranged = false, colorIcon = true),
+        Filter("g_vhs", "VHS tracking", Group.GLITCH,
+            "A wobbly old tape: the picture waves gently and a noisy band rolls down the screen.", bipolar = false, ranged = false),
+        Filter("g_blocks", "Block corruption", Group.GLITCH,
+            "Square chunks of the picture tear out of place and change colour, like a corrupted video file.",
+            bipolar = false, ranged = false, colorIcon = true),
+        Filter("g_wave", "Wave", Group.GLITCH,
+            "The picture ripples side to side like a heat haze or underwater.", bipolar = false, ranged = false),
+        Filter("g_shake", "Shake", Group.GLITCH,
+            "The whole picture jitters, like a camera being bumped.", bipolar = false, ranged = false),
+        Filter("g_flicker", "Flicker", Group.GLITCH,
+            "The brightness stutters like a failing light or an old film projector.", bipolar = false, ranged = false),
+        Filter("g_static", "Static", Group.GLITCH,
+            "Bursts of TV snow flash over the picture.", bipolar = false, ranged = false),
+        Filter("g_scan", "Rolling scanlines", Group.GLITCH,
+            "Dark lines that roll down the screen like an old monitor being filmed.", bipolar = false, ranged = false),
+        Filter("g_swap", "Channel swap", Group.GLITCH,
+            "Every so often the colours jump to the wrong channels for a moment.", bipolar = false, ranged = false, colorIcon = true),
+        Filter("g_bleed", "Colour bleed", Group.GLITCH,
+            "Colours smear sideways like a worn-out cable.", bipolar = false, ranged = false, colorIcon = true)
     )
+
+    val BOKEH_COLORS = listOf("Rainbow", "Warm", "Cool", "Pink", "Your colour")
 
     fun index(key: String) = FILTERS.indexOfFirst { it.key == key }
 

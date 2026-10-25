@@ -225,6 +225,62 @@ object FilterIcons {
                 c.drawRect(s * (0.16f + i * 0.23f), s * (0.16f + j * 0.23f), s * (0.37f + i * 0.23f), s * (0.37f + j * 0.23f), f)
             }
         }
+        "bokeh" -> icon { c, s, _, f ->
+            val cols = intArrayOf(0xAAFF8FD8.toInt(), 0xAAFFD24D.toInt(), 0xAA6FD6FF.toInt(), 0xAAA970FF.toInt())
+            val pts = arrayOf(floatArrayOf(0.32f, 0.36f, 0.18f), floatArrayOf(0.66f, 0.3f, 0.14f),
+                floatArrayOf(0.6f, 0.68f, 0.2f), floatArrayOf(0.28f, 0.72f, 0.11f))
+            for (k in 0..3) { f.color = cols[k]; c.drawCircle(s * pts[k][0], s * pts[k][1], s * pts[k][2], f) }
+        }
+        "g_shift" -> icon { c, s, _, f ->
+            val off = floatArrayOf(0f, 0.12f, -0.08f, 0.05f)
+            for (k in 0..3) c.drawRect(s * (0.18f + off[k]), s * (0.18f + k * 0.17f), s * (0.82f + off[k]), s * (0.3f + k * 0.17f), f)
+        }
+        "g_rgb" -> icon { c, s, _, f ->
+            f.color = 0xCCFF4D6D.toInt(); c.drawRoundRect(RectF(s * 0.14f, s * 0.22f, s * 0.7f, s * 0.78f), s * 0.08f, s * 0.08f, f)
+            f.color = 0xCC4DD6FF.toInt(); c.drawRoundRect(RectF(s * 0.3f, s * 0.22f, s * 0.86f, s * 0.78f), s * 0.08f, s * 0.08f, f)
+        }
+        "g_vhs" -> icon { c, s, st, _ ->
+            c.drawRoundRect(RectF(s * 0.1f, s * 0.24f, s * 0.9f, s * 0.76f), s * 0.08f, s * 0.08f, st)
+            c.drawCircle(s * 0.34f, s * 0.48f, s * 0.1f, st); c.drawCircle(s * 0.66f, s * 0.48f, s * 0.1f, st)
+        }
+        "g_blocks" -> icon { c, s, st, f ->
+            for (i in 0..2) for (j in 0..2) c.drawRect(s * (0.14f + i * 0.25f), s * (0.14f + j * 0.25f), s * (0.34f + i * 0.25f), s * (0.34f + j * 0.25f), st.apply { strokeWidth = s * 0.04f })
+            f.color = 0xFFFF5CC8.toInt(); c.drawRect(s * 0.5f, s * 0.28f, s * 0.74f, s * 0.52f, f)
+        }
+        "g_wave" -> icon { c, s, st, _ ->
+            val p = Path(); p.moveTo(s * 0.1f, s * 0.5f)
+            for (k in 1..40) { val x = 0.1f + k * 0.02f; p.lineTo(s * x, s * (0.5f + 0.18f * kotlin.math.sin(k * 0.47f))) }
+            c.drawPath(p, st)
+        }
+        "g_shake" -> icon { c, s, st, _ ->
+            c.drawRoundRect(RectF(s * 0.28f, s * 0.26f, s * 0.72f, s * 0.74f), s * 0.06f, s * 0.06f, st)
+            c.drawLine(s * 0.12f, s * 0.35f, s * 0.18f, s * 0.45f, st); c.drawLine(s * 0.12f, s * 0.55f, s * 0.18f, s * 0.65f, st)
+            c.drawLine(s * 0.88f, s * 0.35f, s * 0.82f, s * 0.45f, st); c.drawLine(s * 0.88f, s * 0.55f, s * 0.82f, s * 0.65f, st)
+        }
+        "g_flicker" -> icon { c, s, _, f ->
+            val p = Path().apply { moveTo(s * 0.58f, s * 0.08f); lineTo(s * 0.26f, s * 0.54f); lineTo(s * 0.48f, s * 0.54f)
+                lineTo(s * 0.4f, s * 0.92f); lineTo(s * 0.76f, s * 0.42f); lineTo(s * 0.54f, s * 0.42f); close() }
+            c.drawPath(p, f)
+        }
+        "g_static" -> icon { c, s, st, f ->
+            c.drawRoundRect(RectF(s * 0.12f, s * 0.2f, s * 0.88f, s * 0.8f), s * 0.08f, s * 0.08f, st)
+            val rnd = java.util.Random(3)
+            for (k in 0 until 30) { f.alpha = 80 + rnd.nextInt(175); c.drawRect(s * (0.18f + rnd.nextFloat() * 0.6f), s * (0.26f + rnd.nextFloat() * 0.46f), s * (0.23f + rnd.nextFloat() * 0.6f).coerceAtMost(s * 0.82f), s * (0.3f + rnd.nextFloat() * 0.46f).coerceAtMost(s * 0.76f), f) }
+        }
+        "g_scan" -> icon { c, s, st, _ ->
+            st.strokeWidth = s * 0.06f
+            for (k in 0..4) c.drawLine(s * 0.14f, s * (0.2f + k * 0.15f), s * 0.86f, s * (0.2f + k * 0.15f), st)
+        }
+        "g_swap" -> icon { c, s, st, _ ->
+            st.color = 0xFFFF4D6D.toInt(); c.drawLine(s * 0.18f, s * 0.36f, s * 0.82f, s * 0.36f, st)
+            c.drawLine(s * 0.82f, s * 0.36f, s * 0.68f, s * 0.24f, st)
+            st.color = 0xFF4DD6FF.toInt(); c.drawLine(s * 0.82f, s * 0.64f, s * 0.18f, s * 0.64f, st)
+            c.drawLine(s * 0.18f, s * 0.64f, s * 0.32f, s * 0.76f, st)
+        }
+        "g_bleed" -> icon { c, s, _, f ->
+            f.shader = LinearGradient(s * 0.1f, 0f, s * 0.9f, 0f, intArrayOf(0x00FF4D9A, 0xFFFF4D9A.toInt(), 0xFF8A6BFF.toInt()), null, Shader.TileMode.CLAMP)
+            c.drawRoundRect(RectF(s * 0.1f, s * 0.32f, s * 0.9f, s * 0.68f), s * 0.18f, s * 0.18f, f)
+        }
         else -> icon { c, s, st, _ -> c.drawCircle(s / 2, s / 2, s * 0.3f, st) }
     }
 }

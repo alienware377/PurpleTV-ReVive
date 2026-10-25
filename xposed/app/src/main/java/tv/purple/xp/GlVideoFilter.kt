@@ -181,7 +181,7 @@ object GlVideoFilter {
                 val color = if (src.startsWith("color:")) src.removePrefix("color:").toIntOrNull() ?: Color.MAGENTA else 0
                 val gi = FilterDefs.index("grain")
                 return Params(VideoFilters.uniforms(w, h), src + "|" + (bmp?.generationId ?: color), bmp, color,
-                    VideoFilters.overlayTiled(), FilterDefs.extraInt("ovl", "scale", 100).coerceIn(10, 400) / 100f,
+                    VideoFilters.overlayTiled(), FilterDefs.extraInt("ovl", "scale", 50).coerceIn(10, 400) / 100f,
                     VideoFilters.gradientColors(), VideoFilters.monoColors(),
                     FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true))
             }
@@ -310,6 +310,7 @@ object GlVideoFilter {
             } else {
                 for ((k, v) in par.uniforms) {
                     val l = loc(k); if (l < 0) continue
+                    if (v.size == 3 && k.startsWith("u")) { GLES30.glUniform3f(l, v[0], v[1], v[2]); continue }
                     when (v.size) {
                         1 -> GLES30.glUniform1f(l, v[0]); 2 -> GLES30.glUniform2f(l, v[0], v[1])
                         else -> GLES30.glUniform3f(l, v[0], v[1], v[2])
@@ -319,6 +320,7 @@ object GlVideoFilter {
                 GLES30.glUniform2f(loc("uSize"), w.toFloat(), hh.toFloat())
                 if (par.animatedGrain) seed = (seed + 1.37f) % 997f
                 GLES30.glUniform1f(loc("uSeed"), seed)
+                GLES30.glUniform1f(loc("uTime"), VideoFilters.now())
                 bindOverlay(p, par, w, hh)
                 p.gradTex = ramp(p.gradTex, p.gradKey, par.grad, 2, "uGrad").also { p.gradKey = par.grad.joinToString() }
                 p.monoTex = ramp(p.monoTex, p.monoKey, par.mono, 3, "uMono").also { p.monoKey = par.mono.joinToString() }

@@ -209,6 +209,7 @@ object FiltersPanel {
         }
 
         val onExtra = { icon.invalidateSelf(); changed() }
+        var onSourcePicked: (() -> Unit)? = null
 
         init {
             val head = LinearLayout(ctx).apply {
@@ -297,7 +298,52 @@ object FiltersPanel {
                 "vignette" -> extras.addView(miniSlider(ctx, "Size", 0, 100, FilterDefs.extraInt("vignette", "size", 50)) {
                     FilterDefs.setExtraInt("vignette", "size", it); onExtra()
                 })
+                "bokeh" -> buildBokeh()
+                else -> if (f.group == FilterDefs.Group.GLITCH) {
+                    extras.addView(miniSlider(ctx, "Speed", 0, 100, FilterDefs.extraInt(f.key, "speed", 50)) {
+                        FilterDefs.setExtraInt(f.key, "speed", it); onExtra()
+                    })
+                }
             }
+        }
+
+        private fun buildBokeh() {
+            val chips = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+            val custom = colorRow(ctx, "Your colour", { FilterDefs.extraInt("bokeh", "color", 0xFFFF8FD8.toInt()) }) {
+                FilterDefs.setExtraInt("bokeh", "color", it); onExtra()
+            }
+            fun sync() {
+                val cur = FilterDefs.extraInt("bokeh", "mode", 0)
+                for (k in 0 until chips.childCount) {
+                    val c = chips.getChildAt(k) as TextView
+                    c.setTextColor(if (k == cur) 0xFF140C1F.toInt() else TEXT)
+                    (c.background as GradientDrawable).setColor(if (k == cur) PURPLE else 0x22FFFFFF)
+                }
+                custom.visibility = if (cur == FilterDefs.BOKEH_COLORS.size - 1) View.VISIBLE else View.GONE
+            }
+            FilterDefs.BOKEH_COLORS.forEachIndexed { k, name ->
+                chips.addView(TextView(ctx).apply {
+                    text = name; textSize = 12f; gravity = Gravity.CENTER
+                    background = GradientDrawable().apply { cornerRadius = dp(ctx, 14f).toFloat() }
+                    setPadding(dp(ctx, 10f), dp(ctx, 5f), dp(ctx, 10f), dp(ctx, 5f))
+                    setOnClickListener { FilterDefs.setExtraInt("bokeh", "mode", k); sync(); onExtra() }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { rightMargin = dp(ctx, 6f) })
+            }
+            extras.addView(HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = dp(ctx, 4f); bottomMargin = dp(ctx, 4f) })
+            extras.addView(custom)
+            extras.addView(miniSlider(ctx, "Light size", 0, 100, FilterDefs.extraInt("bokeh", "size", 45)) {
+                FilterDefs.setExtraInt("bokeh", "size", it); onExtra()
+            })
+            extras.addView(miniSlider(ctx, "How many", 0, 100, FilterDefs.extraInt("bokeh", "density", 45)) {
+                FilterDefs.setExtraInt("bokeh", "density", it); onExtra()
+            })
+            extras.addView(miniSlider(ctx, "Speed", 0, 100, FilterDefs.extraInt("bokeh", "speed", 40)) {
+                FilterDefs.setExtraInt("bokeh", "speed", it); onExtra()
+            })
+            sync()
         }
 
         private fun buildGradientPicker() {
@@ -383,15 +429,18 @@ object FiltersPanel {
                 setOnClickListener { TexturePicker.show(ctx) { src, tex ->
                     FilterDefs.setExtraStr("ovl", TextureLibrary.KEY_SRC, src)
                     if (tex != null) {
-                        // Built-in textures come with sensible defaults; start from those.
+                        // Built-in textures come with sensible defaults; start from those. Patterns
+                        // repeat at half size, full-frame pictures cover the video at full size.
                         FilterDefs.setExtraInt("ovl", "blend", tex.blend)
                         FilterDefs.setExtraBool("ovl", "tile", tex.tile)
+                        FilterDefs.setExtraInt("ovl", "scale", if (tex.tile) 50 else 100)
                         if (FilterDefs.amount(i) == 0) FilterDefs.setAmount(i, tex.opacity)
                     } else {
                         FilterDefs.setExtraBool("ovl", "tile", false)
+                        FilterDefs.setExtraInt("ovl", "scale", 100)
                         if (FilterDefs.amount(i) == 0) FilterDefs.setAmount(i, 50)
                     }
-                    syncSrc(); load(); onExtra()
+                    syncSrc(); load(); onSourcePicked?.invoke(); onExtra()
                 } }
             })
             blendBtn.setPadding(0, dp(ctx, 6f), 0, dp(ctx, 6f))
@@ -407,9 +456,16 @@ object FiltersPanel {
                 addView(helpChip(ctx, "Blend modes", "How the overlay mixes with the video, like Photoshop's layer blend modes. Open the list to read what each one does."),
                     LinearLayout.LayoutParams(dp(ctx, 22f), dp(ctx, 22f)))
             })
-            extras.addView(miniSlider(ctx, "Size", 10, 400, FilterDefs.extraInt("ovl", "scale", 100), "%") {
-                FilterDefs.setExtraInt("ovl", "scale", it); onExtra()
-            })
+            val sizeBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+            fun sizeSlider() {
+                sizeBox.removeAllViews()
+                sizeBox.addView(miniSlider(ctx, "Size", 10, 400, FilterDefs.extraInt("ovl", "scale", 50), "%") {
+                    FilterDefs.setExtraInt("ovl", "scale", it); onExtra()
+                })
+            }
+            sizeSlider()
+            onSourcePicked = { sizeSlider() }
+            extras.addView(sizeBox)
             tileSwitch = Switch(ctx)
             extras.addView(switchRow(ctx, "Repeat as a pattern", VideoFilters.overlayTiled(), tileSwitch) {
                 FilterDefs.setExtraBool("ovl", "tile", it); onExtra()

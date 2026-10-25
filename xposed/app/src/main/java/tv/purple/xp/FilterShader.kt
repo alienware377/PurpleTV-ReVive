@@ -98,21 +98,75 @@ vec3 blendMode(vec3 b, vec3 s, float m) {
 
 float lumAt(vec2 q) { return lum3(SRC(q)); }
 
+vec3 bokehColor(float h) {
+    if (uBokehMode < 0.5) return hsv2rgb(vec3(h, 0.55, 1.0));
+    if (uBokehMode < 1.5) return mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.9, 0.55), h);
+    if (uBokehMode < 2.5) return mix(vec3(0.3, 0.6, 1.0), vec3(0.6, 1.0, 0.95), h);
+    if (uBokehMode < 3.5) return mix(vec3(1.0, 0.45, 0.75), vec3(0.75, 0.5, 1.0), h);
+    return uBokehColor * (0.8 + 0.4 * h);
+}
+
 vec4 filterMain(vec2 p) {
-    // ---- where to sample: pixelate, then colour fringe ----
+    float a = 0.0;
+    float w = 0.0;
+    float blockHit = 0.0;
+    // ---- where to sample: glitch distortions, pixelate, then colour fringe ----
     vec2 q = p;
+    a = f_g_shake.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (3.0 + f_g_shake.y * 20.0));
+        q += (vec2(hash(vec2(ts, 1.3)), hash(vec2(ts, 7.9))) - 0.5) * a * 40.0;
+    }
+    a = f_g_wave.x;
+    if (a > 0.003) q.x += sin(p.y * 0.025 + uTime * (1.0 + f_g_wave.y * 8.0)) * a * 28.0;
+    a = f_g_vhs.x;
+    if (a > 0.003) {
+        float sp = 0.5 + f_g_vhs.y * 2.0;
+        q.x += sin(p.y * 0.045 + uTime * 3.0 * sp) * a * 5.0;
+        float y0 = fract(uTime * 0.12 * sp) * uSize.y * 1.2 - uSize.y * 0.1;
+        float band = 1.0 - smoothstep(0.0, uSize.y * 0.05, abs(p.y - y0));
+        q.x += (hash(vec2(floor(p.y / 3.0), floor(uTime * 30.0))) - 0.5) * band * a * 50.0;
+    }
+    a = f_g_shift.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (2.0 + f_g_shift.y * 22.0));
+        float bh = uSize.y * (0.015 + 0.06 * hash(vec2(ts, 4.2)));
+        float band = floor(p.y / bh);
+        if (hash(vec2(band, ts)) < a * 0.45) q.x += (hash(vec2(band, ts + 7.0)) - 0.5) * uSize.x * 0.2 * a;
+    }
+    a = f_g_blocks.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (2.0 + f_g_blocks.y * 18.0));
+        float bsz = 32.0 + 64.0 * hash(vec2(ts, 2.1));
+        vec2 cell = floor(p / bsz);
+        if (hash(cell + ts * 1.31) < a * 0.22) {
+            q += (vec2(hash(cell + ts + 3.3), hash(cell + ts + 5.7)) - 0.5) * bsz * 3.0;
+            blockHit = 1.0;
+        }
+    }
     if (f_pixel.x > 0.003) {
         float bs = 2.0 + f_pixel.x * 46.0;
-        q = (floor(p / bs) + 0.5) * bs;
+        q = (floor(q / bs) + 0.5) * bs;
     }
     vec3 own = SRC(q);
     if (f_chroma.x > 0.003) {
         vec2 off = vec2(f_chroma.x * 14.0, 0.0);
         own = vec3(SRC(q + off).r, own.g, SRC(q - off).b);
     }
+    a = f_g_rgb.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (3.0 + f_g_rgb.y * 20.0));
+        float j = (hash(vec2(ts, 11.0)) - 0.5) * 2.0;
+        vec2 off = vec2(a * 6.0 + j * a * 22.0, (hash(vec2(ts, 13.0)) - 0.5) * a * 6.0);
+        own = vec3(SRC(q + off).r, own.g, SRC(q - off).b);
+    }
+    a = f_g_bleed.x;
+    if (a > 0.003) {
+        vec3 s1 = SRC(q - vec2(4.0 + a * 10.0, 0.0));
+        vec3 s2 = SRC(q - vec2(8.0 + a * 22.0, 0.0));
+        own = mix(own, max(own, (s1 + s2) * 0.5), a * 0.8);
+    }
     float L0 = lum3(own);
-    float a = 0.0;
-    float w = 0.0;
 
     // ---- light ----
     a = f_exposure.x;
@@ -244,6 +298,63 @@ vec4 filterMain(vec2 p) {
         float mid = 1.0 - abs(lum3(own) * 2.0 - 1.0) * 0.6;
         own = clamp(own + nc * a * 0.35 * mid * bandw(f_grain, L0), 0.0, 1.0);
     }
+    a = f_bokeh.x;
+    if (a > 0.003) {
+        vec3 acc = vec3(0.0);
+        float sp = 0.2 + f_bokeh.y * 1.6;
+        for (int k = 0; k < 4; k++) {
+            float fl = float(k);
+            float S = uSize.y * (0.07 + f_bokeh.z * 0.2) * (1.0 + fl * 0.45);
+            vec2 drift = vec2(sin(uTime * 0.07 * sp + fl * 2.1) * S * 0.8, -uTime * S * 0.06 * sp * (1.0 + fl * 0.35));
+            vec2 pp = p - drift + vec2(fl * 37.0, fl * 91.0);
+            vec2 c = floor(pp / S);
+            float r = hash(c + fl * 17.0);
+            if (r < uBokehDensity) {
+                vec2 ctr = (c + 0.5 + (vec2(hash(c + 3.1 + fl), hash(c + 7.7 + fl)) - 0.5) * 0.3) * S;
+                float rad = S * (0.15 + 0.2 * hash(c + 11.3 + fl));
+                float d = length(pp - ctr) / rad;
+                float disc = (1.0 - smoothstep(0.8, 1.0, d)) * (0.55 + 0.45 * smoothstep(0.5, 0.95, d));
+                float tw = 0.65 + 0.35 * sin(uTime * (0.6 + r * 1.7) * sp + r * 6.28);
+                acc += bokehColor(hash(c + 23.0 + fl)) * disc * tw * (0.55 - fl * 0.08);
+            }
+        }
+        own = 1.0 - (1.0 - own) * (1.0 - clamp(acc * a, 0.0, 1.0));
+    }
+    // ---- glitch colour effects ----
+    if (blockHit > 0.5) own = mix(own, own.gbr * vec3(1.25, 0.85, 1.3), 0.6);
+    a = f_g_vhs.x;
+    if (a > 0.003) {
+        float sp = 0.5 + f_g_vhs.y * 2.0;
+        float y0 = fract(uTime * 0.12 * sp) * uSize.y * 1.2 - uSize.y * 0.1;
+        float band = 1.0 - smoothstep(0.0, uSize.y * 0.05, abs(p.y - y0));
+        own = mix(own, vec3(hash(floor(p / 2.0) + fract(uTime * 9.1) * 50.0)), band * a * 0.5);
+        own *= 1.0 - a * 0.08;
+    }
+    a = f_g_swap.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (2.0 + f_g_swap.y * 14.0));
+        float r = hash(vec2(ts, 21.0));
+        if (r < a * 0.35) own = r < a * 0.17 ? own.brg : own.gbr;
+    }
+    a = f_g_flicker.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (6.0 + f_g_flicker.y * 30.0));
+        own *= 1.0 - a * 0.55 * hash(vec2(ts, 31.0));
+    }
+    a = f_g_scan.x;
+    if (a > 0.003) {
+        float yy = p.y + uTime * (30.0 + f_g_scan.y * 240.0);
+        float line = 0.5 + 0.5 * sin(yy * 0.7);
+        float roll = 1.0 - smoothstep(0.0, uSize.y * 0.08, abs(fract(uTime * (0.08 + f_g_scan.y * 0.3)) * uSize.y - p.y));
+        own *= 1.0 - a * (0.25 * line + 0.25 * roll);
+    }
+    a = f_g_static.x;
+    if (a > 0.003) {
+        float ts = floor(uTime * (4.0 + f_g_static.y * 20.0));
+        float burst = 0.25 + 0.75 * step(0.65, hash(vec2(ts, 41.0)));
+        float n = hash(floor(p / 2.0) + fract(uTime * 7.31) * 100.0);
+        own = mix(own, vec3(n), a * burst * 0.65);
+    }
     a = f_vignette.x;
     if (abs(a) > 0.003) {
         vec2 c = (p / uSize - 0.5) * vec2(uSize.x / uSize.y, 1.0);
@@ -256,7 +367,10 @@ vec4 filterMain(vec2 p) {
 """
 
     private val COMMON_UNIFORMS = listOf("uSize", "uBlur", "uBlend", "uSeed", "uGrainSize",
-        "uGrainColor", "uVigSize")
+        "uGrainColor", "uVigSize", "uTime", "uBokehMode", "uBokehColor", "uBokehDensity")
+
+    private const val EXTRA_UNIFORMS =
+        "uniform float uTime;\nuniform float uBokehMode;\nuniform vec3 uBokehColor;\nuniform float uBokehDensity;\n"
 
     /** AGSL for RuntimeShader. Children: content (video), ovl, grad, mono. */
     val AGSL: String by lazy {
@@ -264,6 +378,7 @@ vec4 filterMain(vec2 p) {
             append("uniform shader content;\nuniform shader ovl;\nuniform shader grad;\nuniform shader mono;\n")
             append("uniform vec2 uSize;\nuniform float uBlur;\nuniform float uBlend;\nuniform float uSeed;\n")
             append("uniform float uGrainSize;\nuniform float uGrainColor;\nuniform float uVigSize;\n")
+            append(EXTRA_UNIFORMS)
             for (u in FILTER_UNIFORMS) append("uniform vec3 ").append(u).append(";\n")
             append("vec3 SRC(vec2 p) { return content.eval(p).rgb; }\n")
             append("vec4 OVL(vec2 p) { return ovl.eval(p); }\n")
@@ -287,6 +402,7 @@ vec4 filterMain(vec2 p) {
             append("uniform sampler2D uOvl;\nuniform vec2 uOvlScale;\nuniform vec2 uOvlOff;\nuniform sampler2D uGrad;\nuniform sampler2D uMono;\n")
             append("uniform vec2 uSize;\nuniform float uBlur;\nuniform float uBlend;\nuniform float uSeed;\n")
             append("uniform float uGrainSize;\nuniform float uGrainColor;\nuniform float uVigSize;\n")
+            append(EXTRA_UNIFORMS)
             for (u in FILTER_UNIFORMS) append("uniform vec3 ").append(u).append(";\n")
             append("vec3 SRC(vec2 p) { vec2 uv = clamp(p / uSize, 0.0, 1.0); uv.y = 1.0 - uv.y; ")
             append("return texture(uVideo, (uTexMatrix * vec4(uv, 0.0, 1.0)).xy).rgb; }\n")

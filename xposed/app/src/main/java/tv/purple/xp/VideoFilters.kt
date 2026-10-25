@@ -133,14 +133,42 @@ object VideoFilters {
 
     @Volatile var seed = 0f
 
+    /** Seconds for animated effects, wrapped so float precision stays good. */
+    fun now(): Float = (android.os.SystemClock.uptimeMillis() % 3_600_000L) / 1000f
+
+    /** Whether any active filter moves by itself, so the picture must be redrawn over time. */
+    fun animated(): Boolean {
+        if (!anyActive()) return false
+        for (i in FilterDefs.FILTERS.indices) {
+            val f = FilterDefs.FILTERS[i]
+            if (FilterDefs.amount(i) == 0 || !usable(i)) continue
+            if (f.group == FilterDefs.Group.GLITCH || f.key == "bokeh") return true
+            if (f.key == "grain" && FilterDefs.extraBool("grain", "animated", true)) return true
+        }
+        return false
+    }
+
     /** All uniforms as name -> values, for whichever shader path is running. */
     fun uniforms(w: Int, h: Int): Map<String, FloatArray> {
         val m = HashMap<String, FloatArray>()
         val on = Settings.get(KEY_ON, true)
         for (i in FilterDefs.FILTERS.indices) {
+            val f = FilterDefs.FILTERS[i]
             val a = if (on && usable(i)) FilterDefs.amount(i) / 100f else 0f
-            m["f_" + FilterDefs.FILTERS[i].key] = floatArrayOf(a, FilterDefs.lo(i) / 100f, FilterDefs.hi(i) / 100f)
+            m["f_" + f.key] = when {
+                // Animated effects carry their speed (and bokeh its size) where the tone range would be.
+                f.group == FilterDefs.Group.GLITCH ->
+                    floatArrayOf(a, FilterDefs.extraInt(f.key, "speed", 50).coerceIn(0, 100) / 100f, 0f)
+                f.key == "bokeh" -> floatArrayOf(a, FilterDefs.extraInt("bokeh", "speed", 40).coerceIn(0, 100) / 100f,
+                    FilterDefs.extraInt("bokeh", "size", 45).coerceIn(0, 100) / 100f)
+                else -> floatArrayOf(a, FilterDefs.lo(i) / 100f, FilterDefs.hi(i) / 100f)
+            }
         }
+        m["uTime"] = floatArrayOf(now())
+        m["uBokehMode"] = floatArrayOf(FilterDefs.extraInt("bokeh", "mode", 0).toFloat())
+        val bc = FilterDefs.extraInt("bokeh", "color", 0xFFFF8FD8.toInt())
+        m["uBokehColor"] = floatArrayOf(Color.red(bc) / 255f, Color.green(bc) / 255f, Color.blue(bc) / 255f)
+        m["uBokehDensity"] = floatArrayOf(0.15f + FilterDefs.extraInt("bokeh", "density", 45).coerceIn(0, 100) / 100f * 0.75f)
         m["uSize"] = floatArrayOf(w.toFloat().coerceAtLeast(1f), h.toFloat().coerceAtLeast(1f))
         m["uBlur"] = floatArrayOf((h * 0.012f).coerceIn(4f, 40f))
         m["uBlend"] = floatArrayOf(FilterDefs.extraInt("ovl", "blend", 12).toFloat())
@@ -172,7 +200,7 @@ object VideoFilters {
         val bmp = TextureLibrary.bitmap(src) ?: return LinearGradient(0f, 0f, 1f, 0f, 0, 0, Shader.TileMode.CLAMP)
         val m = Matrix()
         return if (overlayTiled()) {
-            val s = (h / 1080f).coerceAtLeast(0.3f) * FilterDefs.extraInt("ovl", "scale", 100).coerceIn(10, 400) / 100f
+            val s = (h / 1080f).coerceAtLeast(0.3f) * FilterDefs.extraInt("ovl", "scale", 50).coerceIn(10, 400) / 100f
             m.setScale(s, s)
             BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT).apply { setLocalMatrix(m) }
         } else {
@@ -221,9 +249,7 @@ object VideoFilters {
     private var grainRunning = false
     private val grainTick = object : Runnable {
         override fun run() {
-            val gi = FilterDefs.index("grain")
-            val live = anyActive() && FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true)
-            if (!live) { grainRunning = false; return }
+            if (!animated()) { grainRunning = false; return }
             seed = (seed + 1.37f) % 997f
             for (tv in views.keys.toList()) {
                 if (!tv.isAttachedToWindow) continue
@@ -238,8 +264,7 @@ object VideoFilters {
     private fun scheduleGrain() {
         // The GL path moves its grain on every drawn frame by itself.
         if (grainRunning || GlVideoFilter.available()) return
-        val gi = FilterDefs.index("grain")
-        if (anyActive() && FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true)) {
+        if (animated()) {
             grainRunning = true
             handler.postDelayed(grainTick, 42)
         }
