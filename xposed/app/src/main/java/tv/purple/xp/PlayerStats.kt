@@ -106,6 +106,11 @@ object PlayerStats {
             if (btn.x != x) btn.x = x
             if (btn.y != ref.y) btn.y = ref.y
             if (btn.visibility != View.VISIBLE) btn.visibility = View.VISIBLE
+            // Purple while the stats box is open, like the filters button while filters are on.
+            (btn.drawable as? StatsIcon)?.let { ic ->
+                val c = if (overlay?.get()?.isAttachedToWindow == true) FilterIcons.PURPLE else android.graphics.Color.WHITE
+                if (ic.color != c) { ic.color = c; ic.invalidateSelf() }
+            }
         }
     }
 
@@ -130,6 +135,7 @@ object PlayerStats {
         content.addView(tv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.TOP or Gravity.START))
         overlay = WeakReference(tv)
+        ((v as? ImageView)?.drawable as? StatsIcon)?.let { it.color = FilterIcons.PURPLE; it.invalidateSelf() }
         tick.run()
     }
 
