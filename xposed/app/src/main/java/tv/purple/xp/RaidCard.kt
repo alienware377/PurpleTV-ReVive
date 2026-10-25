@@ -53,16 +53,20 @@ object RaidCard {
         cl = lp.classLoader
         val info = runCatching { XposedHelpers.findClass(RAID_INFO, lp.classLoader) }.getOrNull()
         if (info == null) { log("RC $RAID_INFO not found, raid card fix off"); return }
-        XposedBridge.hookAllConstructors(info, object : XC_MethodHook() {
+        // The raid model is filled in from JSON without its constructor running, so it is read
+        // whenever Twitch asks it for the target channel: when the raid banner is drawn, and when
+        // the raid goes and viewers are moved.
+        XposedHelpers.findAndHookMethod(info, "getTargetChannelId", object : XC_MethodHook() {
             override fun afterHookedMethod(p: MethodHookParam) {
                 runCatching {
                     val o = p.thisObject
+                    val dst = p.result?.let(::tuid) ?: return
                     val src = XposedHelpers.callMethod(o, "getSourceChannelId")?.let(::tuid) ?: return
-                    val dst = XposedHelpers.callMethod(o, "getTargetChannelId")?.let(::tuid) ?: return
                     val n = XposedHelpers.callMethod(o, "getNumUsersInRaid") as? Int ?: 0
                     val prev = lastRaid
-                    lastRaid = Raid(src, dst, n, SystemClock.uptimeMillis())
-                    if (prev?.target != dst || prev.count != n) log("RC raid seen: $src -> $dst with $n viewers")
+                    if (prev?.target == dst && prev.source == src && prev.count == n) return
+                    lastRaid = Raid(src, dst, n, if (prev?.target == dst && prev.source == src) prev.at else SystemClock.uptimeMillis())
+                    log("RC raid seen: $src -> $dst with $n viewers")
                 }.onFailure { log("RC raid read: $it") }
             }
         })
@@ -73,8 +77,18 @@ object RaidCard {
                 }
             })
             XposedBridge.hookAllConstructors(XposedHelpers.findClass(RAID_NOTICE, lp.classLoader), object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    // Twitch's raid message gives the raider's picture as ".../profile_image-%s.png"
+                    // and the app never fills in the size, so the picture fails and the generic
+                    // avatar shows. Fill it in.
+                    val url = p.args.getOrNull(1) as? String ?: return
+                    if (url.contains("%s")) p.args[1] = url.replace("%s", "70x70")
+                }
                 override fun afterHookedMethod(p: MethodHookParam) {
-                    if (!building) { realAt = SystemClock.uptimeMillis(); log("RC Twitch built a raid card itself") }
+                    if (!building) {
+                        realAt = SystemClock.uptimeMillis()
+                        log("RC Twitch built a raid card itself (picture ${p.args.getOrNull(1)})")
+                    }
                 }
             })
         }.onFailure { log("RC chat notice hooks failed: $it") }
