@@ -117,7 +117,7 @@ object InAppUpdate {
             main.post {
                 downloading = false
                 hideBar()
-                val a = current?.get()
+                val a = current?.get() ?: ViewHider.currentActivity()
                 if (!ok) { a?.let { Toast.makeText(it, "The update download failed. It will be offered again later.", Toast.LENGTH_LONG).show() }; return@post }
                 Settings.setString(KEY_FILE, out.path)
                 Settings.setString(KEY_TAG, tag)
@@ -138,7 +138,13 @@ object InAppUpdate {
         val at = Settings.getString(KEY_REMIND_AT, "0").toLongOrNull() ?: 0L
         if (!fresh && System.currentTimeMillis() < at) return
         if (popupShown?.get()?.isShowing == true) return
-        main.postDelayed({ if (!a.isFinishing && a.hasWindowFocus()) showReady(a) }, if (fresh) 4000 else 500)
+        // Shown on whichever screen is in front by then: Twitch opens through a launch screen that
+        // hands over to Home within a fraction of a second, so the first screen is often gone.
+        main.postDelayed({
+            val t = current?.get() ?: a
+            if (popupShown?.get()?.isShowing == true || t.isFinishing || !t.hasWindowFocus()) return@postDelayed
+            showReady(t)
+        }, if (fresh) 4000 else 500)
     }
 
     /** "twitch-31.7.0-purpletv-revive-0.9.4-patched.apk" is newer than the running module? */

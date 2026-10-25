@@ -33,7 +33,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val ctx = param.args[0] as Context
                     log("Application.attach fired — injection LIVE on Twitch. ctx=$ctx")
-                    onTwitchContext(ctx, lpparam)
+                    onTwitchContext(ctx, lpparam, param.thisObject as? Application)
                 }
             }
         )
@@ -41,7 +41,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
 
     @Volatile private var featuresWired = false
 
-    private fun onTwitchContext(ctx: Context, lpparam: LoadPackageParam) {
+    private fun onTwitchContext(ctx: Context, lpparam: LoadPackageParam, app: Application? = null) {
         if (featuresWired) return
         featuresWired = true
         // Runtime kill-switch for isolation testing (toggle without rebuilding, no root):
@@ -89,7 +89,8 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { PlayerStats.install(lpparam) }.onFailure { log("player stats failed: $it") }
         runCatching { AudioFilters.install() }.onFailure { log("audio filters failed: $it") }
         runCatching { RaidCard.install(lpparam) }.onFailure { log("raid card failed: $it") }
-        runCatching { InAppUpdate.install(ctx) }.onFailure { log("in-app update failed: $it") }
+        // The Application itself, so it watches screens from the very first one.
+        runCatching { InAppUpdate.install(app ?: ctx) }.onFailure { log("in-app update failed: $it") }
         runCatching { UpdateChecker.schedule() }.onFailure { log("update check failed: $it") }
         runCatching { PickerFavorites.install(lpparam) }.onFailure { log("picker favorites failed: $it") }
         runCatching { ChatTransparency.install(lpparam) }.onFailure { log("chat transparency failed: $it") }

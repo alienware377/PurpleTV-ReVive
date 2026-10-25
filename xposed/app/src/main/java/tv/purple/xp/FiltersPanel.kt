@@ -319,6 +319,7 @@ object FiltersPanel {
         root.addView(blurb)
 
         val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val heads = ArrayList<() -> Unit>()   // each group's "N on" label, refreshed by Reset all
         for (g in FilterDefs.Group.values()) {
             val members = FilterDefs.FILTERS.indices.filter { FilterDefs.FILTERS[it].group == g }
             val body = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -352,6 +353,7 @@ object FiltersPanel {
             }
             list.addView(body)
             syncHead()
+            heads += ::syncHead
         }
         val videoPane = ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(list) }
         root.addView(videoPane, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -408,7 +410,7 @@ object FiltersPanel {
                 setOnClickListener {
                     if (audioPane.visibility == View.VISIBLE) {
                         AudioFilters.resetAll(); audioRows.forEach { it.load() }; eqCard?.load(); AudioFilters.refresh(); changed()
-                    } else { FilterDefs.resetAll(); rows.forEach { it.load() }; changed() }
+                    } else { FilterDefs.resetAll(); rows.forEach { it.load() }; heads.forEach { it() }; changed() }
                 }
             })
             addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))

@@ -167,6 +167,9 @@ vec4 filterMain(vec2 p) {
         vec3 s2 = SRC(q - vec2(8.0 + a * 22.0, 0.0));
         own = mix(own, max(own, (s1 + s2) * 0.5), a * 0.8);
     }
+    // Video decoders can hand back values a little outside 0..1, and pow() of a negative number
+    // is undefined on the GPU: on Adreno a lifted white turned flat cyan.
+    own = clamp(own, 0.0, 1.0);
     float L0 = lum3(own);
 
     // ---- light ----
@@ -196,7 +199,7 @@ vec4 filterMain(vec2 p) {
         if (a < 0.0) own = clamp(own * (1.0 + a * 0.6 * w), 0.0, 1.0);
     }
     a = f_gamma.x;
-    if (abs(a) > 0.003) own = mix(own, pow(own, vec3(pow(2.0, -a * 1.5))), bandw(f_gamma, L0));
+    if (abs(a) > 0.003) own = mix(own, pow(max(own, 0.0), vec3(pow(2.0, -a * 1.5))), bandw(f_gamma, L0));
     a = f_fade.x;
     if (a > 0.003) {
         w = bandw(f_fade, L0);
