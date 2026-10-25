@@ -49,6 +49,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Username display style** | For people whose display name differs from their login: show both, the international name only, or the login only. |
 | **Vibrate on mention** | Buzz when someone `@mentions` you, with an adjustable duration. |
 | **Push notifications on patched builds** | A re-signed Twitch normally cannot register for push notifications. This lets it, so go-live alerts work on the patched APK too. |
+| **Raid card for raiders** | When you arrive in a channel with a raid, the "is raiding with a party of" card shows in chat, which Twitch otherwise misses because raiders join a few seconds late. |
 | **Skip link warning** | Open chat links straight away, without Twitch's "this link will take you to" confirmation. |
 | **Pinned messages and Drops** | Hide pinned chat messages, or hide them 30 seconds after they appear, and dismiss the Twitch Drops notice, by pressing Twitch's own hide buttons. Hype trains, polls and predictions stay. |
 | **Video filters** | A filters button in the player for lives and VODs, with over 35 filters: exposure, brightness, contrast, highlights, shadows, gamma, fade, clarity, sharpen, soft focus, temperature, tint, hue, saturation, vibrance, monotone, gradient map, posterize, invert, noise, vignette, colour fringe, pixelate, an overlay layer, moving bokeh lights and 11 animated glitch effects (slice shift, RGB split, VHS tracking, block corruption, wave, shake, flicker, static, rolling scanlines, channel swap, colour bleed). Most can be limited to the shadows, midtones or highlights. Every filter has a plain-words explanation. |
@@ -61,6 +62,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
+| **Update checker** | Tells you when a new PurpleTV ReVive version is out, with what changed, a Skip this version button, and an Update button that downloads the right file. Can be switched off under Updates. |
 
 Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
 

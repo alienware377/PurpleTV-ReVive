@@ -40,6 +40,7 @@ object Channels {
                     log("CH channel connect: id=$id name=$name")
                     EmoteRepo.loadChannelAsync(id, name)
                     ChannelPoints.onChannel(id, name)
+                    RaidCard.onChannel(id)
                 }.onFailure { log("CH read error: $it") }
             }
         })

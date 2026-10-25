@@ -30,6 +30,7 @@ object DevBridge {
     private const val ACTION_FIND = "tv.purple.xp.DEV_FIND"
     private const val ACTION_TIMER = "tv.purple.xp.DEV_TIMER"
     private const val ACTION_AT = "tv.purple.xp.DEV_AT"
+    private const val ACTION_RAID = "tv.purple.xp.DEV_RAID"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -50,6 +51,7 @@ object DevBridge {
                         ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
                         ACTION_AT -> at(i.getIntExtra("x", 0), i.getIntExtra("y", 0))
                         ACTION_TIMER -> SleepTimer.start(app, i.getIntExtra("s", 10) * 1000L)
+                        ACTION_RAID -> RaidCard.simulate(i.getStringExtra("src").orEmpty(), i.getStringExtra("dst").orEmpty(), i.getIntExtra("n", 5))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
                     }
@@ -58,7 +60,7 @@ object DevBridge {
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
