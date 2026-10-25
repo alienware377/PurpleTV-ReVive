@@ -62,6 +62,8 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind (on by default). |
 | **Player stats** | A button in the player controls that shows quality, bitrate, frame rate, how far behind live you are, the buffer, the network estimate and dropped frames over the video. |
 | **Disable low latency** | Plays live streams a few seconds further behind, for fewer stutters and rebuffers on a weak connection. |
+| **Turn off autoplay** | When a VOD or clip ends, the next video does not start by itself. The Up next card stays so you can still tap it. |
+| **Keep chat on /clear** | When a moderator clears chat, the messages stay on your screen and a short note says chat was cleared. Timeouts and bans still work. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
