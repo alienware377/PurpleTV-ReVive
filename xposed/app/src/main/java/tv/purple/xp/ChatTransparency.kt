@@ -54,6 +54,7 @@ object ChatTransparency {
         runCatching {
             XposedBridge.hookAllMethods(Activity::class.java, "onResume", hook)
             XposedBridge.hookAllMethods(Activity::class.java, "onConfigurationChanged", hook)
+            hookGuideline(lp)
             log("ChatTransparency installed (Activity onResume/onConfigurationChanged)")
         }.onFailure { log("ChatTransparency hook failed: $it") }
     }
@@ -162,6 +163,19 @@ object ChatTransparency {
     private const val CHAT_WIDTH_MIN = 10
     private const val CHAT_WIDTH_MAX = 50
 
+    /** Twitch has two landscape chat widths: its normal one and an expanded one (swipe the chat
+     *  left; swipe right to go back). Each gets its own setting. */
+    const val KEY_CHAT_WIDTH_WIDE = "landscape_chat_size_wide"
+    const val CHAT_WIDTH_WIDE_DEFAULT = 50
+    const val CHAT_WIDTH_WIDE_MIN = 25
+    const val CHAT_WIDTH_WIDE_MAX = 75
+    /** Twitch's own widths are about 20% and 50%; anything from 35% up is its expanded one. */
+    private const val WIDE_FROM = 0.35f
+
+    /** Whether each guideline is in Twitch's expanded state, judged from Twitch's own writes. */
+    private val wideMode = java.util.WeakHashMap<View, Boolean>()
+    @Volatile private var writing = false
+
     /** Twitch's own split, read from geometry before our first write, so turning the feature
      *  off restores the exact shipped layout. Weak-keyed: never pins a dead Activity. */
     private val originalGuidePercent = java.util.WeakHashMap<View, Float>()
@@ -217,24 +231,52 @@ object ChatTransparency {
             }
             val original = originalGuidePercent[guideline] ?: return
 
-            val target = if (pct == null) original
-                         else 1f - pct.coerceIn(CHAT_WIDTH_MIN, CHAT_WIDTH_MAX) / 100f
-
-            // Idempotence is load-bearing: this runs from a global-layout listener and
-            // setGuidelinePercent calls requestLayout, scheduling another pass. Skip when the
-            // layout already matches, and never write the same value twice.
-            if (kotlin.math.abs(current - target) < 0.005f) return
-            if (lastWritten[guideline]?.let { kotlin.math.abs(it - target) < 0.0001f } == true) return
+            // Twitch moves the guideline itself (when the stream settles, when the controls show,
+            // and between its normal and expanded widths). Whenever it is somewhere we did not put
+            // it, that was Twitch: read which of its two widths it chose, then apply ours for it.
+            val last = lastWritten[guideline]
+            if (last == null || kotlin.math.abs(current - last) > 0.005f)
+                wideMode[guideline] = (1f - current) >= WIDE_FROM
+            val target = if (pct == null) original else targetFor(wideMode[guideline] == true, pct)
+            if (kotlin.math.abs(current - target) < 0.005f) { lastWritten[guideline] = target; return }
 
             val m = mSetGuidePercent ?: runCatching {
                 guideline.javaClass.getMethod("setGuidelinePercent", java.lang.Float.TYPE)
             }.getOrNull()?.also { mSetGuidePercent = it } ?: return
 
-            m.invoke(guideline, target)
+            writing = true
+            try { m.invoke(guideline, target) } finally { writing = false }
             lastWritten[guideline] = target
         }.onFailure { log("CW applyChatWidth: " + it) }
     }
 
+
+    /** The guideline position (fraction left of it) for the normal or expanded chat width. */
+    private fun targetFor(wide: Boolean, narrowPct: Int): Float {
+        val pct = if (wide) Settings.getInt(KEY_CHAT_WIDTH_WIDE, CHAT_WIDTH_WIDE_DEFAULT).coerceIn(CHAT_WIDTH_WIDE_MIN, CHAT_WIDTH_WIDE_MAX)
+                  else narrowPct.coerceIn(CHAT_WIDTH_MIN, CHAT_WIDTH_MAX)
+        return 1f - pct / 100f
+    }
+
+    /** When Twitch itself sets the chat guideline, swap in our width for the state it picked. */
+    private fun hookGuideline(lp: LoadPackageParam) = runCatching {
+        val g = lp.classLoader.loadClass("androidx.constraintlayout.widget.Guideline")
+        XposedBridge.hookAllMethods(g, "setGuidelinePercent", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                if (writing) return
+                val v = p.thisObject as? View ?: return
+                if (Res.entry(v) != "chat_guideline") return
+                if (v.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) return
+                val asked = p.args.getOrNull(0) as? Float ?: return
+                if (asked <= 0.05f || asked >= 0.95f) return     // chat hidden or full: leave it
+                val wide = (1f - asked) >= WIDE_FROM
+                wideMode[v] = wide
+                val target = targetFor(wide, Settings.getInt(KEY_CHAT_WIDTH, CHAT_WIDTH_DEFAULT))
+                p.args[0] = target
+                lastWritten[v] = target
+            }
+        })
+    }.onFailure { log("CW guideline hook: $it") }
 
     private inline fun walk(root: View, action: (View) -> Unit) {
         val stack = ArrayDeque<View>()
