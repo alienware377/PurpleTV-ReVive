@@ -70,7 +70,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
-| **Update checker** | Tells you when a new PurpleTV ReVive version is out, with what changed, a Skip this version button, and an Update button that downloads the right file. Can be switched off under Updates. |
+| **Update checker** | Tells you when a new PurpleTV ReVive version is out, with what changed, a Skip this version button, and an Update button that downloads the right file. On the ready-to-install Twitch it downloads and installs inside the app, with a small progress bar and an Install now or Remind me later popup. Can be switched off under Updates. |
 
 Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
 
@@ -82,7 +82,7 @@ Everything is opt-in and individually toggleable, and the whole module can be sw
 
 - Android 8.0 (API 26) or newer
 - A rooted device with **[LSPosed](https://github.com/LSPosed/LSPosed)**, **or** a non-rooted device using **[LSPatch](https://github.com/LSPosed/LSPatch)**
-- The official Twitch app installed. Each release is built for one Twitch version, named in its file names and release notes (currently **Twitch 31.1.2**).
+- The official Twitch app installed, in a version the release is built for, named in its file names and release notes (currently **Twitch 31.7.0** and **31.1.2**). Twitch 31.7.0 needs Android 12L or newer; on older Android, use Twitch 31.1.2.
 
 ## Installation
 
@@ -144,7 +144,7 @@ The result is a module that keeps working across Twitch updates far longer than 
 
 ## Compatibility
 
-Built and tested for **Twitch 31.1.2**, the version named in each release. **Twitch 31.5 and newer** moved chat, the emote menu and the message box to a new system, so the chat features (emotes, autocomplete, favorites, badges and so on) will most likely stop working there until the module is updated. Player and hide options may keep working. Because the module avoids obfuscated identifiers, it generally survives app updates. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/purpletv-revive/issues) with your Twitch version number.
+Built and tested for **Twitch 31.7.0** and **Twitch 31.1.2**, the versions named in each release; the module picks the right setup for the one you have. From Twitch 31.5, phones open live streams in a new screen whose chat is out of the module's reach, so the module keeps the classic stream screen (**Use the classic stream screen** in its settings). A Twitch version newer than the ones named will most likely break some features until the module is updated, since a few hooks rely on names Twitch changes in every release. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/purpletv-revive/issues) with your Twitch version number.
 
 ## FAQ
 
