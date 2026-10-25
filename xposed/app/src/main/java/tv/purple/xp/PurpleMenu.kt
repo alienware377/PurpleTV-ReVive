@@ -377,8 +377,18 @@ object PurpleMenu {
         Sub("Gestures", items = GESTURES),
         Sub("View", items = VIEW),
         Sub("Dev", items = DEV),
+        Custom("Show tips again",
+            "Bring back the one-time tips you closed, like the video filters and pinned suggestions tips",
+            { ctx ->
+                for (k in TIP_KEYS) Settings.set(k, false)
+                toast(ctx, "Tips will show again")
+                ViewHider.reapply()
+            }),
         Sub("Info", items = INFO)
     )
+
+    /** Every "closed for good" tip, so they can all be brought back at once. */
+    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED)
 
     // ---------------------------------------------------------------- entry point
 

@@ -38,19 +38,22 @@ object RefreshButton {
     fun install(lp: LoadPackageParam) {
         val c = runCatching { lp.classLoader.loadClass("com.amazonaws.ivs.player.CorePlayerImpl") }.getOrNull() ?: return
         cls = c
-        XposedBridge.hookAllMethods(c, "load", object : XC_MethodHook() {
+        val hook = object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 val a0 = p.args.getOrNull(0) ?: return
                 val uri = when (a0) {
                     is Uri -> a0
                     else -> runCatching { a0.javaClass.getMethod("getUri").invoke(a0) as? Uri }.getOrNull()
                 } ?: return
+                if (uri.host.isNullOrEmpty()) return
                 player = WeakReference(p.thisObject)
                 lastLoad = a0
                 lastUri = uri
                 loadedAt = SystemClock.uptimeMillis()
             }
-        })
+        }
+        val n = XposedBridge.hookAllMethods(c, "load", hook).size + XposedBridge.hookAllMethods(c, "preload", hook).size
+        log("RB hooks: $n")
     }
 
     /** The live channel login, from the stream address (".../api/channel/hls/<login>.m3u8"). */

@@ -399,10 +399,9 @@ object VideoFilters {
                 tag = TIP_TAG
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = GradientDrawable().apply {
-                    setColor(0xF2241B31.toInt()); cornerRadius = dp(12f).toFloat(); setStroke(dp(1.5f), FilterIcons.PURPLE)
-                }
-                setPadding(dp(12f), dp(9f), dp(4f), dp(9f))
+                background = BubbleDrawable(0xF2241B31.toInt(), FilterIcons.PURPLE, dp(12f).toFloat(),
+                    dp(1.5f).toFloat(), dp(9f).toFloat())
+                setPadding(dp(12f), dp(9f) + dp(9f), dp(4f), dp(9f))
                 elevation = dp(6f).toFloat()
                 addView(TextView(ctx).apply {
                     text = "New: video filters! Tap here to tweak brightness, colours, textures and more."
@@ -423,11 +422,46 @@ object VideoFilters {
         }
         val tw = tip.layoutParams.width.toFloat()
         val tx = (btn.x + btn.width - tw).coerceAtLeast(dp(8f).toFloat())
-        val ty = btn.y + btn.height + dp(4f)
+        val ty = btn.y + btn.height
+        // Point the bubble's arrow at the middle of the button.
+        (tip.background as? BubbleDrawable)?.let { b ->
+            val ax = btn.x + btn.width / 2f - tx
+            if (b.arrowX != ax) { b.arrowX = ax; b.invalidateSelf() }
+        }
         if (tip.x != tx) tip.x = tx
         if (tip.y != ty) tip.y = ty
         if (tip.visibility != View.VISIBLE) tip.visibility = View.VISIBLE
         tip.bringToFront()
+    }
+
+    /** A rounded speech bubble with a small arrow on top, at [arrowX] from its left edge. */
+    private class BubbleDrawable(val fill: Int, val strokeColor: Int, val radius: Float, val strokeW: Float,
+                                 val arrowH: Float) : android.graphics.drawable.Drawable() {
+        var arrowX = -1f
+        private val fp = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = fill }
+        private val sp = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = strokeColor; style = android.graphics.Paint.Style.STROKE; strokeWidth = strokeW
+            strokeJoin = android.graphics.Paint.Join.ROUND
+        }
+        override fun draw(c: android.graphics.Canvas) {
+            val b = bounds
+            val h = strokeW / 2
+            val top = b.top + arrowH
+            val ax = (if (arrowX < 0) b.width() - radius * 2 else arrowX).coerceIn(radius + arrowH, b.width() - radius - arrowH) + b.left
+            val path = android.graphics.Path().apply {
+                addRoundRect(android.graphics.RectF(b.left + h, top + h, b.right - h, b.bottom - h), radius, radius,
+                    android.graphics.Path.Direction.CW)
+                val tri = android.graphics.Path().apply {
+                    moveTo(ax - arrowH, top + h + 1); lineTo(ax, b.top + h); lineTo(ax + arrowH, top + h + 1); close()
+                }
+                op(tri, android.graphics.Path.Op.UNION)
+            }
+            c.drawPath(path, fp)
+            c.drawPath(path, sp)
+        }
+        override fun setAlpha(a: Int) { fp.alpha = a; sp.alpha = a }
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) { fp.colorFilter = cf; sp.colorFilter = cf }
+        @Deprecated("Deprecated in Java") override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
     }
 
     private fun collectBars(v: View, settingsId: Int, out: MutableList<ViewGroup>) {
