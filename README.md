@@ -60,6 +60,8 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
 | **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
 | **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind (on by default). |
+| **Player stats** | A button in the player controls that shows quality, bitrate, frame rate, how far behind live you are, the buffer, the network estimate and dropped frames over the video. |
+| **Disable low latency** | Plays live streams a few seconds further behind, for fewer stutters and rebuffers on a weak connection. |
 | **Chat appearance** | Font size, alternating row backgrounds, landscape chat width and opacity. |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
