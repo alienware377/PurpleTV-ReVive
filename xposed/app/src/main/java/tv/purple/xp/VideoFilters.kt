@@ -443,11 +443,16 @@ object VideoFilters {
             color = strokeColor; style = android.graphics.Paint.Style.STROKE; strokeWidth = strokeW
             strokeJoin = android.graphics.Paint.Join.ROUND
         }
-        override fun draw(c: android.graphics.Canvas) {
+        override fun draw(c: android.graphics.Canvas) { runCatching { paint(c) } }
+
+        private fun paint(c: android.graphics.Canvas) {
             val b = bounds
             val h = strokeW / 2
             val top = b.top + arrowH
-            val ax = (if (arrowX < 0) b.width() - radius * 2 else arrowX).coerceIn(radius + arrowH, b.width() - radius - arrowH) + b.left
+            if (b.width() <= (radius + arrowH) * 2 || b.height() <= arrowH * 2) return
+            val lo = radius + arrowH; val hi = b.width() - radius - arrowH
+            val want = if (arrowX < 0) b.width() - radius * 2 else arrowX
+            val ax = (if (want < lo) lo else if (want > hi) hi else want) + b.left
             val path = android.graphics.Path().apply {
                 addRoundRect(android.graphics.RectF(b.left + h, top + h, b.right - h, b.bottom - h), radius, radius,
                     android.graphics.Path.Direction.CW)
