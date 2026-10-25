@@ -30,6 +30,11 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 object HomeTabs {
 
     const val KEY = "hide_live_clips_tabs"
+    /** Select Following once whenever the Home tab strip first appears, leaving the other tabs. */
+    const val KEY_DEFAULT_FOLLOWING = "home_default_following"
+
+    /** Tab strips already steered to Following, so the user's own tab choice is never undone. */
+    private val STEERED = java.util.Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
 
     /** Both strips exist in the layout and Twitch shows exactly one, so operate on whichever is
      *  currently visible rather than assuming. */
@@ -82,6 +87,7 @@ object HomeTabs {
     }
 
     private fun apply(act: Activity) {
+        runCatching { openOnFollowing(act) }
         if (!Settings.get(KEY, false)) {
             if (restoreNeeded) restore(act)
             return
@@ -116,6 +122,24 @@ object HomeTabs {
         // otherwise this would yank them back to Following every single layout pass.
         if (hidSelected && following != null && !following.isSelected) {
             runCatching { following.performClick() }
+        }
+    }
+
+    /** The first time a Home tab strip is seen, select Following, once. */
+    private fun openOnFollowing(act: Activity) {
+        if (!Settings.get(KEY_DEFAULT_FOLLOWING, true)) return
+        val root = act.window?.decorView ?: return
+        val strip = findStrip(root) ?: return
+        if (!strip.isShown || strip in STEERED) return
+        val row = (strip as? ViewGroup)?.getChildAt(0) as? ViewGroup ?: return
+        if (row.childCount == 0) return
+        val keep = labelsOf(act).keep
+        for (i in 0 until row.childCount) {
+            val tab = row.getChildAt(i)
+            if (firstText(tab)?.trim()?.equals(keep, true) != true) continue
+            STEERED.add(strip)
+            if (!tab.isSelected) { runCatching { tab.performClick() }; log("HT opened Home on Following") }
+            return
         }
     }
 

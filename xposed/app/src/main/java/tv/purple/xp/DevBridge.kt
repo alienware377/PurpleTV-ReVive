@@ -29,6 +29,7 @@ object DevBridge {
     private const val ACTION_ORIENT = "tv.purple.xp.DEV_ORIENT"
     private const val ACTION_FIND = "tv.purple.xp.DEV_FIND"
     private const val ACTION_TIMER = "tv.purple.xp.DEV_TIMER"
+    private const val ACTION_AT = "tv.purple.xp.DEV_AT"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -47,6 +48,7 @@ object DevBridge {
                         ACTION_DUMP -> dump(app)
                         ACTION_PROBE -> probe(i.getStringExtra("id").orEmpty())
                         ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
+                        ACTION_AT -> at(i.getIntExtra("x", 0), i.getIntExtra("y", 0))
                         ACTION_TIMER -> SleepTimer.start(app, i.getIntExtra("s", 10) * 1000L)
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
@@ -56,7 +58,7 @@ object DevBridge {
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -180,6 +182,24 @@ object DevBridge {
                 }
             }
             log("DEV find '$re': $n match(es)")
+        }
+    }
+
+    /** Log every shown view under screen point (x, y), outermost first, with its entry name. */
+    private fun at(x: Int, y: Int) {
+        val act = top?.get() ?: ViewHider.currentActivity() ?: return
+        act.runOnUiThread {
+            val root = act.window?.decorView ?: return@runOnUiThread
+            val stack = ArrayDeque<android.view.View>(); stack.add(root)
+            val r = android.graphics.Rect()
+            while (stack.isNotEmpty()) {
+                val v = stack.removeFirst()
+                if (!v.isShown || !v.getGlobalVisibleRect(r) || !r.contains(x, y)) continue
+                val e = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
+                if (e != null) log("DEV at: $e ${v.javaClass.simpleName} $r parent=${runCatching { (v.parent as View).resources.getResourceEntryName((v.parent as View).id) }.getOrNull()}")
+                if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
+            }
+            log("DEV at ($x,$y) done")
         }
     }
 

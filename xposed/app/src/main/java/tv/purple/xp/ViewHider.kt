@@ -69,8 +69,10 @@ object ViewHider {
         // Entry names verified against the live 28.x view tree. The names taken from the older
         // decoded resources (create_button, discover_tab) no longer match what Twitch inflates,
         // so the current ones come first and the legacy names stay as fallbacks for other builds.
+        // following_nav_rail_create_button is the plus at the top of the side rail that
+        // replaces the bottom bar in landscape on tablets.
         Rule("hide_create_button", listOf("viewer_bottom_nav_create_placeholder",
-            "custom_create_bottom_nav_button", "create_button")),
+            "custom_create_bottom_nav_button", "create_button", "following_nav_rail_create_button")),
         // NOTE: "hide_discover_tab" is deliberately NOT a view rule -- see hideBrowseItem().
         // "hide_discover_feed" USED to live here and was actively dangerous. Its three targets:
         //   discovery_feed_home_root       root view of the ENTIRE Home fragment -- hiding it

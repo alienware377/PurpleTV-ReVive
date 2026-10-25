@@ -305,8 +305,11 @@ object PurpleMenu {
         Toggle("Twitch Stories", "Enables the display of Twitch Stories", "stories"),
         Drop("Navbar position", "", "bottom_navbar_position", listOf("Default", "Top", "Hidden")),
         Toggle("Show full stream cards in followed section", "", "followed_full_cards"),
-        Toggle("Hide Browse tab", "Removes \"Browse\" from the bottom navigation bar",
+        Toggle("Hide Browse (search) tab", "Removes \"Browse\", the magnifying glass, from the navigation bar",
             ViewHider.KEY_BROWSE, done = true),
+        Toggle("Open Home on Following",
+            "Home starts on the Following tab instead of Live",
+            HomeTabs.KEY_DEFAULT_FOLLOWING, def = true, done = true),
         Toggle("Hide Live & Clips tabs on Home",
             "Removes the Live and Clips tabs and keeps you on Following",
             HomeTabs.KEY, done = true),
@@ -316,7 +319,8 @@ object PurpleMenu {
         Toggle("Hide \"Featured Clips\"", "", "hide_featured_clips_section"),
         Toggle("Show timer button", "A sleep timer in the player controls that pauses the stream after a chosen time",
             SleepTimer.KEY, done = true),
-        Toggle("Hide \"Create\" button", "", "hide_create_button", done = true),
+        Toggle("Hide \"Create\" (plus) button", "Removes the plus button from the navigation bar, in portrait and landscape",
+            "hide_create_button", done = true),
         Toggle("Force toolbar search button", "", "force_toolbar_search_button"),
         Toggle("Force Tablet UI", "", "force_tablet_mode")
     )
