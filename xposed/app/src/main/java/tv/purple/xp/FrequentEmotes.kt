@@ -27,6 +27,9 @@ object FrequentEmotes {
     private const val DISPATCHER = "tv.twitch.android.core.mvp.viewdelegate.EventDispatcher"
 
     private val pending: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** The repository Twitch made, kept for the hidden test below. */
+    @Volatile private var repoRef: java.lang.ref.WeakReference<Any>? = null
+    @Volatile private var sendMethod: java.lang.reflect.Method? = null
     private val ID_RE = Regex("/emoticons/v[12]/([^/]+)/")
 
     /** Called when our UI puts [name] into the chat box. Only Twitch emotes can be counted. */
@@ -47,8 +50,13 @@ object FrequentEmotes {
         val push = dispCls.declaredMethods.first {
             it.returnType == Void.TYPE && it.parameterTypes.contentEquals(arrayOf<Class<*>>(Any::class.java))
         }.apply { isAccessible = true }
+        de.robv.android.xposed.XposedBridge.hookAllConstructors(repo, object : XC_MethodHook() {
+            override fun afterHookedMethod(p: MethodHookParam) { repoRef = java.lang.ref.WeakReference(p.thisObject) }
+        })
+        sendMethod = runCatching { repo.getDeclaredMethod(REPO_SEND, String::class.java).apply { isAccessible = true } }.getOrNull()
         XposedHelpers.findAndHookMethod(repo, REPO_SEND, String::class.java, object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
+                repoRef = java.lang.ref.WeakReference(p.thisObject)
                 if (pending.isEmpty()) return
                 // One send consumes the list, exactly like Twitch's own clicked-emotes list.
                 val names = pending.toList(); pending.clear()
@@ -66,4 +74,30 @@ object FrequentEmotes {
         })
         log("FE frequent-emotes hook installed")
     }
+
+    /**
+     * Hidden test (DEV_FREQ): act as if [name] was inserted by our UI and a message holding only
+     * it was sent, by calling the repository's counting step directly. No chat message is sent.
+     * Logs the emote's Frequently Used count before and after.
+     */
+    fun test(ctx: android.content.Context, name: String) {
+        val repo = repoRef?.get() ?: run { log("FE test: repository not created yet (open a chat first)"); return }
+        val m = sendMethod ?: run { log("FE test: no send method"); return }
+        val before = count(ctx, name)
+        noteInserted(name)
+        if (name !in pending) { log("FE test: '$name' is not a Twitch emote of yours"); return }
+        runCatching { m.invoke(repo, name) }.onFailure { log("FE test: send step failed: $it") }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            Thread { log("FE test: '$name' times_used before=$before after=${count(ctx, name)}") }.start()
+        }, 1500)
+    }
+
+    private fun count(ctx: android.content.Context, name: String): String = runCatching {
+        val f = ctx.getDatabasePath("emotes.db")
+        android.database.sqlite.SQLiteDatabase.openDatabase(f.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { d ->
+            d.rawQuery("SELECT times_used, time_accessed FROM frequent_emotes WHERE token = ?", arrayOf(name)).use { c ->
+                if (c.moveToFirst()) "${c.getInt(0)} (at ${c.getLong(1)})" else "none"
+            }
+        }
+    }.getOrElse { "error $it" }
 }

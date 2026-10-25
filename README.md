@@ -38,6 +38,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Can be kept per streamer. |
 | **7TV, BTTV and FFZ in the emote picker** | This channel's and the global 7TV, BTTV, FFZ and Homies emotes appear as their own sections at the bottom of Twitch's emote picker. |
 | **Frequently Used** | Emotes you send from the favorites bar or the suggestion list count towards Twitch's Frequently Used row, like ones picked in Twitch's own picker. |
+| **Emote picker backspace** | The backspace button in the emote picker deletes the whole last word or emote at once, or one letter, or keeps Twitch's own behaviour. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
 | **Third-party badges** | FFZ, BTTV, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
@@ -54,6 +55,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Pinned messages and Drops** | Hide pinned chat messages, or hide them 30 seconds after they appear, and dismiss the Twitch Drops notice, by pressing Twitch's own hide buttons. Hype trains, polls and predictions stay. |
 | **Video filters** | A filters button in the player for lives and VODs, with over 35 filters: exposure, brightness, contrast, highlights, shadows, gamma, fade, clarity, sharpen, soft focus, temperature, tint, hue, saturation, vibrance, monotone, gradient map, posterize, invert, noise, vignette, colour fringe, pixelate, an overlay layer, moving bokeh lights and 11 animated glitch effects (slice shift, RGB split, VHS tracking, block corruption, wave, shake, flicker, static, rolling scanlines, channel swap, colour bleed). Most can be limited to the shadows, midtones or highlights. Every filter has a plain-words explanation. |
 | **Overlays** | Lay a texture, your own picture or a solid colour over the video with any of Photoshop's 27 blend modes and an opacity slider. Comes with 32 built-in textures: grunge, paper, film grain, light leaks, bokeh, manga screentones and speed lines, retro scanlines, rain and more. |
+| **Audio filters** | An Audio tab next to the video filters: volume boost, auto volume, compressor, limiter, voice clarity, rumble cut, and Bass and Treble or a full 16-band equaliser (30 Hz to 16k). Made for talk streams: even out the volume, tame loud moments and make voices clearer. Android 9 or newer. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
 | **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
