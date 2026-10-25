@@ -1,0 +1,258 @@
+[
+  {
+    "file": "grunge_dirty.jpg",
+    "name": "Dirty Grunge",
+    "category": "Grunge",
+    "blend": "Overlay",
+    "opacity": 60,
+    "tile": true
+  },
+  {
+    "file": "grunge_scratched.jpg",
+    "name": "Scratched Metal",
+    "category": "Grunge",
+    "blend": "Overlay",
+    "opacity": 55,
+    "tile": true
+  },
+  {
+    "file": "grunge_stained.jpg",
+    "name": "Coffee Stains",
+    "category": "Grunge",
+    "blend": "Multiply",
+    "opacity": 70,
+    "tile": true
+  },
+  {
+    "file": "grunge_rust.jpg",
+    "name": "Rusty Metal",
+    "category": "Grunge",
+    "blend": "Overlay",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "grunge_concrete.jpg",
+    "name": "Concrete Wall",
+    "category": "Grunge",
+    "blend": "Overlay",
+    "opacity": 55,
+    "tile": true
+  },
+  {
+    "file": "paper_smooth.jpg",
+    "name": "Smooth Paper",
+    "category": "Paper",
+    "blend": "Multiply",
+    "opacity": 80,
+    "tile": true
+  },
+  {
+    "file": "paper_crumpled.jpg",
+    "name": "Crumpled Paper",
+    "category": "Paper",
+    "blend": "Overlay",
+    "opacity": 50,
+    "tile": true
+  },
+  {
+    "file": "paper_kraft.jpg",
+    "name": "Kraft Paper",
+    "category": "Paper",
+    "blend": "Soft Light",
+    "opacity": 80,
+    "tile": true
+  },
+  {
+    "file": "paper_canvas.jpg",
+    "name": "Art Canvas",
+    "category": "Paper",
+    "blend": "Overlay",
+    "opacity": 55,
+    "tile": true
+  },
+  {
+    "file": "film_grain_fine.jpg",
+    "name": "Fine Grain",
+    "category": "Film",
+    "blend": "Overlay",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "film_grain_medium.jpg",
+    "name": "Medium Grain",
+    "category": "Film",
+    "blend": "Overlay",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "film_grain_coarse.jpg",
+    "name": "Coarse Grain",
+    "category": "Film",
+    "blend": "Overlay",
+    "opacity": 35,
+    "tile": true
+  },
+  {
+    "file": "film_dust_scratches.jpg",
+    "name": "Dust and Scratches",
+    "category": "Film",
+    "blend": "Screen",
+    "opacity": 70,
+    "tile": true
+  },
+  {
+    "file": "film_old_reel.jpg",
+    "name": "Old Film Reel",
+    "category": "Film",
+    "blend": "Overlay",
+    "opacity": 70,
+    "tile": true
+  },
+  {
+    "file": "light_leak_warm.jpg",
+    "name": "Warm Light Leak",
+    "category": "Light",
+    "blend": "Screen",
+    "opacity": 75,
+    "tile": false
+  },
+  {
+    "file": "light_leak_rose.jpg",
+    "name": "Rose Light Leak",
+    "category": "Light",
+    "blend": "Screen",
+    "opacity": 75,
+    "tile": false
+  },
+  {
+    "file": "light_leak_prism.jpg",
+    "name": "Prism Rainbow",
+    "category": "Light",
+    "blend": "Screen",
+    "opacity": 70,
+    "tile": false
+  },
+  {
+    "file": "light_bokeh.jpg",
+    "name": "Dreamy Bokeh",
+    "category": "Light",
+    "blend": "Screen",
+    "opacity": 65,
+    "tile": false
+  },
+  {
+    "file": "manga_screentone_fine.png",
+    "name": "Screentone Fine",
+    "category": "Manga",
+    "blend": "Multiply",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "manga_screentone_medium.png",
+    "name": "Screentone Medium",
+    "category": "Manga",
+    "blend": "Multiply",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "manga_screentone_coarse.png",
+    "name": "Screentone Pop Dots",
+    "category": "Manga",
+    "blend": "Multiply",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "manga_focus_lines.jpg",
+    "name": "Focus Lines",
+    "category": "Manga",
+    "blend": "Multiply",
+    "opacity": 85,
+    "tile": false
+  },
+  {
+    "file": "manga_action_lines.jpg",
+    "name": "Action Lines",
+    "category": "Manga",
+    "blend": "Multiply",
+    "opacity": 60,
+    "tile": true
+  },
+  {
+    "file": "manga_crosshatch.jpg",
+    "name": "Ink Crosshatch",
+    "category": "Manga",
+    "blend": "Multiply",
+    "opacity": 50,
+    "tile": true
+  },
+  {
+    "file": "retro_crt_scanlines.jpg",
+    "name": "CRT Scanlines",
+    "category": "Retro",
+    "blend": "Multiply",
+    "opacity": 45,
+    "tile": true
+  },
+  {
+    "file": "retro_vhs_noise.jpg",
+    "name": "VHS Noise",
+    "category": "Retro",
+    "blend": "Screen",
+    "opacity": 60,
+    "tile": false
+  },
+  {
+    "file": "glass_rain.jpg",
+    "name": "Rain on Glass",
+    "category": "Glass",
+    "blend": "Overlay",
+    "opacity": 65,
+    "tile": true
+  },
+  {
+    "file": "glass_frosted.jpg",
+    "name": "Frosted Glass",
+    "category": "Glass",
+    "blend": "Screen",
+    "opacity": 55,
+    "tile": true
+  },
+  {
+    "file": "glass_lens_dirt.jpg",
+    "name": "Lens Dirt",
+    "category": "Glass",
+    "blend": "Screen",
+    "opacity": 70,
+    "tile": false
+  },
+  {
+    "file": "pattern_sparkle_glitter.jpg",
+    "name": "Sparkle Glitter",
+    "category": "Pattern",
+    "blend": "Screen",
+    "opacity": 70,
+    "tile": true
+  },
+  {
+    "file": "pattern_tiny_hearts.jpg",
+    "name": "Tiny Hearts",
+    "category": "Pattern",
+    "blend": "Screen",
+    "opacity": 40,
+    "tile": true
+  },
+  {
+    "file": "pattern_tiny_stars.jpg",
+    "name": "Tiny Stars",
+    "category": "Pattern",
+    "blend": "Screen",
+    "opacity": 40,
+    "tile": true
+  }
+]
