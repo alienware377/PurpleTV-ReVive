@@ -114,6 +114,10 @@ object RaidCard {
         main.postDelayed({ inject(r, attempt = 1) }, 3500)
     }
 
+    /** The chat notice channel captured from Twitch, also used by [ModLogs]. */
+    fun noticeSubject(): Any? = subject?.get()
+    fun currentChannel(): String? = current
+
     /** Hidden test: pretend a raid from [source] into [target] just happened. */
     fun simulate(source: String, target: String, count: Int) {
         lastRaid = Raid(source, target, count, SystemClock.uptimeMillis())
