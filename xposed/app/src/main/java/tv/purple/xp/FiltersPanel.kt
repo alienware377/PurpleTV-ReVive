@@ -588,7 +588,18 @@ object FiltersPanel {
                     FilterDefs.setExtraInt("vignette", "size", it); onExtra()
                 })
                 "bokeh" -> buildBokeh()
-                else -> if (f.group == FilterDefs.Group.GLITCH) {
+                else -> if (f.group == FilterDefs.Group.DYNAMIC) {
+                    val target = when (f.key) {
+                        "d_exp" -> "Target brightness"; "d_gamma" -> "Target midtones"
+                        "d_con" -> "Target contrast"; else -> "Black level"
+                    }
+                    extras.addView(miniSlider(ctx, target, 0, 100, FilterDefs.extraInt(f.key, "target", DynLight.DEF_TARGET[f.key] ?: 50)) {
+                        FilterDefs.setExtraInt(f.key, "target", it); onExtra()
+                    })
+                    extras.addView(miniSlider(ctx, "Reaction speed", 0, 100, FilterDefs.extraInt(f.key, "speed", DynLight.DEF_SPEED)) {
+                        FilterDefs.setExtraInt(f.key, "speed", it); onExtra()
+                    })
+                } else if (f.group == FilterDefs.Group.GLITCH) {
                     extras.addView(miniSlider(ctx, "Speed", 0, 100, FilterDefs.extraInt(f.key, "speed", 50)) {
                         FilterDefs.setExtraInt(f.key, "speed", it); onExtra()
                     })

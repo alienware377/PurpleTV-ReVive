@@ -170,6 +170,25 @@ vec4 filterMain(vec2 p) {
     // Video decoders can hand back values a little outside 0..1, and pow() of a negative number
     // is undefined on the GPU: on Adreno a lifted white turned flat cyan.
     own = clamp(own, 0.0, 1.0);
+
+    // ---- dynamic light: y (and z) are live corrections measured from the stream (DynLight) ----
+    a = f_d_black.x;
+    if (a > 0.003) {
+        float bp = a * f_d_black.y;
+        own = clamp((own - bp) / max(1.0 - bp, 0.05), 0.0, 1.0);
+    }
+    a = f_d_exp.x;
+    if (a > 0.003) {
+        // Linear gain with a soft knee, so lifted highlights roll off instead of clipping.
+        vec3 t = own * exp2(a * f_d_exp.y);
+        vec3 over = max(t - 0.8, 0.0);
+        own = min(t, vec3(0.8)) + 0.2 * over / (over + 0.2);
+    }
+    a = f_d_gamma.x;
+    if (a > 0.003) own = pow(max(own, 0.0), vec3(exp2(a * f_d_gamma.y)));
+    a = f_d_con.x;
+    if (a > 0.003) own = clamp((own - f_d_con.z) * (1.0 + a * f_d_con.y) + f_d_con.z, 0.0, 1.0);
+
     float L0 = lum3(own);
 
     // ---- light ----
@@ -218,6 +237,21 @@ vec4 filterMain(vec2 p) {
         }
         Lb = Lb / 17.0;
         own = clamp(own * (1.0 + a * 2.5 * (L - Lb) * bandw(f_clarity, L0) / max(L, 0.05)), 0.0, 1.0);
+    }
+    a = f_mtex.x;
+    if (abs(a) > 0.003) {
+        // Medium-scale detail: the difference from a ring a few pixels out. Raising it adds that
+        // detail back; lowering it pulls each pixel towards the ring, which smooths skin.
+        float r = max(uSize.y / 1080.0, 0.6) * 3.5;
+        float L = lum3(own);
+        float Lm = 0.0;
+        for (int k = 0; k < 8; k++) {
+            float ang = float(k) * 0.7853981 + 0.2;
+            Lm += lumAt(q + vec2(cos(ang), sin(ang)) * r);
+        }
+        Lm = Lm * 0.125;
+        float amt = a > 0.0 ? a * 2.2 : a;
+        own = clamp(own * (1.0 + amt * (L0 - Lm) * bandw(f_mtex, L0) / max(L, 0.05)), 0.0, 1.0);
     }
     a = f_texture.x;
     if (abs(a) > 0.003) {

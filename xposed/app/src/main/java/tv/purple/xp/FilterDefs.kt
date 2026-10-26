@@ -10,7 +10,7 @@ package tv.purple.xp
 object FilterDefs {
 
     enum class Group(val title: String) {
-        LIGHT("Light"), DETAIL("Detail"), COLOR("Colour"), STYLE("Style"), EFFECTS("Effects"),
+        LIGHT("Light"), DYNAMIC("Dynamic light"), DETAIL("Detail"), COLOR("Colour"), STYLE("Style"), EFFECTS("Effects"),
         GLITCH("Effects: glitch")
     }
 
@@ -40,9 +40,24 @@ object FilterDefs {
             "Bends the middle tones lighter or darker while keeping pure black and pure white where they are."),
         Filter("fade", "Fade", Group.LIGHT,
             "Lifts the blacks into a soft, matte, film-like look.", bipolar = false),
+        // ---- Dynamic light: measured from the stream as it plays (see DynLight) ----
+        Filter("d_exp", "Dynamic exposure", Group.DYNAMIC,
+            "Keeps an eye on how bright the stream is and opens up dark scenes or pulls back washed-out ones, easing in over a moment so it never flickers. The slider is how strongly it corrects.",
+            bipolar = false, ranged = false),
+        Filter("d_gamma", "Dynamic gamma", Group.DYNAMIC,
+            "Bends the middle tones towards a comfortable level as the scene changes: lifts murky dark scenes and deepens washed-out bright ones, while pure black and white stay put.",
+            bipolar = false, ranged = false),
+        Filter("d_con", "Dynamic contrast", Group.DYNAMIC,
+            "Stretches flat, foggy or washed-out scenes to use the full range from dark to light, and backs off when a scene already has plenty of punch.",
+            bipolar = false, ranged = false),
+        Filter("d_black", "Dynamic black point", Group.DYNAMIC,
+            "Finds where the darkest parts of the scene sit and pulls grey, lifted blacks back down to real black, so washed-out streams get their depth back. Crushed blacks get lifted a touch.",
+            bipolar = false, ranged = false),
         // ---- Detail ----
         Filter("clarity", "Clarity", Group.DETAIL,
             "Adds contrast between neighbouring areas so shapes and faces stand out, without changing the overall brightness. A lot of it can look crunchy."),
+        Filter("mtex", "Texture", Group.DETAIL,
+            "Brings out medium-sized detail like skin, fabric, hair and leaves, finer than Clarity and broader than Sharpen. Lower it to smooth skin and soft surfaces."),
         Filter("texture", "Sharpen", Group.DETAIL,
             "Sharpens fine detail like hair, fur and small text. Lower it to smooth out blocky compression noise."),
         Filter("soft", "Soft focus", Group.DETAIL,

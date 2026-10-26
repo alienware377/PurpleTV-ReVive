@@ -80,6 +80,7 @@ object VideoFilters {
                 runCatching { apply(tv) }.onFailure { log("filters apply failed: $it") }
             }
             scheduleGrain()
+            if (found.isNotEmpty()) DynLight.ensureRunning()
         }
         runCatching { attachButton(root) }.onFailure { log("filters button: $it") }
     }
@@ -170,6 +171,8 @@ object VideoFilters {
                 // Animated effects carry their speed (and bokeh its size) where the tone range would be.
                 f.group == FilterDefs.Group.GLITCH ->
                     floatArrayOf(a, FilterDefs.extraInt(f.key, "speed", 50).coerceIn(0, 100) / 100f, 0f)
+                // Dynamic light carries its live correction, measured from the stream.
+                f.group == FilterDefs.Group.DYNAMIC -> DynLight.yz(f.key).let { floatArrayOf(a, it[0], it[1]) }
                 f.key == "bokeh" -> floatArrayOf(a, FilterDefs.extraInt("bokeh", "speed", 40).coerceIn(0, 100) / 100f,
                     FilterDefs.extraInt("bokeh", "size", 45).coerceIn(0, 100) / 100f)
                 else -> floatArrayOf(a, FilterDefs.lo(i) / 100f, FilterDefs.hi(i) / 100f)
@@ -268,6 +271,18 @@ object VideoFilters {
         s.setInputShader("grad", rampShader(gradientColors()))
         s.setInputShader("mono", rampShader(monoColors()))
         return s
+    }
+
+    /** The video views seen so far that are still around. */
+    fun videoViews(): List<TextureView> = views.keys.toList()
+
+    /** Redraw every video with fresh shader inputs (Android 13+ path; the GL path reads them per frame). */
+    fun reapplyEffects() {
+        if (!shaderSupported() || GlVideoFilter.available() || !anyActive()) return
+        for (tv in views.keys.toList()) {
+            if (!tv.isAttachedToWindow) continue
+            runCatching { tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content")) }
+        }
     }
 
     // ---- moving grain ----

@@ -51,7 +51,7 @@ object DevBridge {
                 runCatching {
                     when (i.action) {
                         ACTION_SET -> set(i)
-                        ACTION_DUMP -> dump(app)
+                        ACTION_DUMP -> dump(app, i.getStringExtra("re"))
                         ACTION_PROBE -> probe(i.getStringExtra("id").orEmpty())
                         ACTION_ORIENT -> orient(i.getIntExtra("o", -1))
                         ACTION_AT -> at(i.getIntExtra("x", 0), i.getIntExtra("y", 0))
@@ -112,9 +112,14 @@ object DevBridge {
             EmoteRepo.refetch()
     }
 
-    private fun dump(ctx: Context) {
+    /** Every setting, or only the keys matching [re]; in chunks, since one log line holds about 4 KB. */
+    private fun dump(ctx: Context, re: String?) {
+        val rx = re?.let { runCatching { Regex(it) }.getOrNull() }
         val all = ctx.getSharedPreferences("ptv_settings", Context.MODE_PRIVATE).all
-        log("DEV dump: " + all.toSortedMap().entries.joinToString("; ") { "${it.key}=${it.value}" })
+            .filterKeys { rx == null || rx.containsMatchIn(it) }
+        all.toSortedMap().entries.map { "${it.key}=${it.value}" }.chunked(40)
+            .forEach { log("DEV dump: " + it.joinToString("; ")) }
+        if (all.isEmpty()) log("DEV dump: (none)")
     }
 
     /**

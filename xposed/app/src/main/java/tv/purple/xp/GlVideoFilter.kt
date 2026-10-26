@@ -309,8 +309,13 @@ object GlVideoFilter {
             EGL14.eglQuerySurface(dpy, p.win, EGL14.EGL_WIDTH, wh, 0)
             EGL14.eglQuerySurface(dpy, p.win, EGL14.EGL_HEIGHT, wh, 1)
             val w = wh[0].coerceAtLeast(1); val hh = wh[1].coerceAtLeast(1)
-            GLES30.glViewport(0, 0, w, hh)
             val par0 = p.params
+            // Dynamic light: measure the stream a few times a second, before drawing over it.
+            if (par0 != null && par0.active.any { it in DynLight.KEYS }) {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - measAt >= 150) { measAt = now; runCatching { measure(p) }.onFailure { log("DL gl measure: $it") } }
+            }
+            GLES30.glViewport(0, 0, w, hh)
             prog = programFor(par0?.active ?: emptySet())
             GLES30.glUseProgram(prog)
             GLES30.glBindVertexArray(vao)
@@ -332,6 +337,13 @@ object GlVideoFilter {
                         else -> GLES30.glUniform3f(l, v[0], v[1], v[2])
                     }
                 }
+                // Dynamic light changes with the picture, so its values are read fresh for every frame.
+                for (k in DynLight.KEYS) {
+                    if (k !in par.active) continue
+                    val l = loc("f_$k"); if (l < 0) continue
+                    val yz = DynLight.yz(k)
+                    GLES30.glUniform3f(l, par.uniforms["f_$k"]?.get(0) ?: 0f, yz[0], yz[1])
+                }
                 // Values were measured on the view; the surface may differ slightly, so use its size.
                 GLES30.glUniform2f(loc("uSize"), w.toFloat(), hh.toFloat())
                 if (par.animatedGrain) seed = (seed + 1.37f) % 997f
@@ -347,6 +359,41 @@ object GlVideoFilter {
                 val e = EGL14.eglGetError()
                 if (p.real.isReleased) teardownNow(p) else fallback(p, "swap: 0x" + Integer.toHexString(e))
             }
+        }
+
+        private var measAt = 0L
+        private var measProg = 0
+        private var measFbo = 0
+        private var measTex = 0
+        private val measBuf = java.nio.ByteBuffer.allocateDirect(DynLight.W * DynLight.H * 4)
+            .order(java.nio.ByteOrder.nativeOrder())
+
+        /** Draw the raw stream into a tiny buffer and hand its pixels to DynLight. */
+        private fun measure(p: Pipe) {
+            if (measProg == 0) measProg = link(VERT, MEAS_FRAG)
+            if (measFbo == 0) {
+                val t = IntArray(1); GLES30.glGenTextures(1, t, 0); measTex = t[0]
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, measTex)
+                GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, DynLight.W, DynLight.H, 0,
+                    GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null)
+                setParams(GLES30.GL_CLAMP_TO_EDGE)
+                val f = IntArray(1); GLES30.glGenFramebuffers(1, f, 0); measFbo = f[0]
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, measFbo)
+                GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, measTex, 0)
+            }
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, measFbo)
+            GLES30.glViewport(0, 0, DynLight.W, DynLight.H)
+            GLES30.glUseProgram(measProg)
+            GLES30.glBindVertexArray(vao)
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+            GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, p.oes)
+            GLES30.glUniform1i(GLES30.glGetUniformLocation(measProg, "uVideo"), 0)
+            GLES30.glUniformMatrix4fv(GLES30.glGetUniformLocation(measProg, "uTexMatrix"), 1, false, p.stm, 0)
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+            measBuf.clear()
+            GLES30.glReadPixels(0, 0, DynLight.W, DynLight.H, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, measBuf)
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            DynLight.feedRgba(measBuf, DynLight.W * DynLight.H)
         }
 
         private fun ramp(tex: Int, key: String?, colors: IntArray, unit: Int, name: String): Int {
@@ -426,6 +473,11 @@ object GlVideoFilter {
             main.post { byView.remove(p.tv) }
             log("GL filter pipe released")
         }
+
+        private const val MEAS_FRAG = "#version 300 es\n#extension GL_OES_EGL_image_external_essl3 : require\n" +
+            "precision mediump float;\nin vec2 vUv;\nout vec4 fragColor;\n" +
+            "uniform samplerExternalOES uVideo;\nuniform mat4 uTexMatrix;\n" +
+            "void main() { fragColor = vec4(texture(uVideo, (uTexMatrix * vec4(vUv, 0.0, 1.0)).xy).rgb, 1.0); }\n"
 
         private const val VERT = "#version 300 es\n" +
             "out vec2 vUv;\n" +
