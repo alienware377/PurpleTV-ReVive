@@ -157,9 +157,29 @@ object FilterDefs {
     fun extraBool(key: String, f: String, def: Boolean) = Settings.get("vf_${key}_$f", def)
     fun setExtraBool(key: String, f: String, v: Boolean) = Settings.set("vf_${key}_$f", v)
 
-    fun resetAll() {
-        for (i in FILTERS.indices) { setAmount(i, 0); setRange(i, 0, 100) }
+    /**
+     * One filter back to how it starts: off, all tones, and its size, speed and target sliders at
+     * their defaults. Picked colours, gradients and overlay pictures are choices, so they are kept.
+     */
+    fun resetFilter(i: Int) {
+        val f = FILTERS[i]
+        setAmount(i, 0); setRange(i, 0, 100)
+        when {
+            f.group == Group.DYNAMIC -> {
+                setExtraInt(f.key, "target", DynLight.DEF_TARGET[f.key] ?: 50)
+                setExtraInt(f.key, "speed", DynLight.DEF_SPEED)
+            }
+            f.group == Group.GLITCH -> setExtraInt(f.key, "speed", 50)
+            f.key == "grain" -> setExtraInt("grain", "size", 2)
+            f.key == "vignette" -> setExtraInt("vignette", "size", 50)
+            f.key == "bokeh" -> { setExtraInt("bokeh", "size", 45); setExtraInt("bokeh", "density", 45); setExtraInt("bokeh", "speed", 40) }
+        }
     }
+
+    /** True when the filter is on or its tone range was narrowed. */
+    fun changed(i: Int) = amount(i) != 0 || lo(i) != 0 || hi(i) != 100
+
+    fun resetAll() { for (i in FILTERS.indices) resetFilter(i) }
 
     // ---- gradient maps ----
 

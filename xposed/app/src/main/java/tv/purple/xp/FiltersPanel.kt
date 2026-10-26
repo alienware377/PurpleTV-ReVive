@@ -327,12 +327,18 @@ object FiltersPanel {
             val defOpen = g == FilterDefs.Group.LIGHT || g == FilterDefs.Group.COLOR
             val chevron = TextView(ctx).apply { setTextColor(MUTED); textSize = 14f }
             val count = TextView(ctx).apply { setTextColor(PURPLE); textSize = 12.5f }
+            val reset = TextView(ctx).apply {
+                text = "Reset"; setTextColor(PURPLE); textSize = 12.5f; typeface = Typeface.DEFAULT_BOLD
+                setPadding(dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
+                background = GradientDrawable().apply { setStroke(dp(ctx, 1f), PURPLE); cornerRadius = dp(ctx, 12f).toFloat() }
+            }
             fun syncHead() {
                 val open = Settings.get(openKey, defOpen)
                 body.visibility = if (open) View.VISIBLE else View.GONE
                 chevron.text = if (open) "▴" else "▾"
                 val n = members.count { FilterDefs.amount(it) != 0 }
                 count.text = if (n > 0) "$n on" else ""
+                reset.visibility = if (members.any { FilterDefs.changed(it) }) View.VISIBLE else View.GONE
             }
             list.addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -344,12 +350,21 @@ object FiltersPanel {
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(count, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { rightMargin = dp(ctx, 10f) })
+                addView(reset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { rightMargin = dp(ctx, 10f) })
                 addView(chevron)
                 setOnClickListener { Settings.set(openKey, !Settings.get(openKey, defOpen)); syncHead() }
             })
+            val groupRows = ArrayList<Row>()
             for (i in members) {
                 val r = Row(ctx, i) { changed(); syncHead() }
-                rows.add(r); body.addView(r.view)
+                rows.add(r); groupRows.add(r); body.addView(r.view)
+            }
+            // Puts only this section back to how it started.
+            reset.setOnClickListener {
+                members.forEach { FilterDefs.resetFilter(it) }
+                groupRows.forEach { it.reload() }
+                syncHead(); changed()
             }
             list.addView(body)
             syncHead()
@@ -410,7 +425,7 @@ object FiltersPanel {
                 setOnClickListener {
                     if (audioPane.visibility == View.VISIBLE) {
                         AudioFilters.resetAll(); audioRows.forEach { it.load() }; eqCard?.load(); AudioFilters.refresh(); changed()
-                    } else { FilterDefs.resetAll(); rows.forEach { it.load() }; heads.forEach { it() }; changed() }
+                    } else { FilterDefs.resetAll(); rows.forEach { it.reload() }; heads.forEach { it() }; changed() }
                 }
             })
             addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
@@ -771,6 +786,13 @@ object FiltersPanel {
                 FilterDefs.setExtraBool("ovl", "tile", it); onExtra()
             })
             syncSrc()
+        }
+
+        /** After a reset: the slider, range and the extra sliders, which hold their own copies. */
+        fun reload() {
+            extras.removeAllViews()
+            if (usable) buildExtras()
+            load()
         }
 
         fun load() {
