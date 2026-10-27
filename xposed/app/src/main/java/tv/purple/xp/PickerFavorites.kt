@@ -246,6 +246,7 @@ object PickerFavorites {
                     if (want == 0 || id != want) return
                     log("PF sheet container added to window")
                     val sheet = child as? ViewGroup ?: return
+                    runCatching { PickerSend.onSheet(sheet) }.onFailure { log("PS sheet: $it") }
                     // Compose fills the sheet a frame or two later, so the tab labels we match on
                     // do not exist yet at this point.
                     sheet.post { runCatching { tryInjectSheet(sheet) }

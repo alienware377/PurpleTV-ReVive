@@ -374,6 +374,9 @@ object PurpleMenu {
         Sub("Gestures", items = GESTURES),
         Sub("View", items = VIEW),
         Sub("Dev", items = DEV),
+        Custom("Sync settings across devices",
+            "Keep your PurpleTV settings the same on all your devices, through one small file in your Google Drive. No sign-in needed",
+            { SettingsSync.show(it) }),
         Custom("Show tips again",
             "Bring back the one-time tips you closed, like the video filters and pinned suggestions tips",
             { ctx ->
@@ -386,7 +389,7 @@ object PurpleMenu {
     )
 
     /** Every "closed for good" tip, so they can all be brought back at once. */
-    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED, EmoteHooks.KEY_LINK_TIP)
+    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED, EmoteHooks.KEY_LINK_TIP, DeletedTip.KEY)
 
     // ---------------------------------------------------------------- entry point
 
@@ -396,6 +399,9 @@ object PurpleMenu {
      * the only way back, since every other entry point into this menu belongs to a feature that is
      * currently not running.
      */
+    /** The Chat page on its own, for the deleted-message tip. */
+    fun showChat(ctx: Context) = showScreen(ctx, "Chat", CHAT)
+
     fun show(ctx: Context) = showScreen(
         ctx, "PurpleTV Settings",
         if (Settings.get(Settings.KEY_ENABLED, true)) ROOT else listOf(MASTER)

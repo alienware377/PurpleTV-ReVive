@@ -86,6 +86,7 @@ object Settings {
                 .edit().putBoolean(key, value).apply()
         }
         rev++
+        SettingsSync.changed(key)
     }
 
     fun getInt(key: String, def: Int): Int {
@@ -102,6 +103,7 @@ object Settings {
                 .edit().putInt(key, value).apply()
         }
         rev++
+        SettingsSync.changed(key)
     }
 
     fun getString(key: String, def: String = ""): String {
@@ -118,5 +120,36 @@ object Settings {
                 .edit().putString(key, value).apply()
         }
         rev++
+        SettingsSync.changed(key)
+    }
+
+    /** Every stored setting, for [SettingsSync]. */
+    fun all(): Map<String, *> = appCtx?.let { c ->
+        runCatching { c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).all }.getOrNull()
+    } ?: emptyMap<String, Any>()
+
+    /**
+     * Make the settings whose keys pass [mine] exactly [values]: written, replaced, or removed when
+     * absent. One commit, one [rev] bump, and no sync echo. Returns how many changed.
+     */
+    fun replace(values: Map<String, Any?>, mine: (String) -> Boolean): Int {
+        val c = appCtx ?: return 0
+        val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val cur = p.all
+        val e = p.edit()
+        var n = 0
+        for ((k, v) in cur) if (mine(k) && k !in values) { e.remove(k); n++ }
+        for ((k, v) in values) {
+            if (!mine(k) || cur[k] == v) continue
+            when (v) {
+                is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Long -> e.putLong(k, v)
+                is Float -> e.putFloat(k, v); is String -> e.putString(k, v)
+                is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+                else -> continue
+            }
+            n++
+        }
+        if (n > 0) { e.commit(); rev++ }
+        return n
     }
 }

@@ -136,6 +136,7 @@ object EmoteHooks {
                         if (hidden) return
                         runCatching { wireLinks(tv, cs) }
                         runCatching { startAnimatedSpans(tv, cs) }
+                        runCatching { DeletedTip.onText(tv, cs) }
                         // Wire tap/long-press once per TextView that carries an emote we care about:
                         // our injected 7TV/etc spans (tap = preview) OR a native Twitch emote span
                         // the user owns (long-press = favorite, tap = preview).

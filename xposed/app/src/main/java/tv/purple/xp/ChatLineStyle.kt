@@ -368,6 +368,13 @@ object ChatLineStyle {
         }.getOrNull()
     }
 
+    /** True for Twitch's own deleted-message line, shown because "Deleted messages" is on Default. */
+    fun isPlainPlaceholder(ctx: android.content.Context, cs: CharSequence): Boolean {
+        if (delMode() != DEL_DEFAULT) return false
+        val needle = needle(ctx) ?: return false
+        return cs.length > needle.length && endsAt(cs, cs.length - needle.length, needle)
+    }
+
     private fun endsAt(cs: CharSequence, at: Int, s: String): Boolean {
         if (at < 0 || at + s.length > cs.length) return false
         for (i in s.indices) if (cs[at + i] != s[i]) return false

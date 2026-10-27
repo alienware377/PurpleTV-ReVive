@@ -90,7 +90,9 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { AudioFilters.install() }.onFailure { log("audio filters failed: $it") }
         runCatching { RaidCard.install(lpparam) }.onFailure { log("raid card failed: $it") }
         // The Application itself, so it watches screens from the very first one.
-        runCatching { InAppUpdate.install(app ?: ctx) }.onFailure { log("in-app update failed: $it") }
+        runCatching { InAppUpdate.install(app ?: ctx) }
+        runCatching { (app ?: ctx.applicationContext as? Application)?.let { SettingsSync.install(it) } }
+            .onFailure { log("settings sync failed: $it") }.onFailure { log("in-app update failed: $it") }
         runCatching { UpdateChecker.schedule() }.onFailure { log("update check failed: $it") }
         runCatching { PickerFavorites.install(lpparam) }.onFailure { log("picker favorites failed: $it") }
         runCatching { ChatTransparency.install(lpparam) }.onFailure { log("chat transparency failed: $it") }

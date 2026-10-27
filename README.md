@@ -71,6 +71,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
 | **Update checker** | Tells you when a new PurpleTV ReVive version is out, with what changed, a Skip this version button, and an Update button that downloads the right file. On the ready-to-install Twitch it downloads and installs inside the app, with a small progress bar and an Install now or Remind me later popup. Can be switched off under Updates. |
+| **Settings sync** | Keeps your PurpleTV settings the same on all your devices through one small file in your Google Drive (or any cloud storage Android's file picker offers). No sign-in: create the file on one device, pick it on the others. Changes are saved a few seconds after you make them and loaded when Twitch opens. |
 
 Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
 
