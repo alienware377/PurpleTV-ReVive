@@ -126,9 +126,10 @@ object PurpleMenu {
         Drop("Favorites bar layout",
             "One row you scroll sideways, or rows that grow as you add favorites, with groups as folders",
             FavBar.KEY_LAYOUT, listOf("One scrolling row", "Grow into rows"), done = true),
-        Drop("Favorite groups in rows",
-            "When the bar grows into rows: groups share lines with everything else, each group starts its own line, or a folder tree with each group's emotes below it",
-            FavBar.KEY_GROUP_STYLE, listOf("Share lines", "Each group on its own line", "Folder tree"), done = true),
+        Drop("Favorite groups display",
+            "How groups show in the bar. In rows, they can share lines with everything else, each start their own line, or form a folder tree. " +
+                "Tabs puts every group on top and shows the open one in the bar below (your other favorites when none is open), in either layout",
+            FavBar.KEY_GROUP_STYLE, listOf("Share lines", "Each group on its own line", "Folder tree", "Tabs"), done = true),
         Toggle("7TV, BTTV and FFZ in the emote picker",
             "Adds this channel's and the global 7TV, BTTV and FFZ emotes as sections at the bottom of Twitch's emote picker",
             PickerSections.KEY, def = true, done = true),

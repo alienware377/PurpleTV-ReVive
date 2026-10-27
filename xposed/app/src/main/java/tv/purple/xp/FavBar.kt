@@ -44,6 +44,7 @@ object FavBar {
     const val GROUPS_FLOW = 0      // groups and their emotes share lines with everything else
     const val GROUPS_LINES = 1     // each group starts its own line, its emotes right after it
     const val GROUPS_TREE = 2      // folder tree: the group on its own line, its emotes indented below
+    const val GROUPS_TABS = 3      // tabs: every group on top, the bar below shows the open one (or the loose ones)
 
     private const val BAR_BG = 0xFF18141D.toInt()
     private const val GOLD = 0xFFFFD24A.toInt()
@@ -108,7 +109,11 @@ object FavBar {
             .filter { Favorites.isAvailable(it) && pic(it) == null }
         if (want.isNotEmpty()) EmoteRepo.wantPictures(want) { host.post { runCatching { render(host) } } }
 
-        if (rowsMode()) renderRows(host, groups, loose) else renderRow(host, groups, loose)
+        when {
+            Settings.getInt(KEY_GROUP_STYLE, GROUPS_FLOW) == GROUPS_TABS -> renderTabs(host, groups, loose)
+            rowsMode() -> renderRows(host, groups, loose)
+            else -> renderRow(host, groups, loose)
+        }
     }
 
     private fun renderRow(host: FrameLayout, groups: List<Favorites.Group>, loose: List<String>) {
@@ -187,6 +192,45 @@ object FavBar {
         host.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
+    /**
+     * Tabs: every group on top; tapping one shows its emotes in the bar below, tapping it again (or
+     * another) switches back or over. With no group open the bar shows the loose favorites.
+     */
+    private fun renderTabs(host: FrameLayout, groups: List<Favorites.Group>, loose: List<String>) {
+        val ctx = host.context
+        val rows = rowsMode()
+        val shown = groups.firstOrNull { it.open }
+        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        // The tabs.
+        val tabs: ViewGroup = if (rows) Flow(ctx) else LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        }
+        for (g in groups) tabs.addView(groupChip(ctx, g, header = false, tab = true))
+        tabs.addView(addChip(ctx, short = groups.isNotEmpty() && !rows))
+        col.addView(if (rows) tabs else HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false; addView(tabs) })
+
+        // The bar below: the open group, or the loose favorites.
+        val items = shown?.items ?: loose
+        val scroller: ViewGroup
+        val bar: ViewGroup
+        if (rows) {
+            bar = Flow(ctx)
+            scroller = MaxScroll(ctx, minOf(dp(ctx, 200f), (ctx.resources.displayMetrics.heightPixels * 0.3f).toInt())).apply { addView(bar) }
+        } else {
+            bar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(ctx, 44f) }
+            scroller = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false; addView(bar) }
+        }
+        for (n in items) bar.addView(cell(ctx, n, shown?.id, scroller))
+        if (items.isEmpty()) bar.addView(if (shown != null) TextView(ctx).apply {
+            text = "Drag favorites onto this group to add them"; setTextColor(MUTED); textSize = 12.5f
+            setPadding(dp(ctx, 4f), dp(ctx, 12f), dp(ctx, 10f), dp(ctx, 12f))
+        } else hint(ctx))
+        dropOnto(bar, scroller) { Favorites.move(it, shown?.id, null) }
+        col.addView(scroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        host.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
     private fun hint(ctx: Context) = TextView(ctx).apply {
         text = "Long-press an emote to add it here"; setTextColor(MUTED); textSize = 13f
         gravity = Gravity.CENTER_VERTICAL; setPadding(dp(ctx, 4f), dp(ctx, 12f), dp(ctx, 10f), dp(ctx, 12f))
@@ -227,14 +271,16 @@ object FavBar {
     }
 
     /** A group: a folder chip in the row, or a header line in rows mode. */
-    private fun groupChip(ctx: Context, g: Favorites.Group, header: Boolean): View {
+    private fun groupChip(ctx: Context, g: Favorites.Group, header: Boolean, tab: Boolean = false): View {
         val iconPic = g.icon.takeIf { it.isNotEmpty() && Favorites.isAvailable(it) }?.let { pic(it) }
         val v = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(ctx, 8f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
-            background = round(ctx, 0x33A970FF, PURPLE)
+            // A tab that is showing is filled in; the others are outlines.
+            background = if (tab && g.open) round(ctx, 0xCCA970FF.toInt(), PURPLE)
+                else round(ctx, if (tab) 0 else 0x33A970FF, PURPLE)
             contentDescription = "Group " + g.name.ifEmpty { g.icon }
-            addView(TextView(ctx).apply {
+            if (!tab) addView(TextView(ctx).apply {
                 text = if (g.open) "▾" else "▸"; setTextColor(PURPLE); textSize = 14f
                 setPadding(0, 0, dp(ctx, 6f), 0)
             })
@@ -245,13 +291,13 @@ object FavBar {
             // The name, unless an icon stands in for it in the compact row.
             val label = g.name.ifEmpty { if (iconPic == null) g.icon else "" }
             if (label.isNotEmpty() && (header || iconPic == null)) addView(TextView(ctx).apply {
-                text = label; setTextColor(TEXT); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+                text = label; setTextColor(if (tab && g.open) Color.WHITE else TEXT); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
                 setPadding(if (iconPic != null) dp(ctx, 6f) else 0, 0, 0, 0)
             })
-            if (header || !g.open) addView(TextView(ctx).apply {
-                text = "  ${g.items.size}"; setTextColor(MUTED); textSize = 12f
+            if (header || !g.open || tab) addView(TextView(ctx).apply {
+                text = "  ${g.items.size}"; setTextColor(if (tab && g.open) Color.WHITE else MUTED); textSize = 12f
             })
-            setOnClickListener { Favorites.setOpen(g.id, !g.open) }
+            setOnClickListener { if (tab) Favorites.openOnly(if (g.open) null else g.id) else Favorites.setOpen(g.id, !g.open) }
             setOnLongClickListener { groupMenu(ctx, g); true }
             dropOnto(this, null) { Favorites.move(it, g.id, null) }
         }
@@ -395,7 +441,8 @@ object FavBar {
             addView(TextView(ctx).apply {
                 text = "New: favorite groups! Tap + to make one, with a name or an emote as its icon, and tap a group to open or close it. " +
                     "Hold a favorite and drag it into a group, onto another to reorder, or onto the bin to remove it. " +
-                    "PurpleTV settings › Third Party Services › Emotes can let the bar grow into rows."
+                    "In PurpleTV settings › Third Party Services › Emotes you can let the bar grow into rows, and choose how groups show: " +
+                    "sharing lines, each on its own line, as a folder tree, or as tabs that switch the bar."
                 setTextColor(TEXT); textSize = 12.5f
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(TextView(ctx).apply {

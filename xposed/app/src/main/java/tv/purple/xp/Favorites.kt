@@ -98,6 +98,13 @@ object Favorites {
         writeGroups(gs); notifyChanged()
     }
 
+    /** Open only group [id] (null closes them all): the tabs style shows one group at a time. */
+    fun openOnly(id: String?) {
+        val gs = groups()
+        for (g in gs) g.open = g.id == id
+        writeGroups(gs); notifyChanged()
+    }
+
     /** Move [name] into group [groupId] (null = the loose favorites), before [before] or at the end. */
     fun move(name: String, groupId: String?, before: String?) {
         if (name == before) return
