@@ -121,8 +121,14 @@ object PurpleMenu {
             "Include your own Twitch and subscriber emotes in the autocomplete strip",
             Settings.KEY_SRC_TWITCH, def = true, done = true),
         Toggle("Favorite emotes",
-            "Pin emotes to a bar in the emote picker. Long-press an emote to add it",
+            "Pin emotes to a bar in the emote picker. Long-press an emote to add it. In the bar, hold one to drag it into a group or onto the bin",
             PickerFavorites.KEY_ENABLED, def = true, done = true),
+        Drop("Favorites bar layout",
+            "One row you scroll sideways, or rows that grow as you add favorites, with groups as folders",
+            FavBar.KEY_LAYOUT, listOf("One scrolling row", "Grow into rows"), done = true),
+        Drop("Favorite groups in rows",
+            "When the bar grows into rows: groups share lines with everything else, each group starts its own line, or a folder tree with each group's emotes below it",
+            FavBar.KEY_GROUP_STYLE, listOf("Share lines", "Each group on its own line", "Folder tree"), done = true),
         Toggle("7TV, BTTV and FFZ in the emote picker",
             "Adds this channel's and the global 7TV, BTTV and FFZ emotes as sections at the bottom of Twitch's emote picker",
             PickerSections.KEY, def = true, done = true),
@@ -389,7 +395,7 @@ object PurpleMenu {
     )
 
     /** Every "closed for good" tip, so they can all be brought back at once. */
-    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED, EmoteHooks.KEY_LINK_TIP, DeletedTip.KEY)
+    private val TIP_KEYS = listOf(VideoFilters.KEY_TIP, Pins.KEY_TIP_DISMISSED, EmoteHooks.KEY_LINK_TIP, DeletedTip.KEY, FavBar.KEY_TIP)
 
     // ---------------------------------------------------------------- entry point
 

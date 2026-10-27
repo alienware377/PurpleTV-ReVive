@@ -82,6 +82,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { RefreshButton.install(lpparam) }.onFailure { log("refresh button failed: $it") }
         runCatching { VodSeek.install(lpparam) }.onFailure { log("vod seek failed: $it") }
         runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
+        runCatching { PickerSend.install() }.onFailure { log("picker send failed: $it") }
         runCatching { PickerBackspace.install(lpparam) }.onFailure { log("picker backspace failed: $it") }
         runCatching { ClassicTheatre.install(lpparam) }.onFailure { log("classic theatre failed: $it") }
         runCatching { ModLogs.install(lpparam) }.onFailure { log("mod logs failed: $it") }

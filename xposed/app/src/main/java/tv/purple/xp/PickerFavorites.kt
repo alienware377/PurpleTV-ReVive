@@ -53,7 +53,7 @@ object PickerFavorites {
 
 
     /** The currently-attached favorites chip row + its context, for live refresh on change. */
-    @Volatile private var curRow: WeakReference<LinearLayout>? = null
+    @Volatile private var curRow: WeakReference<FrameLayout>? = null
     @Volatile private var curCtx: WeakReference<Context>? = null
     @Volatile private var listenerWired = false
 
@@ -69,8 +69,8 @@ object PickerFavorites {
         if (!listenerWired) {
             listenerWired = true
             Favorites.addListener {
-                val row = curRow?.get() ?: return@addListener
-                row.post { runCatching { rebuild(row) } }
+                val host = curRow?.get() ?: return@addListener
+                host.post { runCatching { FavBar.render(host) } }
             }
         }
         installDialogHook()
@@ -127,60 +127,34 @@ object PickerFavorites {
     private fun onPaletteReady(container: ViewGroup) {
         if (!enabled()) return
         if (!INJECTED.add(container)) { // already injected; just refresh contents
-            curRow?.get()?.let { rebuild(it) }
+            curRow?.get()?.let { FavBar.render(it) }
             return
         }
         val ctx = container.context ?: return
-        val stripH = dp(ctx, 50f)
-
-        // Build: [ ★ Favorites ][ scrollable chip row ]
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val scroll = HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(row)
-        }
-        val star = TextView(ctx).apply {
-            text = "★"
-            setTextColor(Color.parseColor("#FFD24A"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setPadding(dp(ctx, 10f), 0, dp(ctx, 8f), 0)
-        }
-        val strip = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#FF18141D"))
-            addView(star, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply { gravity = Gravity.CENTER_VERTICAL })
-            addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        }
+        val (strip, host) = FavBar.buildStrip(ctx)
 
         // Pin the strip to the TOP of the picker; push the grid down so it isn't hidden behind it.
         container.addView(strip, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, stripH, Gravity.TOP
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP
         ))
-        // Pad the scrollable emote grid (emote_palette) down by the strip height so its first row
-        // isn't hidden behind the strip. Found by entry name — it's not a real GridView at runtime.
+        // Pad the scrollable emote grid (emote_palette) down by the strip's height, which changes
+        // as favorites are added in rows mode. Found by entry name: it's not a real GridView.
         val palette = findByEntry(container, "emote_palette")
-        runCatching {
-            (palette as? ViewGroup)?.clipToPadding = true
-            palette?.setPadding(
-                palette.paddingLeft, palette.paddingTop + stripH,
-                palette.paddingRight, palette.paddingBottom
-            )
+        val basePad = palette?.paddingTop ?: 0
+        (palette as? ViewGroup)?.clipToPadding = true
+        strip.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val p = palette ?: return@addOnLayoutChangeListener
+            if (p.paddingTop != basePad + v.height) p.setPadding(p.paddingLeft, basePad + v.height, p.paddingRight, p.paddingBottom)
         }
-
+        val row = host
         curRow = WeakReference(row)
         curCtx = WeakReference(ctx)
-        rebuild(row)
+        FavBar.render(row)
 
         // Refresh on every reopen (the picker view may be reused while favorites changed).
         palette?.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
-                curRow?.get()?.let { rebuild(it) }
+                curRow?.get()?.let { FavBar.render(it) }
             }
             override fun onViewDetachedFromWindow(v: View) {}
         })
@@ -290,7 +264,7 @@ object PickerFavorites {
     }
 
     private fun tryInjectSheet(sheet: ViewGroup) {
-        if (INJECTED.contains(sheet)) { curRow?.get()?.let { rebuild(it) }; return }
+        if (INJECTED.contains(sheet)) { curRow?.get()?.let { FavBar.render(it) }; return }
         val tapped = android.os.SystemClock.uptimeMillis() - pickerTappedAt < TAP_WINDOW_MS
         if (!tapped && !isEmotePickerSheet(sheet)) return
         injectIntoSheet(sheet)
@@ -337,126 +311,28 @@ object PickerFavorites {
         if (!enabled()) return
         if (!INJECTED.add(sheet)) return
         val ctx = sheet.context ?: return
-        val stripH = dp(ctx, 50f)
-        val (strip, row) = buildStrip(ctx)
+        val (strip, host) = FavBar.buildStrip(ctx)
 
         sheet.addView(strip, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, stripH, Gravity.TOP
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP
         ))
-        // Push the composed picker down rather than letting the strip sit over it. A margin is
-        // used instead of padding because the sheet is a FrameLayout and Compose lays its own
-        // content out inside whatever box it is given.
-        for (i in 0 until sheet.childCount) {
-            val child = sheet.getChildAt(i) ?: continue
-            if (child === strip) continue
-            val lp = child.layoutParams as? ViewGroup.MarginLayoutParams ?: continue
-            if (lp.topMargin < stripH) { lp.topMargin = stripH; child.layoutParams = lp }
+        // Push the composed picker down rather than letting the strip sit over it, by however tall
+        // the strip is now (it grows in rows mode). A margin, not padding: the sheet is a
+        // FrameLayout and Compose lays its own content out inside whatever box it is given.
+        strip.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val h = v.height
+            for (i in 0 until sheet.childCount) {
+                val child = sheet.getChildAt(i) ?: continue
+                if (child === strip) continue
+                val lp = child.layoutParams as? ViewGroup.MarginLayoutParams ?: continue
+                if (lp.topMargin != h) { lp.topMargin = h; child.post { child.layoutParams = lp } }
+            }
         }
 
-        curRow = WeakReference(row)
+        curRow = WeakReference(host)
         curCtx = WeakReference(ctx)
-        rebuild(row)
+        FavBar.render(host)
         log("PF favorites strip injected into the picker bottom sheet")
-    }
-
-    /** The strip itself, shared by both the old in-layout picker and the newer sheet. */
-    private fun buildStrip(ctx: Context): Pair<LinearLayout, LinearLayout> {
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val scroll = HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(row)
-        }
-        val star = TextView(ctx).apply {
-            text = "★"
-            setTextColor(Color.parseColor("#FFD24A"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setPadding(dp(ctx, 10f), 0, dp(ctx, 8f), 0)
-        }
-        val strip = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#FF18141D"))
-            addView(star, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply { gravity = Gravity.CENTER_VERTICAL })
-            addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        }
-        return strip to row
-    }
-
-    /** Repopulate the chip row from the persisted favorites list. */
-    private fun rebuild(row: LinearLayout) {
-        val ctx = row.context ?: return
-        row.removeAllViews()
-        val favs = Favorites.list()
-        if (favs.isEmpty()) {
-            row.addView(TextView(ctx).apply {
-                text = "Long-press an emote to add it here"
-                setTextColor(Color.parseColor("#99FFFFFF"))
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                gravity = Gravity.CENTER_VERTICAL
-            })
-            return
-        }
-        val sizePx = dp(ctx, 34f)
-        // Favorites whose picture has not loaded yet: fetch those now and redraw the bar.
-        val waiting = favs.filter { Favorites.isAvailable(it) && favDrawable(it) == null }
-        if (waiting.isNotEmpty()) EmoteRepo.wantPictures(waiting) {
-            row.post { runCatching { rebuild(row) } }
-        }
-        for (name in favs) {
-            // Not usable in this chat (a 7TV/BTTV/FFZ word this channel does not have): shown
-            // greyed out and not insertable, but still removable with a long-press.
-            val usable = Favorites.isAvailable(name)
-            val d = if (usable) favDrawable(name) else null
-            val cell: View = if (d != null) {
-                ImageView(ctx).apply {
-                    setImageDrawable(d)
-                    if (d is AnimatedImageDrawable) runCatching { d.start() }
-                    layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
-                }
-            } else {
-                // No cached image (e.g. emote not in the current channel's set) — show the name.
-                TextView(ctx).apply {
-                    text = name
-                    setTextColor(Color.WHITE)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                    gravity = Gravity.CENTER_VERTICAL
-                }
-            }
-            val holder = FrameLayout(ctx).apply {
-                setPadding(dp(ctx, 6f), 0, dp(ctx, 6f), 0)
-                isClickable = true
-                addView(cell)
-                if (!usable) alpha = 0.35f
-                setOnClickListener {
-                    if (!usable) { toast(ctx, "$name is not available in this chat"); return@setOnClickListener }
-                    if (!EmoteAutocomplete.insertEmote(name))
-                        toast(ctx, "Tap the chat box first")
-                }
-                setOnLongClickListener {
-                    Favorites.remove(name)
-                    toast(ctx, "Removed $name")
-                    true
-                }
-            }
-            row.addView(holder)
-        }
-    }
-
-    /** A drawable for a favorite emote: fresh animated copy if animated, else the cached static
-     *  suggestion drawable (a fresh copy so it isn't shared across views), else null. */
-    private fun favDrawable(name: String): Drawable? {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-            EmoteRepo.animBytes.containsKey(name)) {
-            EmoteRepo.makeAnimated(name)?.let { return it }
-        }
-        EmoteRepo.suggestDrawables[name]?.let { return it.constantState?.newDrawable()?.mutate() ?: it }
-        EmoteRepo.drawables[name]?.let { return it.constantState?.newDrawable()?.mutate() ?: it }
-        return null
     }
 
     private fun dp(ctx: Context, v: Float): Int =

@@ -33,14 +33,13 @@ object SettingsSync {
     private const val KEY_NAME = "sync_name"
     /** Time stamp of the copy this device last wrote or applied. */
     private const val KEY_AT = "sync_at"
-    /** When a synced setting last changed here. */
-    private const val KEY_CHANGED = "sync_changed_at"
 
     private const val REQ_CREATE = 0x5071
     private const val REQ_OPEN = 0x5072
     private const val FILE_NAME = "purpletv-settings.json"
     private const val PUSH_DELAY = 4000L
     private const val PULL_AFTER_AWAY = 30_000L
+    private const val PERIODIC_MS = 5 * 60_000L
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var applying = false
@@ -96,7 +95,11 @@ object SettingsSync {
             override fun onActivityResumed(a: Activity) {
                 val away = lastPausedAt == 0L || android.os.SystemClock.uptimeMillis() - lastPausedAt > PULL_AFTER_AWAY
                 lastPausedAt = -1L
-                if (away && enabled()) pull(a.applicationContext, quiet = true)
+                if (away && enabled()) {
+                    sync(a.applicationContext, quiet = true)
+                    // Drive may still be fetching the newest copy: look once more shortly after.
+                    main.postDelayed({ if (enabled()) sync(a.applicationContext, quiet = true) }, 25_000)
+                }
             }
             override fun onActivityPaused(a: Activity) { lastPausedAt = android.os.SystemClock.uptimeMillis() }
             override fun onActivityCreated(a: Activity, b: Bundle?) {}
@@ -105,38 +108,57 @@ object SettingsSync {
             override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
             override fun onActivityDestroyed(a: Activity) {}
         })
+        main.postDelayed(periodic, PERIODIC_MS)
         log("SY settings sync ready (${if (enabled()) "on: " + Settings.getString(KEY_NAME, "?") else "off"})")
     }
 
-    /** From every settings write. */
+    /** From every settings write: note when this key changed here, and sync a moment later. */
     fun changed(key: String) {
         if (applying || local(key) || !enabled()) return
-        Settings.setString(KEY_CHANGED, System.currentTimeMillis().toString())
-        main.removeCallbacks(pushLater)
-        main.postDelayed(pushLater, PUSH_DELAY)
+        val m = mtimes(); m[key] = System.currentTimeMillis(); saveMtimes(m)
+        main.removeCallbacks(syncLater)
+        main.postDelayed(syncLater, PUSH_DELAY)
     }
 
-    private val pushLater = Runnable { Settings.ctx()?.let { push(it, quiet = true) } }
+    private val syncLater = Runnable { Settings.ctx()?.let { sync(it, quiet = true) } }
+
+    // ---- when each setting last changed on this device ----
+
+    private const val KEY_MTIMES = "sync_mtimes"
+
+    private fun mtimes(): MutableMap<String, Long> = runCatching {
+        val o = JSONObject(Settings.getString(KEY_MTIMES, "{}").ifBlank { "{}" })
+        o.keys().asSequence().associateWith { o.getLong(it) }.toMutableMap()
+    }.getOrDefault(HashMap())
+
+    private fun saveMtimes(m: Map<String, Long>) {
+        applying = true
+        try { Settings.setString(KEY_MTIMES, JSONObject(m as Map<*, *>).toString()) } finally { applying = false }
+    }
 
     // ---- the file ----
 
-    private fun snapshot(at: Long): String {
-        val o = JSONObject()
-        for ((k, v) in Settings.all()) {
+    private class Remote(val at: Long, val device: String, val values: Map<String, Any?>, val mtimes: Map<String, Long>)
+
+    private fun snapshot(at: Long, values: Map<String, Any?>, mt: Map<String, Long>): String {
+        val o = JSONObject(); val m = JSONObject()
+        for ((k, v) in values) {
             if (local(k)) continue
             val t = when (v) {
                 is Boolean -> "b"; is Int -> "i"; is Long -> "l"; is Float -> "f"; is String -> "s"
                 is Set<*> -> "ss"; else -> continue
             }
             o.put(k, JSONArray().put(t).put(if (v is Set<*>) JSONArray(v.map { it.toString() }) else v))
+            m.put(k, mt[k] ?: 0L)
         }
-        return JSONObject().put("app", "purpletv-revive").put("v", 1).put("at", at)
-            .put("device", Build.MODEL).put("settings", o).toString(1)
+        return JSONObject().put("app", "purpletv-revive").put("v", 2).put("at", at)
+            .put("device", Build.MODEL).put("settings", o).put("mtimes", m).toString(1)
     }
 
-    private fun parse(json: String): Pair<Long, Map<String, Any?>>? = runCatching {
+    private fun parse(json: String): Remote? = runCatching {
         val root = JSONObject(json)
         if (root.optString("app") != "purpletv-revive") return null
+        val at = root.getLong("at")
         val o = root.getJSONObject("settings")
         val out = HashMap<String, Any?>()
         for (k in o.keys()) {
@@ -148,11 +170,17 @@ object SettingsSync {
                 else -> continue
             }
         }
-        root.getLong("at") to out
+        // Files from 1.2.0 have no per-setting times: every setting counts as changed when the file was.
+        val mo = root.optJSONObject("mtimes")
+        val mt = out.keys.associateWith { k -> mo?.optLong(k, at) ?: at }
+        Remote(at, root.optString("device"), out, mt)
     }.getOrNull()
 
-    private fun read(ctx: Context, u: Uri): String? =
-        ctx.contentResolver.openInputStream(u)?.use { it.readBytes().toString(Charsets.UTF_8) }
+    private fun read(ctx: Context, u: Uri): String? {
+        // Ask the provider for its newest copy first; Drive can otherwise hand back a cached one.
+        runCatching { ctx.contentResolver.refresh(u, null, null) }
+        return ctx.contentResolver.openInputStream(u)?.use { it.readBytes().toString(Charsets.UTF_8) }
+    }
 
     private fun write(ctx: Context, u: Uri, text: String) {
         val bytes = text.toByteArray(Charsets.UTF_8)
@@ -161,59 +189,113 @@ object SettingsSync {
         os.use { it.write(bytes) }
     }
 
-    private fun localAt() = maxOf(Settings.getString(KEY_AT, "0").toLongOrNull() ?: 0L,
-        Settings.getString(KEY_CHANGED, "0").toLongOrNull() ?: 0L)
+    @Volatile private var syncing = false
 
-    /** Write this device's settings to the file. */
-    fun push(ctx: Context, quiet: Boolean, done: ((Boolean) -> Unit)? = null) {
+    /**
+     * Read the file, merge setting by setting (whichever device changed it last wins), take what is
+     * newer there and write back what is newer here. Merging per setting means two devices changing
+     * different things in between never undo each other. [take] (picking an existing file) takes
+     * every setting the file has, keeping only this device's settings the file does not know yet.
+     */
+    fun sync(ctx: Context, quiet: Boolean, take: Boolean = false, done: ((Boolean) -> Unit)? = null) {
         val u = uri() ?: return
+        if (syncing) { main.postDelayed({ sync(ctx, quiet, take, done) }, 1500); return }
+        syncing = true
         Thread({
-            val ok = runCatching {
-                val at = System.currentTimeMillis()
-                write(ctx, u, snapshot(at))
+            var took = 0; var wrote = false
+            val r = runCatching {
+                val text = read(ctx, u)
+                val remote = if (text.isNullOrBlank()) Remote(0, "", emptyMap(), emptyMap())
+                    else parse(text) ?: error("not a PurpleTV settings file")
+                val here = Settings.all().filterKeys { !local(it) }
+                val lm = mtimes()
+                // A setting with no change time here has not changed since this device last synced.
+                val base = Settings.getString(KEY_AT, "0").toLongOrNull() ?: 0L
+                val merged = HashMap<String, Any?>(here); val mm = HashMap(lm)
+                var newerHere = false
+                for (k in remote.values.keys + here.keys) {
+                    val inFile = k in remote.values
+                    val rt = remote.mtimes[k] ?: 0L
+                    val lt = lm[k] ?: base
+                    val same = inFile && here[k] == remote.values[k]
+                    when {
+                        same -> {}
+                        // Newer in the file, or a tie (on a tie the file wins, so devices settle on one value).
+                        inFile && (take || rt >= lt) -> { took++; merged[k] = remote.values[k]; mm[k] = maxOf(rt, lt) }
+                        else -> newerHere = true
+                    }
+                }
                 applying = true
-                try { Settings.setString(KEY_AT, at.toString()) } finally { applying = false }
-                log("SY pushed settings")
-            }.onFailure { log("SY push failed: $it") }.isSuccess
+                try { if (took > 0) Settings.replace(merged) { !local(it) } } finally { applying = false }
+                // Untracked settings go out with this device's last sync time, never "now", so an
+                // old value can not pass itself off as a new change on the other devices.
+                for (k in merged.keys) mm.putIfAbsent(k, base)
+                saveMtimes(mm)
+                val now = System.currentTimeMillis()
+                if (newerHere) { write(ctx, u, snapshot(now, merged, mm)); wrote = true }
+                applying = true
+                try { Settings.setString(KEY_AT, (if (wrote) now else remote.at).toString()) } finally { applying = false }
+                log("SY sync: took $took from the file (${remote.device.ifEmpty { "empty" }})" + if (wrote) ", saved this device's newer settings" else "")
+            }
+            syncing = false
+            r.onFailure { log("SY sync failed: $it") }
+            val ok = r.isSuccess
             main.post {
-                if (!quiet) toast(ctx, if (ok) "Settings saved to ${Settings.getString(KEY_NAME, "the sync file")}" else "Could not save the sync file")
+                if (took > 0) runCatching { ViewHider.reapply() }
+                if (!quiet) toast(ctx, when {
+                    !ok -> "Could not reach the sync file"
+                    took > 0 -> "Settings synced ($took loaded). A few take effect after restarting Twitch."
+                    wrote -> "Settings saved to ${Settings.getString(KEY_NAME, "the sync file")}"
+                    else -> "Settings are up to date"
+                })
                 done?.invoke(ok)
             }
         }, "ptv-sync").apply { isDaemon = true }.start()
     }
 
-    /** Read the file and take it if it is newer than what this device has; push if this device is newer. */
-    fun pull(ctx: Context, quiet: Boolean, force: Boolean = false) {
-        val u = uri() ?: return
+    /** While Twitch is in front, check the file now and then for other devices' changes. */
+    private val periodic = object : Runnable {
+        override fun run() {
+            if (lastPausedAt == -1L && enabled()) Settings.ctx()?.let { sync(it, quiet = true) }
+            main.postDelayed(this, PERIODIC_MS)
+        }
+    }
+
+    /** Test aid: log what the sync file holds (its time, device, and the keys matching [re]). */
+    fun debugRead(ctx: Context, re: String?) {
+        val u = uri() ?: run { log("SY debug: not syncing"); return }
         Thread({
-            val r = runCatching {
-                val text = read(ctx, u) ?: error("cannot read the sync file")
-                if (text.isBlank()) return@runCatching -1
-                val (at, values) = parse(text) ?: error("not a PurpleTV settings file")
-                if (!force && at <= localAt()) return@runCatching -1
-                applying = true
-                try {
-                    val n = Settings.replace(values) { !local(it) }
-                    Settings.setString(KEY_AT, at.toString())
-                    n
-                } finally { applying = false }
-            }
-            val n = r.getOrNull()
-            r.onFailure { log("SY pull failed: $it") }
-            if (n != null && n > 0) log("SY applied $n setting(s) from the sync file")
-            main.post {
-                if (n != null && n > 0) runCatching { ViewHider.reapply() }
-                // The file is older (or empty): this device has the newest settings, so share them.
-                if (n == -1 && (Settings.getString(KEY_CHANGED, "0").toLongOrNull() ?: 0L) > (Settings.getString(KEY_AT, "0").toLongOrNull() ?: 0L))
-                    push(ctx, quiet = true)
-                if (!quiet) toast(ctx, when {
-                    n == null -> "Could not read the sync file"
-                    n > 0 -> "Settings loaded ($n changed). A few take effect after restarting Twitch."
-                    else -> "Settings are up to date"
-                })
-            }
+            runCatching {
+                val text = read(ctx, u) ?: error("cannot read")
+                val root = JSONObject(text)
+                val rx = re?.let { Regex(it) }
+                val o = root.getJSONObject("settings")
+                val keys = o.keys().asSequence().filter { rx == null || rx.containsMatchIn(it) }.toList()
+                log("SY debug: file at=${root.optLong("at")} (${java.util.Date(root.optLong("at"))}) from ${root.optString("device")}, " +
+                    "${o.length()} settings; local at=${Settings.getString(KEY_AT, "0")}; file: ${where(ctx, u)}")
+                for (k in keys) log("SY debug: $k=${o.get(k).toString().replace("", " | ").take(600)}")
+            }.onFailure { log("SY debug read failed: $it") }
         }, "ptv-sync").apply { isDaemon = true }.start()
     }
+
+    /** "account: My Drive / folder / file", as far as the provider will say. */
+    private fun where(ctx: Context, u: Uri): String = runCatching {
+        val cr = ctx.contentResolver
+        val path = android.provider.DocumentsContract.findDocumentPath(cr, u) ?: return@runCatching "?"
+        fun nameOf(id: String) = cr.query(android.provider.DocumentsContract.buildDocumentUri(u.authority, id),
+            arrayOf(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "?"
+        val acct = path.rootId?.let { rid ->
+            cr.query(android.provider.DocumentsContract.buildRootsUri(u.authority), null, null, null, null)?.use { c ->
+                val iId = c.getColumnIndex(android.provider.DocumentsContract.Root.COLUMN_ROOT_ID)
+                val iSum = c.getColumnIndex(android.provider.DocumentsContract.Root.COLUMN_SUMMARY)
+                var out: String? = null
+                while (c.moveToNext()) if (c.getString(iId) == rid) out = c.getString(iSum)
+                out
+            }
+        } ?: "?"
+        acct + ": " + path.path.joinToString(" / ") { nameOf(it) }
+    }.getOrElse { "? ($it)" }
 
     // ---- the settings row ----
 
@@ -242,9 +324,11 @@ object SettingsSync {
             b.setMessage("Syncing with \"${Settings.getString(KEY_NAME, FILE_NAME)}\".\nLast synced: $ago.\n\n" +
                 "Changes are saved a few seconds after you make them, and loaded when Twitch opens. " +
                 "Things like update reminders and test switches stay on each device.")
-            b.setPositiveButton("Sync now") { _, _ -> pull(a, quiet = false) }
-            b.setNeutralButton("Stop syncing") { _, _ -> stop(a) }
-            b.setNegativeButton("Close", null)
+            b.setPositiveButton("Sync now") { _, _ -> sync(a, quiet = false) }
+            b.setNegativeButton("Stop syncing") { _, _ -> stop(a) }
+            b.setNeutralButton("Use another file") { _, _ ->
+                pick(a, Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_OPEN)
+            }
         }
         dialog = WeakReference(b.show())
     }
@@ -272,11 +356,11 @@ object SettingsSync {
         } finally { applying = false }
         log("SY ${if (code == REQ_CREATE) "created" else "picked"} sync file $name")
         if (code == REQ_CREATE) {
-            push(a, quiet = true) { ok ->
+            sync(a, quiet = true) { ok ->
                 toast(a, if (ok) "Sync file created. On your other devices, choose \"Use existing file\" and pick $name."
                     else "Could not write to $name")
             }
-        } else pull(a, quiet = false, force = true)
+        } else sync(a, quiet = false, take = true)
     }
 
     private fun stop(ctx: Context) {
@@ -287,7 +371,7 @@ object SettingsSync {
             }
         }
         applying = true
-        try { for (k in listOf(KEY_URI, KEY_NAME, KEY_AT, KEY_CHANGED)) Settings.setString(k, "") } finally { applying = false }
+        try { for (k in listOf(KEY_URI, KEY_NAME, KEY_AT)) Settings.setString(k, "") } finally { applying = false }
         toast(ctx, "Stopped syncing. Your settings stay as they are.")
     }
 }
