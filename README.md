@@ -35,7 +35,7 @@ We fully support Twitch and the people who make a living on it. This module is a
 | **Homies emotes** | Global and channel Chatterino Homies emotes. Off by default. |
 | **BTTV WEBP** | Optionally load BTTV emotes in WEBP format instead of GIF or PNG. |
 | **Emote autocomplete** | Start typing an emote name, no leading colon needed, and pick it from a scrolling list just above the input. 7TV, BTTV and FFZ emotes come first, then your sub emotes, then other Twitch emotes. Hold one to pin it to the top whenever it matches, or to add it to the favorites bar. Pins can be kept per streamer. |
-| **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Can be kept per streamer. |
+| **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Sort them into groups with a name or an emote as their icon, shown as folders that open and close, or as tabs that switch the bar. Hold a favorite to drag it into a group, to a new spot or onto the bin. The bar can be one scrolling row or grow into rows. Can be kept per streamer. |
 | **7TV, BTTV and FFZ in the emote picker** | This channel's and the global 7TV, BTTV, FFZ and Homies emotes appear as their own sections at the bottom of Twitch's emote picker. |
 | **Emote details** | Tap a 7TV, BTTV or FFZ emote in chat to see it big, with where it comes from (global or this channel's), who uploaded it, and a link to its page on 7TV, BetterTTV or FrankerFaceZ. |
 | **Frequently Used** | Emotes you send from the favorites bar or the suggestion list count towards Twitch's Frequently Used row, like ones picked in Twitch's own picker. |
@@ -113,7 +113,7 @@ Open Twitch and start watching any channel. Third-party emotes load automaticall
 
 - **Emote autocomplete:** just start typing an emote name in the chat box.
 - **Add a favorite:** long-press any Twitch or subscriber emote in the native emote picker.
-- **Remove a favorite:** long-press it in the favorites bar.
+- **Groups and removing:** tap **+** in the favorites bar to make a group; hold a favorite to drag it into a group, to a new spot, or onto the bin to remove it.
 - **Settings:** open Twitch's own **Settings** screen; **PurpleTV** is the first row.
 
 ## Turning it off
