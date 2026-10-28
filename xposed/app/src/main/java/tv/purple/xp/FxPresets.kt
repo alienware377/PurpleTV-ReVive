@@ -27,7 +27,9 @@ object FxPresets {
     class Preset(val name: String, val values: Map<String, Any?>, val builtIn: Boolean)
 
     // Built-in looks, written as "filter key" to amount (and "key_lo"/"key_hi" for a tone range).
-    private fun v(vararg p: Pair<String, Int>) = p.associate { (k, n) -> (if ('_' in k && (k.endsWith("_lo") || k.endsWith("_hi"))) "vf_$k" else "vf_${k}_a") to n }
+    private fun v(vararg p: Pair<String, Int>) = p.associate { (k, n) ->
+        (if (k.endsWith("_lo") || k.endsWith("_hi") || k.endsWith("_speed")) "vf_$k" else "vf_${k}_a") to n
+    }
     private fun a(vararg p: Pair<String, Int>) = p.associate { (k, n) -> "af_$k" to n }
 
     private val BUILT_IN = mapOf(
@@ -37,7 +39,10 @@ object FxPresets {
             Preset("Vivid", v("vib" to 45, "sat" to 10, "contrast" to 15, "clarity" to 20), true),
             Preset("Cinema", v("contrast" to 20, "fade" to 15, "temp" to 8, "vignette" to 35, "grain" to 12), true),
             Preset("Black and white", v("sat" to -100, "contrast" to 25, "clarity" to 15, "vignette" to 25), true),
-            Preset("Soft glow", v("soft" to 35, "soft_lo" to 60, "bright" to 10, "vib" to 15), true)
+            Preset("Soft glow", v("soft" to 35, "soft_lo" to 60, "bright" to 10, "vib" to 15), true),
+            Preset("Glitchy", v("g_rgb" to 37, "g_rgb_speed" to 39, "g_vhs" to 36, "g_shake" to 19, "g_shake_speed" to 48,
+                "g_wave" to 18, "g_wave_speed" to 100, "g_scan" to 18, "g_scan_speed" to 76, "g_flicker" to 18,
+                "g_shift" to 11, "g_shift_speed" to 80, "g_static" to 11, "g_blocks" to 4), true)
         ),
         Kind.AUDIO to listOf(
             Preset("Clear voices", a("voice" to 60, "lowcut" to 50, "level" to 40), true),
