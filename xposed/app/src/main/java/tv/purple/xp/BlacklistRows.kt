@@ -130,7 +130,7 @@ internal object BlacklistRows {
     /** Restore every row we hid. Called when the term list changes: rows already on screen are
      *  never re-bound, so nothing else would bring them back. */
     fun reapply() {
-        val rows = runCatching { COLLAPSED.keys.toList() }.getOrNull() ?: return
+        val rows = runCatching { weakKeys(COLLAPSED) }.getOrNull() ?: return
         if (rows.isEmpty()) return
         for (row in rows) {
             row.post {

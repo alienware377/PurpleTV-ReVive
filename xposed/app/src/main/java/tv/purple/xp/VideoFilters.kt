@@ -274,12 +274,12 @@ object VideoFilters {
     }
 
     /** The video views seen so far that are still around. */
-    fun videoViews(): List<TextureView> = views.keys.toList()
+    fun videoViews(): List<TextureView> = weakKeys(views)
 
     /** Redraw every video with fresh shader inputs (Android 13+ path; the GL path reads them per frame). */
     fun reapplyEffects() {
         if (!shaderSupported() || GlVideoFilter.available() || !anyActive()) return
-        for (tv in views.keys.toList()) {
+        for (tv in weakKeys(views)) {
             if (!tv.isAttachedToWindow) continue
             runCatching { tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content")) }
         }
@@ -292,7 +292,7 @@ object VideoFilters {
         override fun run() {
             if (!animated()) { grainRunning = false; return }
             seed = (seed + 1.37f) % 997f
-            for (tv in views.keys.toList()) {
+            for (tv in weakKeys(views)) {
                 if (!tv.isAttachedToWindow) continue
                 if (shaderSupported() && !GlVideoFilter.available()) runCatching {
                     tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))

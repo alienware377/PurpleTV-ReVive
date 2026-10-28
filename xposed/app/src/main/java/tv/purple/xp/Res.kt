@@ -41,3 +41,16 @@ object Res {
             .ifEmpty { null }
     }
 }
+
+/**
+ * The keys of a WeakHashMap, safely. Kotlin's toList() reads the size and then takes items without
+ * asking whether one is still there, but the garbage collector can drop a key in between (a closed
+ * video screen, say) and the app crashed with NoSuchElementException. hasNext() keeps hold of the
+ * next key, so asking first is always safe.
+ */
+fun <K> weakKeys(m: java.util.WeakHashMap<K, *>): List<K> {
+    val out = ArrayList<K>()
+    val it = m.keys.iterator()
+    while (it.hasNext()) it.next()?.let { out.add(it) }
+    return out
+}

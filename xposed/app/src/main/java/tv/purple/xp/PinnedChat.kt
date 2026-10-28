@@ -84,7 +84,7 @@ object PinnedChat {
             }
         }
         // A hidden container whose pin is gone (or no longer the page on show) comes back.
-        for (v in hidden.keys.toList()) if (v !in pinsShown) { v.visibility = View.VISIBLE; hidden.remove(v) }
+        for (v in weakKeys(hidden)) if (v !in pinsShown) { v.visibility = View.VISIBLE; hidden.remove(v) }
     }
 
     private fun dismiss(container: View, header: View, key: String, mask: Boolean) {
@@ -149,7 +149,7 @@ object PinnedChat {
     }
 
     private fun restoreAll() {
-        for (v in hidden.keys.toList()) v.visibility = View.VISIBLE
+        for (v in weakKeys(hidden)) v.visibility = View.VISIBLE
         hidden.clear()
     }
 

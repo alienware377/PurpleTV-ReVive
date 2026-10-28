@@ -78,7 +78,7 @@ object PickerSections {
 
     /** Re-check every live picker, e.g. after emotes load or a setting changes. */
     fun refreshAll() {
-        for (a in STATES.keys.toList()) runCatching { ensureTail(a) }.onFailure { log("PS refresh: $it") }
+        for (a in weakKeys(STATES)) runCatching { ensureTail(a) }.onFailure { log("PS refresh: $it") }
     }
 
     private fun tryAttach(rv: ViewGroup, adapter: Any, attempt: Int) {
