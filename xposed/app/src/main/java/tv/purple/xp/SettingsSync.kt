@@ -24,8 +24,8 @@ import java.lang.ref.WeakReference
  * No sign-in and no Google setup: Android's own file picker hands Twitch lasting permission to
  * that one file, and the Drive app moves it between devices. Each device writes the file a few
  * seconds after a setting changes and reads it when Twitch opens or comes back to the front. The
- * newest copy wins. Settings that only make sense on one device (update state, test switches,
- * which panel sections are open) stay local.
+ * newest copy wins. Settings that only make sense on one device (the on/off switch, update state,
+ * test switches, which panel sections are open) stay local.
  */
 object SettingsSync {
 
@@ -42,14 +42,17 @@ object SettingsSync {
     private const val PERIODIC_MS = 5 * 60_000L
 
     private val main = Handler(Looper.getMainLooper())
-    @Volatile private var applying = false
+    /** Guards the change times, which the main thread and the sync thread both rewrite. */
+    private val lock = Any()
     @Volatile private var installed = false
     private var lastPausedAt = 0L
     private var dialog: WeakReference<AlertDialog>? = null
 
-    /** Device-local settings, never synced. */
+    /** Device-local settings, never synced. The master switch is one: a device switched off never
+     *  syncs again, so it could not pick up being switched back on. */
     fun local(key: String) = key.startsWith("sync_") || key.startsWith("update_") || key.startsWith("dev_") ||
-        key == GlVideoFilter.KEY_FORCE || key.startsWith("vf_ui_") || key.startsWith("af_ui_")
+        key == GlVideoFilter.KEY_FORCE || key.startsWith("vf_ui_") || key.startsWith("af_ui_") ||
+        key == Settings.KEY_ENABLED
 
     private fun uri(): Uri? = Settings.getString(KEY_URI, "").takeIf { it.isNotEmpty() }?.let(Uri::parse)
 
@@ -114,8 +117,8 @@ object SettingsSync {
 
     /** From every settings write: note when this key changed here, and sync a moment later. */
     fun changed(key: String) {
-        if (applying || local(key) || !enabled()) return
-        val m = mtimes(); m[key] = System.currentTimeMillis(); saveMtimes(m)
+        if (local(key) || !enabled()) return
+        synchronized(lock) { val m = mtimes(); m[key] = System.currentTimeMillis(); saveMtimes(m) }
         main.removeCallbacks(syncLater)
         main.postDelayed(syncLater, PUSH_DELAY)
     }
@@ -132,8 +135,7 @@ object SettingsSync {
     }.getOrDefault(HashMap())
 
     private fun saveMtimes(m: Map<String, Long>) {
-        applying = true
-        try { Settings.setString(KEY_MTIMES, JSONObject(m as Map<*, *>).toString()) } finally { applying = false }
+        Settings.setString(KEY_MTIMES, JSONObject(m as Map<*, *>).toString())
     }
 
     // ---- the file ----
@@ -212,29 +214,48 @@ object SettingsSync {
                 // A setting with no change time here has not changed since this device last synced.
                 val base = Settings.getString(KEY_AT, "0").toLongOrNull() ?: 0L
                 val merged = HashMap<String, Any?>(here); val mm = HashMap(lm)
+                val taken = HashMap<String, Any?>()
                 var newerHere = false
                 for (k in remote.values.keys + here.keys) {
+                    // A file from an older version can still hold settings that are now device-only.
+                    if (local(k)) continue
                     val inFile = k in remote.values
                     val rt = remote.mtimes[k] ?: 0L
-                    val lt = lm[k] ?: base
+                    // A setting this device has never had can only come from the file. Counting its
+                    // absence as newer would drop it from the file, and the device that has it would
+                    // put it back on every sync.
+                    val lt = lm[k] ?: if (k in here) base else Long.MIN_VALUE
                     val same = inFile && here[k] == remote.values[k]
                     when {
                         same -> {}
                         // Newer in the file, or a tie (on a tie the file wins, so devices settle on one value).
-                        inFile && (take || rt >= lt) -> { took++; merged[k] = remote.values[k]; mm[k] = maxOf(rt, lt) }
+                        inFile && (take || rt >= lt) -> {
+                            took++; merged[k] = remote.values[k]; taken[k] = remote.values[k]; mm[k] = maxOf(rt, lt)
+                        }
                         else -> newerHere = true
                     }
                 }
-                applying = true
-                try { if (took > 0) Settings.replace(merged) { !local(it) } } finally { applying = false }
+                if (took > 0) {
+                    // Write only what was taken, and skip a setting the user changed while this sync
+                    // ran: that change is newer. Writing all of `here` back would undo such changes.
+                    val cur = Settings.all()
+                    val keep = taken.filterKeys { cur[it] == here[it] }
+                    Settings.replace(keep) { it in keep }
+                    // The playing stream's sound effect only reads the settings when told to.
+                    if (keep.keys.any { it.startsWith("af_") }) runCatching { AudioFilters.refresh() }
+                }
                 // Untracked settings go out with this device's last sync time, never "now", so an
                 // old value can not pass itself off as a new change on the other devices.
                 for (k in merged.keys) mm.putIfAbsent(k, base)
-                saveMtimes(mm)
+                // Save over a fresh copy, so a change made here while this sync ran keeps its newer time.
+                synchronized(lock) {
+                    val m = mtimes()
+                    for ((k, t) in mm) m[k] = maxOf(m[k] ?: t, t)
+                    saveMtimes(m)
+                }
                 val now = System.currentTimeMillis()
                 if (newerHere) { write(ctx, u, snapshot(now, merged, mm)); wrote = true }
-                applying = true
-                try { Settings.setString(KEY_AT, (if (wrote) now else remote.at).toString()) } finally { applying = false }
+                Settings.setString(KEY_AT, (if (wrote) now else remote.at).toString())
                 log("SY sync: took $took from the file (${remote.device.ifEmpty { "empty" }})" + if (wrote) ", saved this device's newer settings" else "")
             }
             syncing = false
@@ -323,7 +344,7 @@ object SettingsSync {
             val ago = if (at == 0L) "not yet" else android.text.format.DateUtils.getRelativeTimeSpanString(at).toString()
             b.setMessage("Syncing with \"${Settings.getString(KEY_NAME, FILE_NAME)}\".\nLast synced: $ago.\n\n" +
                 "Changes are saved a few seconds after you make them, and loaded when Twitch opens. " +
-                "Things like update reminders and test switches stay on each device.")
+                "Things like the PurpleTV on/off switch, update reminders and test switches stay on each device.")
             b.setPositiveButton("Sync now") { _, _ -> sync(a, quiet = false) }
             b.setNegativeButton("Stop syncing") { _, _ -> stop(a) }
             b.setNeutralButton("Use another file") { _, _ ->
@@ -348,12 +369,9 @@ object SettingsSync {
                 if (c.moveToFirst()) c.getString(0) else null
             }
         }.getOrNull() ?: FILE_NAME
-        applying = true
-        try {
-            Settings.setString(KEY_URI, u.toString())
-            Settings.setString(KEY_NAME, name)
-            Settings.setString(KEY_AT, "0")
-        } finally { applying = false }
+        Settings.setString(KEY_URI, u.toString())
+        Settings.setString(KEY_NAME, name)
+        Settings.setString(KEY_AT, "0")
         log("SY ${if (code == REQ_CREATE) "created" else "picked"} sync file $name")
         if (code == REQ_CREATE) {
             sync(a, quiet = true) { ok ->
@@ -370,8 +388,7 @@ object SettingsSync {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             }
         }
-        applying = true
-        try { for (k in listOf(KEY_URI, KEY_NAME, KEY_AT)) Settings.setString(k, "") } finally { applying = false }
+        for (k in listOf(KEY_URI, KEY_NAME, KEY_AT)) Settings.setString(k, "")
         toast(ctx, "Stopped syncing. Your settings stay as they are.")
     }
 }

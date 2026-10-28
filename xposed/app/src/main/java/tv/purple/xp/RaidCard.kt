@@ -35,6 +35,7 @@ object RaidCard {
     private val RAID_EVENT get() = TwitchVersion.pick("me6", "rh6")   // RaidNoticeEvent(channelId, notice)
     private val RAID_NOTICE get() = TwitchVersion.pick("sg6", "zj6")  // ChatRaidNotice(systemMessage, profileImageUrl, raidingUserInfo, viewerCount)
     private val USER_INFO get() = TwitchVersion.pick("j960", "e370")   // UserInfo(userId, userName, displayName, unused)
+    private val MAPPER get() = TwitchVersion.pick("we6", "ci6")       // c(event, ...) turns each chat notice event into a chat item
 
     private class Raid(val source: String, val target: String, val count: Int, val at: Long)
 
@@ -48,6 +49,9 @@ object RaidCard {
     @Volatile private var realAt = 0L
     @Volatile private var building = false
     @Volatile private var doneFor: String? = null
+    /** The raid event we last pushed, and whether Twitch's chat turned it into a chat item. */
+    @Volatile private var ours: Any? = null
+    @Volatile private var delivered = false
 
     fun install(lp: LoadPackageParam) {
         cl = lp.classLoader
@@ -92,6 +96,17 @@ object RaidCard {
                 }
             })
         }.onFailure { log("RC chat notice hooks failed: $it") }
+        runCatching {
+            // Tells "our card reached chat" apart from "our card is on screen": a delivered card can
+            // be scrolled off, or chat can be hidden or paused, and pushing again would add a copy.
+            // The big mapper is hooked, not the event's tiny getter, which ART may inline past the hook.
+            XposedBridge.hookAllMethods(XposedHelpers.findClass(MAPPER, lp.classLoader), "c", object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    val o = ours ?: return
+                    if (p.args.getOrNull(0) === o) delivered = true
+                }
+            })
+        }.onFailure { log("RC chat mapper hook failed: $it") }
         log("RC raid card fix installed")
     }
 
@@ -144,7 +159,12 @@ object RaidCard {
                 if (realAt > r.at) { log("RC Twitch showed the real raid card, nothing added"); return@post }
                 if (push(r, login, display, logo)) {
                     main.postDelayed({
+                        val got = delivered
+                        ours = null
+                        // Only push again when chat never took the card. Without the mapper hook,
+                        // got stays false and being on screen is the only sign left.
                         if (shown()) log("RC raid card from $display shown")
+                        else if (got) log("RC raid card from $display is in chat, not on screen right now")
                         else if (attempt < 3) { log("RC raid card not in chat yet, trying again"); inject(r, attempt + 1) }
                         else log("RC raid card did not appear")
                     }, 2000)
@@ -164,6 +184,8 @@ object RaidCard {
         val event = XposedHelpers.newInstance(XposedHelpers.findClass(RAID_EVENT, l), target, notice)
         val wrapped = XposedHelpers.newInstance(XposedHelpers.findClass(CHAT_NOTICE, l), event)
         building = false
+        // Set before onNext, since chat may map the event right inside that call.
+        ours = event; delivered = false
         XposedHelpers.callMethod(subj, TwitchVersion.onNext, wrapped)   // PublishSubject.onNext
         true
     }.getOrElse { building = false; log("RC raid card failed: $it"); false }

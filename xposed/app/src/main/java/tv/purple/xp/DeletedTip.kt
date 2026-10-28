@@ -22,12 +22,19 @@ object DeletedTip {
     /** Offered at most once per run, so leaving it open and moving on does not nag. */
     @Volatile private var offered = false
 
-    /** From the TextView.setText hook: costs a char compare until a deleted placeholder shows. */
+    /** The bidi isolate close (PDI) Twitch puts after the placeholder under an RTL layout. */
+    private const val PDI = '⁩'
+
+    /** From the TextView.setText hook: costs a char compare or two until a deleted placeholder shows. */
     fun onText(tv: TextView, cs: CharSequence) {
         if (offered) return
-        val n = cs.length
-        if (n < 3 || cs[n - 1] != '>') return
-        if (!ChatLineStyle.isPlainPlaceholder(tv.context, cs)) return
+        // RTL wraps the placeholder in bidi isolates, so the line ends in one PDI (deleted while on
+        // screen) or two (already deleted, where the whole line is wrapped as well). Look past them.
+        var end = cs.length
+        if (end > 0 && cs[end - 1] == PDI) { end--; if (end > 0 && cs[end - 1] == PDI) end-- }
+        if (end < 3 || cs[end - 1] != '>') return
+        val text = if (end == cs.length) cs else cs.subSequence(0, end)
+        if (!ChatLineStyle.isPlainPlaceholder(tv.context, text)) return
         offered = true
         if (Settings.get(KEY, false)) return
         tv.post { runCatching { show(tv) }.onFailure { log("DT tip: $it") } }

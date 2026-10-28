@@ -82,7 +82,7 @@ object ChatHighlight {
         if (!mentionOn && words.isEmpty()) return
 
         val msg = ChatTokens.message(args) ?: return
-        val color = matchColor(msg, mentionOn, words) ?: return
+        val color = matchColor(msg, args, mentionOn, words) ?: return
 
         // Paint from the BODY slot: it is the one slot present on every line and it spans the
         // wrapped remainder, so the bar covers the whole message.
@@ -104,14 +104,18 @@ object ChatHighlight {
     }
 
     /** First matching colour, checking @mention, then username rules, then per-word rules. */
-    private fun matchColor(msg: Any, mentionOn: Boolean, words: List<Keyword>): Int? {
+    private fun matchColor(
+        msg: Any, args: Array<Any?>?, mentionOn: Boolean, words: List<Keyword>
+    ): Int? {
         if (mentionOn && ChatTokens.mentionsLocalUser(msg))
             return Settings.getInt(KEY_MENTION_COLOR, MENTION_COLOR_DEFAULT)
         if (words.isEmpty()) return null
 
         val userRules = words.filter { it.type == Type.USERNAME }
         if (userRules.isNotEmpty()) {
-            val login = ChatIdentity.Sender.of(arrayOf<Any?>(msg))?.login?.lowercase()
+            // Hand over the real hook args, not a one-item array: Sender caches where the
+            // message sits, and a different layout here made it rescan and log on every line.
+            val login = ChatIdentity.Sender.of(args)?.login?.lowercase()
             if (login != null) userRules.firstOrNull { it.word.lowercase() == login }
                 ?.let { return it.color }
         }

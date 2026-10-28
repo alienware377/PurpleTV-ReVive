@@ -61,10 +61,16 @@ object PlayerStats {
             }
         })
         // The player drawing to the screen is the one handed a surface; Twitch also keeps idle
-        // players around (preloading, the mini player), whose numbers are all zero.
-        XposedBridge.hookAllMethods(c, "setSurface", object : XC_MethodHook() {
+        // players around (preloading, the mini player), whose numbers are all zero. Only the public
+        // setSurface(Surface): the private native one it forwards to takes the player handle first,
+        // so a detach (null surface) would look like an attach there. A detached player stops
+        // being the shown one, so the box falls back to RefreshButton's player.
+        val setSurface = runCatching { c.getMethod("setSurface", android.view.Surface::class.java) }.getOrNull()
+        if (setSurface != null) XposedBridge.hookMethod(setSurface, object : XC_MethodHook() {
             override fun afterHookedMethod(p: MethodHookParam) {
-                if (p.args.getOrNull(0) != null) shown = WeakReference(p.thisObject)
+                val me = p.thisObject
+                if (p.args.getOrNull(0) != null) shown = WeakReference(me)
+                else if (shown?.get() === me) shown = null
             }
         })
         log("PS player options installed")
@@ -78,13 +84,15 @@ object PlayerStats {
     fun attach(root: View) {
         val on = Settings.get(KEY_STATS, false)
         if (!on && !added) return
+        // Turning the setting off closes the box even away from the player, where no bar is found.
+        if (!on && overlay != null) hideOverlay()
         val ctx = root.context
         val settingsId = Res.id(ctx, "settings_button"); if (settingsId == 0) return
         val bars = ArrayList<ViewGroup>()
         collectBars(root, settingsId, bars)
         for (bar in bars) {
             var btn = bar.findViewWithTag<ImageView>(TAG)
-            if (!on) { if (btn != null) bar.removeView(btn); hideOverlay(); continue }
+            if (!on) { if (btn != null) bar.removeView(btn); continue }
             val row = ROW.mapNotNull { n -> Res.id(ctx, n).takeIf { it != 0 }?.let { bar.findViewById<View>(it) } }
                 .filter { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }.toMutableList()
             for (t in OURS) bar.findViewWithTag<View>(t)?.takeIf { it.visibility == View.VISIBLE && it.width > 0 }?.let { row.add(it) }
@@ -150,6 +158,9 @@ object PlayerStats {
             val tv = overlay?.get() ?: return
             if (!tv.isAttachedToWindow) { overlay = null; return }
             runCatching { place(tv) }
+            // Hidden (player left, or Twitch in the background): skip asking the player, which
+            // may already be released; the next visible tick fills the box in again.
+            if (tv.visibility != View.VISIBLE || tv.windowVisibility != View.VISIBLE) { main.postDelayed(this, 1000); return }
             tv.text = runCatching { describe() }.getOrElse { "Stats unavailable: $it" }
             main.postDelayed(this, 1000)
         }

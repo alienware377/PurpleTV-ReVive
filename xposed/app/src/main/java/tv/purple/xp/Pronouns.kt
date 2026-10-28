@@ -3,6 +3,7 @@ package tv.purple.xp
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * Pronoun tags from pronouns.alejo.io.
@@ -29,15 +30,19 @@ object Pronouns {
                                                         // show up within the same session
     private const val MAX_ENTRIES = 2000
     private const val MIN_REQUEST_GAP_MS = 200L         // ~5 req/s
+    private const val LABEL_RETRY_MS = 60_000L          // after a failed label list load
 
     fun enabled(): Boolean = Settings.get(KEY, true)
 
-    /** id -> rendered label, e.g. "hehim" -> "He/Him". Fetched once at startup. */
+    /** id -> rendered label, e.g. "hehim" -> "He/Him". Fetched at startup, and retried about once
+     *  a minute while it is still empty (a start with no network must not break tags all session). */
     private val labels = ConcurrentHashMap<String, String>()
+    @Volatile private var labelsTriedAt = 0L
 
     /** [id] is null for a NEGATIVE entry (user has no pronoun set) — cached so a chatty user
-     *  without pronouns isn't re-queried on every line. */
-    private class Entry(val id: String?, val at: Long)
+     *  without pronouns isn't re-queried on every line. [alt] is the alternate pronoun id, if any.
+     *  Ids, not text, are cached so a label list that loads late still fixes these entries. */
+    private class Entry(val id: String?, val alt: String?, val at: Long)
 
     private val cache = ConcurrentHashMap<String, Entry>()
 
@@ -47,18 +52,31 @@ object Pronouns {
 
     @Volatile private var started = false
 
+    // Synchronized because enqueue can also start the worker, possibly from more than one thread.
+    @Synchronized
     fun loadAsync() {
         if (started || !enabled()) return
         started = true
         Thread({
-            runCatching { loadLabels() }.onFailure { log("PRONOUN labels failed: $it") }
+            ensureLabels()
             worker()
         }, "ptv-pronouns").apply { isDaemon = true }.start()
     }
 
+    /** Loads the label list if it is still empty, at most once per [LABEL_RETRY_MS].
+     *  Worker thread only: a failing request can take the full 10 s timeout. */
+    private fun ensureLabels() {
+        if (labels.isNotEmpty() || !enabled()) return
+        val now = System.currentTimeMillis()
+        if (now - labelsTriedAt < LABEL_RETRY_MS) return
+        labelsTriedAt = now
+        runCatching { loadLabels() }.onFailure { log("PRONOUN labels failed: $it") }
+    }
+
     /**
      * Rendered pronoun label for [login], or null if unknown/unset/not yet fetched.
-     * Safe to call from the render thread: pure map lookups plus an unbounded-queue offer.
+     * Safe to call from the render thread: pure map lookups plus an unbounded-queue offer (and,
+     * at most once per process, starting the worker thread).
      */
     fun forLogin(login: String): String? {
         if (!enabled() || login.isEmpty()) return null
@@ -67,15 +85,29 @@ object Pronouns {
         val now = System.currentTimeMillis()
         if (e != null) {
             val fresh = now - e.at < (if (e.id == null) TTL_MISS else TTL_HIT)
-            if (fresh) return e.id?.let { labels[it] }
+            if (fresh) return render(e)
         }
         enqueue(key)
         // Serve the stale value while the refresh is in flight rather than blinking the tag off.
-        return e?.id?.let { labels[it] }
+        return e?.let { render(it) }
+    }
+
+    /** Label text for a cached entry, built here rather than at fetch time so a late label load
+     *  fixes entries already cached. Null while any label is missing, so a raw id like "sheher"
+     *  never reaches chat. */
+    private fun render(e: Entry): String? {
+        val main = e.id?.let { labels[it] } ?: return null
+        val alt = e.alt ?: return main
+        val second = labels[alt] ?: return null
+        // "She/They" style: subject of the primary, subject of the alternate. The subject is the
+        // first component of a rendered label ("He/Him" -> "He").
+        return main.substringBefore('/') + "/" + second.substringBefore('/')
     }
 
     private fun enqueue(login: String) {
-        if (!started) return
+        // Pronouns were off at startup and got switched on later (settings sync from another
+        // device, for one), so nothing started the worker yet. forLogin already checked enabled().
+        if (!started) loadAsync()
         if (!inFlight.add(login)) return
         queue.offer(login)
     }
@@ -96,11 +128,16 @@ object Pronouns {
 
     private fun worker() {
         while (true) {
-            val login = runCatching { queue.take() }.getOrNull() ?: return
+            // poll with a timeout, not take: a quiet chat where every chatter is already cached
+            // queues nothing, and a failed label load must still be retried there.
+            val login = runCatching { queue.poll(LABEL_RETRY_MS, TimeUnit.MILLISECONDS) }
+                .getOrElse { return }
+            ensureLabels()
+            if (login == null) continue
             runCatching { fetch(login) }
                 .onFailure {
                     // Cache as a miss so one flaky lookup can't turn into a per-message retry storm.
-                    put(login, null)
+                    put(login, null, null)
                     log("PRONOUN '$login' failed: $it")
                 }
             inFlight.remove(login)
@@ -112,31 +149,19 @@ object Pronouns {
         val body = runCatching {
             EmoteRepo.httpGet("https://api.pronouns.alejo.io/v1/users/$login")
         }.getOrNull()
-        if (body.isNullOrBlank()) { put(login, null); return }   // 404 == no pronoun set
+        if (body.isNullOrBlank()) { put(login, null, null); return }   // 404 == no pronoun set
         val o = runCatching { JSONObject(body) }.getOrNull()
-        if (o == null) { put(login, null); return }
+        if (o == null) { put(login, null, null); return }
         val primary = o.optString("pronoun_id").takeIf { it.isNotEmpty() && it != "null" }
-        if (primary == null) { put(login, null); return }
+        if (primary == null) { put(login, null, null); return }
         val alt = o.optString("alt_pronoun_id").takeIf { it.isNotEmpty() && it != "null" }
-        if (alt != null) {
-            // "She/They" style: subject of the primary, subject of the alternate. Synthesised
-            // under a composite id so the label map stays the single source of rendered text.
-            val composite = "$primary+$alt"
-            labels[composite] = subjectOf(primary) + "/" + subjectOf(alt)
-            put(login, composite)
-        } else {
-            put(login, primary)
-        }
+        put(login, primary, alt)
     }
 
-    /** First component of a rendered label ("He/Him" -> "He"), which is its subject form. */
-    private fun subjectOf(id: String): String =
-        labels[id]?.substringBefore('/') ?: id
-
-    private fun put(login: String, id: String?) {
+    private fun put(login: String, id: String?, alt: String?) {
         // Chat churn is high but bounded; a crude clear beats unbounded growth and is invisible
         // to the user (worst case a handful of logins are re-fetched).
         if (cache.size > MAX_ENTRIES) cache.clear()
-        cache[login] = Entry(id, System.currentTimeMillis())
+        cache[login] = Entry(id, alt, System.currentTimeMillis())
     }
 }

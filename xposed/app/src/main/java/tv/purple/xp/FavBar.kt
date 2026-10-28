@@ -29,8 +29,9 @@ import android.widget.TextView
  *
  * Tap a favorite to put it in the chat box. Hold one and drag it onto a group to move it there,
  * onto another favorite to place it before that one, onto an empty part of the bar to take it out
- * of its group, or onto the bin (where the star is while dragging) to remove it. Tap a group to
- * open or close it, hold it to rename it, change its icon or delete it, and tap + for a new one.
+ * of its group (in tabs, onto the "Other" tab), or onto the bin (where the star is while dragging)
+ * to remove it. Tap a group to open or close it, hold it to rename it, change its icon or delete
+ * it, and tap + for a new one.
  */
 object FavBar {
 
@@ -105,15 +106,29 @@ object FavBar {
         syncTip(host)
         val groups = Favorites.groups()
         val loose = Favorites.loose()
-        // Pictures not loaded yet (including group icons): fetch them, then draw again.
+        // Pictures not loaded yet (including group icons): fetch them, then draw again. Only look in
+        // the maps here: pic() would decode a whole new copy of every animated favorite just to test it.
         val want = (loose + groups.flatMap { it.items } + groups.map { it.icon }.filter { it.isNotEmpty() })
-            .filter { Favorites.isAvailable(it) && pic(it) == null }
-        if (want.isNotEmpty()) EmoteRepo.wantPictures(want) { host.post { runCatching { render(host) } } }
+            .filter { Favorites.isAvailable(it) && !EmoteRepo.suggestDrawables.containsKey(it) && !EmoteRepo.drawables.containsKey(it) }
+        if (want.isNotEmpty()) EmoteRepo.wantPictures(want) { redrawSoon(host) }
 
         when {
             Settings.getInt(KEY_GROUP_STYLE, GROUPS_FLOW) == GROUPS_TABS -> renderTabs(host, groups, loose)
             rowsMode() -> renderRows(host, groups, loose)
             else -> renderRow(host, groups, loose)
+        }
+    }
+
+    /** Bars with a redraw already queued. Weak, so a closed picker's bar is not kept alive. */
+    private val redrawQueued = java.util.Collections.newSetFromMap(java.util.WeakHashMap<FrameLayout, Boolean>())
+
+    /**
+     * Redraw [host] a moment from now, from any thread. Pictures arrive one by one, so this folds a
+     * burst of them into one redraw instead of rebuilding the whole bar for each.
+     */
+    private fun redrawSoon(host: FrameLayout) {
+        host.post {
+            if (redrawQueued.add(host)) host.postDelayed({ redrawQueued.remove(host); runCatching { render(host) } }, 150)
         }
     }
 
@@ -195,11 +210,13 @@ object FavBar {
 
     /**
      * Tabs: every group on top; tapping one shows its emotes in the bar below, tapping it again (or
-     * another) switches back or over. With no group open the bar shows the loose favorites.
+     * another) switches back or over. With no group open the bar shows the loose favorites, which
+     * also have a tab of their own, "Other": drop a favorite on it to take it out of its group.
      */
     private fun renderTabs(host: FrameLayout, groups: List<Favorites.Group>, loose: List<String>) {
         val ctx = host.context
         val rows = rowsMode()
+        // Only one group shows. Others can still be marked open (made in another style, or synced).
         val shown = groups.firstOrNull { it.open }
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
 
@@ -207,7 +224,25 @@ object FavBar {
         val tabs: ViewGroup = if (rows) Flow(ctx) else LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
-        for (g in groups) tabs.addView(groupChip(ctx, g, header = false, tab = true))
+        // The loose favorites' tab. The bar below only takes drops into the group shown, so without
+        // this a favorite could never leave its group here.
+        if (groups.isNotEmpty()) tabs.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
+            background = if (shown == null) round(ctx, 0xCCA970FF.toInt(), PURPLE) else round(ctx, 0, PURPLE)
+            contentDescription = "Favorites not in a group"
+            addView(TextView(ctx).apply {
+                text = "Other"; setTextColor(if (shown == null) Color.WHITE else TEXT); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            })
+            addView(TextView(ctx).apply {
+                text = "  ${loose.size}"; setTextColor(if (shown == null) Color.WHITE else MUTED); textSize = 12f
+            })
+            setOnClickListener { if (shown != null) Favorites.openOnly(null) }
+            dropOnto(this, null) { Favorites.move(it, null, null) }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(ctx, 38f))
+                .apply { setMargins(dp(ctx, 2f), dp(ctx, 3f), dp(ctx, 6f), dp(ctx, 3f)) }
+        })
+        for (g in groups) tabs.addView(groupChip(ctx, g, header = false, tab = true, selected = g === shown))
         tabs.addView(addChip(ctx, short = groups.isNotEmpty() && !rows))
         col.addView(if (rows) tabs else HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false; addView(tabs) })
 
@@ -271,14 +306,17 @@ object FavBar {
         }
     }
 
-    /** A group: a folder chip in the row, or a header line in rows mode. */
-    private fun groupChip(ctx: Context, g: Favorites.Group, header: Boolean, tab: Boolean = false): View {
+    /**
+     * A group: a folder chip in the row, or a header line in rows mode. As a [tab], [selected] says
+     * whether it is the one shown in the bar (more than one group can be marked open).
+     */
+    private fun groupChip(ctx: Context, g: Favorites.Group, header: Boolean, tab: Boolean = false, selected: Boolean = false): View {
         val iconPic = g.icon.takeIf { it.isNotEmpty() && Favorites.isAvailable(it) }?.let { pic(it) }
         val v = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(ctx, 8f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
             // A tab that is showing is filled in; the others are outlines.
-            background = if (tab && g.open) round(ctx, 0xCCA970FF.toInt(), PURPLE)
+            background = if (tab && selected) round(ctx, 0xCCA970FF.toInt(), PURPLE)
                 else round(ctx, if (tab) 0 else 0x33A970FF, PURPLE)
             contentDescription = "Group " + g.name.ifEmpty { g.icon }
             if (!tab) addView(TextView(ctx).apply {
@@ -292,13 +330,13 @@ object FavBar {
             // The name, unless an icon stands in for it in the compact row.
             val label = g.name.ifEmpty { if (iconPic == null) g.icon else "" }
             if (label.isNotEmpty() && (header || iconPic == null)) addView(TextView(ctx).apply {
-                text = label; setTextColor(if (tab && g.open) Color.WHITE else TEXT); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+                text = label; setTextColor(if (tab && selected) Color.WHITE else TEXT); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
                 setPadding(if (iconPic != null) dp(ctx, 6f) else 0, 0, 0, 0)
             })
             if (header || !g.open || tab) addView(TextView(ctx).apply {
-                text = "  ${g.items.size}"; setTextColor(if (tab && g.open) Color.WHITE else MUTED); textSize = 12f
+                text = "  ${g.items.size}"; setTextColor(if (tab && selected) Color.WHITE else MUTED); textSize = 12f
             })
-            setOnClickListener { if (tab) Favorites.openOnly(if (g.open) null else g.id) else Favorites.setOpen(g.id, !g.open) }
+            setOnClickListener { if (tab) Favorites.openOnly(if (selected) null else g.id) else Favorites.setOpen(g.id, !g.open) }
             setOnLongClickListener { groupMenu(ctx, g); true }
             dropOnto(this, null) { Favorites.move(it, g.id, null) }
         }
@@ -420,7 +458,11 @@ object FavBar {
             .setPositiveButton(if (g == null) "Create" else "Save") { _, _ ->
                 var n = name.text.toString().trim()
                 if (n.isEmpty() && icon.isEmpty()) n = "Group ${Favorites.groups().size + if (g == null) 1 else 0}"
-                if (g == null) Favorites.newGroup(n, icon) else Favorites.editGroup(g.id, n, icon)
+                if (g != null) Favorites.editGroup(g.id, n, icon)
+                else Favorites.newGroup(n, icon).also {
+                    // Tabs show one group: make the new one that group, not a second "open" one.
+                    if (Settings.getInt(KEY_GROUP_STYLE, GROUPS_FLOW) == GROUPS_TABS) Favorites.openOnly(it.id)
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()

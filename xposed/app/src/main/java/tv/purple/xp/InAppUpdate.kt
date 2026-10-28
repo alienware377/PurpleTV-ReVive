@@ -194,6 +194,10 @@ object InAppUpdate {
     // ---- the ready popup ----
 
     private fun showReady(a: Activity) {
+        // The download can end after the user left with Back, and the remembered screen may be
+        // gone already: Android would refuse the popup and crash Twitch. KEY_REMIND_AT is due, so
+        // the next resume offers it instead.
+        if (a.isFinishing || a.isDestroyed) return
         val f = readyFile() ?: return
         val name = Regex("revive-(\\d+\\.\\d+\\.\\d+)").find(f.name)?.groupValues?.get(1) ?: "update"
         val d = Dialog(a); d.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -228,7 +232,8 @@ object InAppUpdate {
         }
         d.setOnCancelListener { Settings.setString(KEY_REMIND_AT, (System.currentTimeMillis() + REMIND_MS).toString()) }
         popupShown = WeakReference(d)
-        d.show()
+        // This runs from a posted runnable, where a throw would take Twitch down with it.
+        runCatching { d.show() }.onFailure { popupShown = null; log("update: ready popup failed: $it") }
     }
 
     private fun installNow(a: Activity, f: File) {

@@ -85,10 +85,46 @@ object FxPresets {
     /** The tab's settings as they are now. */
     fun capture(kind: Kind): Map<String, Any?> = Settings.all().filterKeys { covers(kind, it) }
 
-    /** Make the tab's settings exactly the preset's. */
+    /**
+     * Make the tab's settings the preset's. Settings it leaves out are set back to their start
+     * values, not removed: sync only carries values, so a removed setting would come back from the
+     * sync file or another device. [Settings.replace] skips sync, so each changed setting is stamped
+     * here; without a fresh change time the next sync would put the file's older values back.
+     */
     fun apply(kind: Kind, p: Preset) {
-        Settings.replace(p.values) { covers(kind, it) }
+        val before = capture(kind)
+        val target = HashMap<String, Any?>()
+        for ((k, v) in before) target[k] = neutral(k, v) ?: v
+        for ((k, v) in p.values) if (covers(kind, k)) target[k] = v
+        Settings.replace(target) { covers(kind, it) }
+        for ((k, v) in target) if (before[k] != v) SettingsSync.changed(k)
         log("FX applied ${kind.title.lowercase()} preset ${p.name}")
+    }
+
+    /**
+     * Where a setting the preset leaves out goes: the start value the panel's reset buttons use
+     * ([FilterDefs.resetFilter], [AudioFilters.resetAll]). Null keeps it as it is, for picked
+     * colours, gradients and overlay pictures, which a reset keeps too.
+     */
+    private fun neutral(k: String, cur: Any?): Any? {
+        // Every audio setting starts at 0 or switched off.
+        if (k.startsWith("af_")) return when (cur) { is Boolean -> false; is Int -> 0; else -> null }
+        val f = k.removePrefix("vf_").substringBeforeLast('_')
+        return when {
+            k.endsWith("_a") || k.endsWith("_lo") -> 0
+            k.endsWith("_hi") -> 100
+            k.endsWith("_off") -> false
+            k.endsWith("_target") -> DynLight.DEF_TARGET[f] ?: 50
+            k.endsWith("_speed") -> when {
+                f == "bokeh" -> 40
+                FilterDefs.FILTERS.getOrNull(FilterDefs.index(f))?.group == FilterDefs.Group.DYNAMIC -> DynLight.DEF_SPEED
+                else -> 50
+            }
+            k == "vf_grain_size" -> 2
+            k == "vf_vignette_size" -> 50
+            k == "vf_bokeh_size" || k == "vf_bokeh_density" -> 45
+            else -> null
+        }
     }
 
     // ---- the dialog ----
@@ -126,6 +162,8 @@ object FxPresets {
                     0 -> { apply(kind, p); after() }
                     1 -> { saveMine(kind, own.map { if (it.name == p.name) Preset(p.name, capture(kind), false) else it }); toast(ctx, "Updated \"${p.name}\"") }
                     2 -> nameDialog(ctx, "Rename preset", p.name) { name ->
+                        // Unchanged: the filter below would drop the preset itself.
+                        if (name == p.name) return@nameDialog
                         saveMine(kind, own.filter { it.name != name }.map { if (it.name == p.name) Preset(name, it.values, false) else it })
                     }
                     3 -> saveMine(kind, own.filter { it.name != p.name })

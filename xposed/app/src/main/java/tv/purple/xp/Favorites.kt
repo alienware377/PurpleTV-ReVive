@@ -29,10 +29,14 @@ object Favorites {
 
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
 
+    /** The channel last seen. EmoteRepo has none for a while when it re-downloads every emote
+     *  (quality change and the like), and the list must not fall back to the shared one then. */
+    @Volatile private var lastCh: String? = null
+
     /** The settings key holding the list that applies right now. */
     private fun storeKey(): String {
         if (!Settings.get(KEY_PER_CHANNEL, false)) return Settings.KEY_FAVORITES
-        val ch = EmoteRepo.currentChannel() ?: return Settings.KEY_FAVORITES
+        val ch = (EmoteRepo.currentChannel() ?: lastCh)?.also { lastCh = it } ?: return Settings.KEY_FAVORITES
         return "${Settings.KEY_FAVORITES}@$ch"
     }
 
@@ -55,20 +59,38 @@ object Favorites {
 
     fun groups(): List<Group> = runCatching {
         val a = org.json.JSONArray(Settings.getString(groupsKey(), "[]").ifBlank { "[]" })
+        val closed = closedIds()
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
             val items = o.optJSONArray("items")
-            Group(o.getString("id"), o.optString("name"), o.optString("icon"), o.optBoolean("open", true),
+            val id = o.getString("id")
+            Group(id, o.optString("name"), o.optString("icon"), closed?.let { id !in it } ?: o.optBoolean("open", true),
                 (0 until (items?.length() ?: 0)).map { items!!.getString(it) }.toMutableList())
         }
     }.getOrDefault(emptyList())
 
     private fun writeGroups(gs: List<Group>) {
         val a = org.json.JSONArray()
+        // "open" is still written for older versions of the module on other devices; this one
+        // reads it from [closedKey] once that exists.
         for (g in gs) a.put(org.json.JSONObject().put("id", g.id).put("name", g.name).put("icon", g.icon)
             .put("open", g.open).put("items", org.json.JSONArray(g.items)))
         Settings.setString(groupsKey(), a.toString())
     }
+
+    // Which groups are open is this device's own view, kept out of the synced groups: a tap that
+    // rewrote them would count as their newest edit and undo favorites another device moved in
+    // the meantime. The closed ones are stored, so a group made on another device arrives open.
+    private fun closedKey() = "fav_ui_closed:" + storeKey()
+
+    /** Ids of the groups closed here, or null before the first open or close since this moved
+     *  out of the groups JSON (its old "open" flags count until then). SEP alone is never stored. */
+    private fun closedIds(): Set<String>? {
+        val s = Settings.getString(closedKey(), SEP)
+        return if (s == SEP) null else s.split(SEP).filter { it.isNotBlank() }.toSet()
+    }
+
+    private fun writeClosed(ids: Collection<String>) = Settings.setString(closedKey(), ids.joinToString(SEP))
 
     fun newGroup(name: String, icon: String): Group {
         val gs = groups().toMutableList()
@@ -94,15 +116,15 @@ object Favorites {
 
     fun setOpen(id: String, open: Boolean) {
         val gs = groups()
-        gs.firstOrNull { it.id == id }?.let { it.open = open } ?: return
-        writeGroups(gs); notifyChanged()
+        if (gs.none { it.id == id }) return
+        val closed = gs.filter { !it.open }.mapTo(HashSet()) { it.id }
+        if (open) closed.remove(id) else closed.add(id)
+        writeClosed(closed); notifyChanged()
     }
 
     /** Open only group [id] (null closes them all): the tabs style shows one group at a time. */
     fun openOnly(id: String?) {
-        val gs = groups()
-        for (g in gs) g.open = g.id == id
-        writeGroups(gs); notifyChanged()
+        writeClosed(groups().map { it.id }.filter { it != id }); notifyChanged()
     }
 
     /** Move [name] into group [groupId] (null = the loose favorites), before [before] or at the end. */
@@ -138,7 +160,20 @@ object Favorites {
             if (known.containsKey(n)) continue
             EmoteRepo.twitchUrl(n)?.let { known[n] = it; changed = true }
         }
-        val keep = list().toSet()
+        // Keep the favorites of every stored list, not just this one: with a list per channel,
+        // keeping only this channel's would drop the pictures of every other channel's favorites.
+        val keep = list().toHashSet()
+        runCatching {
+            for ((k, v) in Settings.all()) {
+                if (!k.startsWith(Settings.KEY_FAVORITES) || v !is String) continue
+                if (k.endsWith("#groups")) runCatching {
+                    val a = org.json.JSONArray(v.ifBlank { "[]" })
+                    for (i in 0 until a.length()) a.optJSONObject(i)?.optJSONArray("items")?.let { its ->
+                        for (j in 0 until its.length()) keep.add(its.getString(j))
+                    }
+                } else v.split(SEP).filterTo(keep) { it.isNotBlank() }
+            }
+        }
         if (known.keys.retainAll(keep)) changed = true
         if (changed) Settings.setString(KEY_URLS, org.json.JSONObject(known as Map<*, *>).toString())
         EmoteRepo.addKnownTwitch(known)
@@ -161,11 +196,15 @@ object Favorites {
     }
 
     fun remove(name: String): Boolean {
-        val cur = read()
-        if (cur.remove(name)) { write(cur); return true }
-        val gs = groups()
-        if (gs.none { it.items.remove(name) }) return false
-        writeGroups(gs); notifyChanged(); return true
+        // From every list, not just the first that has it: a sync race can leave one emote both
+        // loose and in a group, and taking out only one copy would leave it in the bar.
+        val cur = read(); val gs = groups()
+        val loose = cur.remove(name)
+        var grouped = false
+        for (g in gs) if (g.items.removeAll { it == name }) grouped = true
+        if (grouped) writeGroups(gs)
+        if (loose) write(cur) else if (grouped) notifyChanged()
+        return loose || grouped
     }
 
     /** Toggle membership. Returns the NEW state (true = now a favorite). */
@@ -174,7 +213,10 @@ object Favorites {
     fun addListener(l: () -> Unit) { listeners.add(l) }
 
     /** Called when the channel changes: availability, pictures and maybe the list itself differ. */
-    fun channelChanged() = notifyChanged()
+    fun channelChanged() {
+        EmoteRepo.currentChannel()?.let { lastCh = it }
+        notifyChanged()
+    }
 
     private fun write(list: List<String>) {
         Settings.setString(storeKey(), list.joinToString(SEP))

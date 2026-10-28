@@ -68,7 +68,10 @@ object ViewHider {
         // The message box of "One Chat", the chat laid over the video in fullscreen landscape.
         Rule("one_chat_lurker", listOf("one_chat_message_input_view_container")),
         // "Twitch Stories" is a show switch: off removes the row of story circles on Home.
-        Rule(KEY_STORIES, listOf("stories_shelf_container", "stories_shelf"), inverted = true),
+        // stories_shelf_compose is the Compose shelf some accounts get from a Twitch experiment;
+        // Twitch then draws the circles there and keeps the classic container GONE itself.
+        Rule(KEY_STORIES, listOf("stories_shelf_container", "stories_shelf", "stories_shelf_compose"),
+            inverted = true),
         // The "Intended for certain audiences" chip on the player. The full-screen warning in
         // front of a mature stream is a button press, not a view to hide; see applyStopSign.
         Rule(KEY_MATURE, listOf("mature_disclosure")),
@@ -417,8 +420,11 @@ object ViewHider {
                         val where = act.javaClass.simpleName
                         if (REPORTED.add("$entry@$where"))
                             log("VH hid '$entry' on $where (rule fired)")
+                        // Remembered only when this pass did the hiding. A view Twitch already
+                        // keeps GONE (the unused one of the two stories shelves, say) must not be
+                        // force-shown when the switch goes back off.
+                        HIDDEN[v] = true
                     }
-                    HIDDEN[v] = true
                     hidAny = true
                 } else if (HIDDEN.remove(v) != null) {
                     // Restore ONLY views we hid ourselves. Twitch keeps plenty of these GONE on

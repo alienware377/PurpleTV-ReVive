@@ -51,6 +51,9 @@ object PickerSections {
 
     private class State(val rv: WeakReference<ViewGroup>) {
         var current: List<Any> = emptyList()
+        // What we last built for builtVersion, kept apart from current: Twitch's refill empties current,
+        // and these same sections must go back in afterwards.
+        var built: List<Any> = emptyList()
         var builtVersion = Int.MIN_VALUE
         var cellGen: Any? = null
     }
@@ -177,7 +180,8 @@ object PickerSections {
         @Suppress("UNCHECKED_CAST") val list = s.sectionsField.get(adapter) as MutableList<Any?>
         if (list.isEmpty()) return
         val v = EmoteRepo.pickerVersion() + if (Settings.get(KEY, true)) 0 else 7919
-        val wanted = if (v == st.builtVersion) st.current else build(s, st, rv, list)
+        // Reuse the built sections between refills, so a refill does not rebuild every emote cell on the main thread.
+        val wanted = if (v == st.builtVersion) st.built else build(s, st, rv, list).also { st.built = it }
         st.builtVersion = v
         val n = wanted.size
         val tailOk = n > 0 && list.size >= n && (0 until n).all { list[list.size - n + it] === wanted[it] }

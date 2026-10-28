@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewParent
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -32,7 +33,10 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 object ChatAppearance {
 
     const val KEY_FONT_SIZE = "chat_font_size_v2"
-    const val FONT_SIZE_DEFAULT = 13
+    /** Where the slider starts: Twitch 31's own chat size (ChatMessageView, font_small_new = 14sp).
+     *  The old 13 was Twitch 28's size. Until the user moves the slider, chat is not resized at
+     *  all and every view keeps the size Twitch gave it (see [apply]). */
+    const val FONT_SIZE_DEFAULT = 14
     const val KEY_ALT_BG = "alternate_background"
 
     /** Subtle lift over Twitch's chat background, matching the original mod's shading. */
@@ -44,7 +48,9 @@ object ChatAppearance {
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     @Volatile private var lastActivity: java.lang.ref.WeakReference<Activity>? = null
 
-    /** Font size Twitch originally gave each message view, so the slider can be undone. */
+    /** Text size in px Twitch originally gave each message view, recorded before we ever write to
+     *  it, so an unset slider (or one a sync removed) puts Twitch's own size back. Kept in px:
+     *  converting sp back through scaledDensity is wrong under Android 14's non-linear font scaling. */
     private val ORIG_SIZE = java.util.WeakHashMap<TextView, Float>()
 
     fun install(lp: LoadPackageParam) {
@@ -80,13 +86,17 @@ object ChatAppearance {
     }
 
     private fun apply(act: Activity) {
-        val sizeSp = Settings.getInt(KEY_FONT_SIZE, FONT_SIZE_DEFAULT).coerceIn(8, 24).toFloat()
+        // 0 = the user never picked a size (or a sync removed it): leave every view at the size
+        // Twitch gave it, as the original mod did. Forcing a default instead shrank Twitch 31's
+        // 14sp chat for everyone, and resized the One Chat overlay and AutoMod notices too.
+        val stored = Settings.getInt(KEY_FONT_SIZE, 0)
+        val sizeSp = if (stored > 0) stored.coerceIn(8, 24).toFloat() else 0f
         val altBg = Settings.get(KEY_ALT_BG, false)
         val root = act.window?.decorView ?: return
 
-        // Row index drives the alternating shade. Counting matched rows in tree order is stable
-        // enough here: children of the chat recycler are laid out in message order.
-        var rowIndex = 0
+        // Visible rows, grouped per chat list and shaded after the walk (see [shadeRows]). Only
+        // built while the toggle is on, so the common case allocates nothing.
+        var rows: HashMap<ViewParent?, ArrayList<View>>? = null
         var nItem = 0; var nMessage = 0; var nContainer = 0
         walk(root) { v ->
             when (Res.entry(v)) {
@@ -100,12 +110,14 @@ object ChatAppearance {
                     // Rows the blacklist has collapsed are not on screen, so counting them would
                     // walk the alternation out of step with what is actually visible.
                     if (v.visibility == View.VISIBLE) {
-                        applyAltBackground(v, altBg, rowIndex)
-                        rowIndex++
+                        if (!altBg) applyAltBackground(v, false)
+                        else (rows ?: HashMap<ViewParent?, ArrayList<View>>().also { rows = it })
+                            .getOrPut(v.parent) { ArrayList() }.add(v)
                     }
                 }
             }
         }
+        rows?.values?.forEach { shadeRows(it) }
         reportMatches(nItem, nMessage, nContainer)
     }
 
@@ -128,20 +140,67 @@ object ChatAppearance {
             "chat_message_container=$container")
     }
 
+    /** [sizeSp] 0 puts back the size Twitch gave the view; anything else forces that size. */
     private fun applyFontSize(tv: TextView, sizeSp: Float) {
-        val density = tv.resources.displayMetrics.scaledDensity
-        if (!ORIG_SIZE.containsKey(tv)) ORIG_SIZE[tv] = tv.textSize / density
-        val currentSp = tv.textSize / density
-        if (kotlin.math.abs(currentSp - sizeSp) > 0.1f) {
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+        // Recorded on first sight, which is always before anything below has written to the view.
+        val orig = ORIG_SIZE.getOrPut(tv) { tv.textSize }
+        // Compared in px against exactly what setTextSize will produce, which also follows
+        // Android 14's non-linear font scaling.
+        val wantPx = if (sizeSp > 0f) {
+            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp, tv.resources.displayMetrics)
+        } else orig
+        if (kotlin.math.abs(tv.textSize - wantPx) > 0.5f) {
+            if (sizeSp > 0f) tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+            else tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, orig)
         }
     }
 
-    /** Tracks rows we've tinted, so turning the toggle off can clear them. */
+    /** Tracks rows we've tinted, so turning the toggle off can clear them. While the toggle is on
+     *  it is also each row's place in the alternation, read back by [shadeRows]. */
     private val TINTED = java.util.WeakHashMap<View, Boolean>()
 
-    private fun applyAltBackground(row: View, enabled: Boolean, index: Int) {
-        val want = enabled && (index % 2 == 1)
+    /** The message each row was last shaded for: its chat_message_item text object, compared by
+     *  identity. A row still holding the same object is still showing the same message. */
+    private val SHADED_FOR = java.util.WeakHashMap<View, CharSequence>()
+
+    /**
+     * Alternate the shade down one chat list, tied to the messages rather than to screen slots.
+     * Counting rows alone made every line swap shade on each new message, because every row's
+     * position moved by one. Instead, the topmost row still showing the message it was shaded for
+     * keeps its shade, and the rest alternate out from it, so a message keeps its shade as it
+     * scrolls. New and recycled rows simply take whatever the alternation gives them. With no
+     * such row (first pass, or everything rebound) the top row starts unshaded.
+     */
+    private fun shadeRows(rows: ArrayList<View>) {
+        // walk() visits children last to first, so put them in screen order.
+        rows.sortBy { it.top }
+        val texts = Array(rows.size) { messageText(rows[it]) }
+        var offset = 0
+        for (i in rows.indices) {
+            val t = texts[i] ?: continue
+            if (SHADED_FOR[rows[i]] === t) {
+                offset = (if (TINTED[rows[i]] == true) 1 else 0) xor (i and 1)
+                break
+            }
+        }
+        for (i in rows.indices) {
+            val t = texts[i]
+            if (t != null) SHADED_FOR[rows[i]] = t else SHADED_FOR.remove(rows[i])
+            applyAltBackground(rows[i], ((i and 1) xor offset) == 1)
+        }
+    }
+
+    /** The row's message text: its chat_message_item, a direct child in both row layouts. */
+    private fun messageText(row: View): CharSequence? {
+        if (row !is ViewGroup) return null
+        for (i in 0 until row.childCount) {
+            val c = row.getChildAt(i)
+            if (c is TextView && Res.entry(c) == "chat_message_item") return c.text
+        }
+        return null
+    }
+
+    private fun applyAltBackground(row: View, want: Boolean) {
         val had = TINTED[row] == true
         if (want == had) return
         if (want) {

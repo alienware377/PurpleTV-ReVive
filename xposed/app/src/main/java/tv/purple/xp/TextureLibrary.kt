@@ -6,11 +6,11 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.LruCache
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import org.json.JSONArray
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Pictures for the Overlay filter.
@@ -31,7 +31,14 @@ object TextureLibrary {
     /** Overlay source: "tex:<file>", "img:<absolute path>" or "color:<argb int>". */
     const val KEY_SRC = "src"
 
-    private val cache = ConcurrentHashMap<String, Bitmap>()
+    /** Full-size pictures for the video. The least recently used one goes first, so the overlay
+     *  in use stays put; the video asks for it on the main thread many times a second. */
+    private val cache = LruCache<String, Bitmap>(4)
+    /** Picker previews, kept apart so filling the picker never pushes the overlay in use out.
+     *  About 100 KB each, so a whole picker's worth survives a reopen. */
+    private val thumbs = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
     @Volatile private var list: List<Tex>? = null
 
     fun builtIns(): List<Tex> {
@@ -67,29 +74,35 @@ object TextureLibrary {
 
     /** Decoded picture for a "tex:" or "img:" source, scaled down to at most [maxSide]. */
     fun bitmap(src: String, maxSide: Int = 1280): Bitmap? {
-        cache[src]?.let { return it }
-        val bmp = runCatching {
-            val bytes: ByteArray? = when {
-                src.startsWith("tex:") -> TextureLibrary::class.java.classLoader
-                    ?.getResourceAsStream("textures/" + src.removePrefix("tex:"))?.use { it.readBytes() }
-                src.startsWith("img:") -> File(src.removePrefix("img:")).takeIf { it.exists() }?.readBytes()
-                else -> null
-            }
-            bytes?.let { decode(it, maxSide) }
-        }.onFailure { log("texture load failed '$src': $it") }.getOrNull() ?: return null
-        if (cache.size > 6) cache.clear()
-        cache[src] = bmp
+        cache.get(src)?.let { return it }
+        val bmp = load(src, maxSide) ?: return null
+        cache.put(src, bmp)
         return bmp
     }
 
-    /** A small preview for the picker grid. */
+    private fun load(src: String, maxSide: Int): Bitmap? = runCatching {
+        val bytes: ByteArray? = when {
+            src.startsWith("tex:") -> TextureLibrary::class.java.classLoader
+                ?.getResourceAsStream("textures/" + src.removePrefix("tex:"))?.use { it.readBytes() }
+            src.startsWith("img:") -> File(src.removePrefix("img:")).takeIf { it.exists() }?.readBytes()
+            else -> null
+        }
+        bytes?.let { decode(it, maxSide) }
+    }.onFailure { log("texture load failed '$src': $it") }.getOrNull()
+
+    /**
+     * A small preview for the picker grid. Decoded straight at a small size rather than through
+     * [bitmap], so a 1920 wide texture costs a quarter size decode and never lands in the
+     * full-size cache.
+     */
     fun thumb(src: String): Bitmap? {
-        val key = "thumb|$src"
-        cache[key]?.let { return it }
-        val b = bitmap(src, 1280) ?: return null
-        val s = 160f / maxOf(b.width, b.height)
-        val t = Bitmap.createScaledBitmap(b, (b.width * s).toInt().coerceAtLeast(1), (b.height * s).toInt().coerceAtLeast(1), true)
-        cache[key] = t
+        thumbs.get(src)?.let { return it }
+        val b = load(src, 320) ?: return null
+        val t = runCatching {
+            val s = 160f / maxOf(b.width, b.height)
+            Bitmap.createScaledBitmap(b, (b.width * s).toInt().coerceAtLeast(1), (b.height * s).toInt().coerceAtLeast(1), true)
+        }.getOrNull() ?: return null
+        thumbs.put(src, t)
         return t
     }
 
@@ -116,7 +129,8 @@ object TextureLibrary {
 
     fun delete(src: String) {
         if (src.startsWith("img:")) runCatching { File(src.removePrefix("img:")).delete() }
-        cache.keys.filter { it.endsWith(src) }.forEach { cache.remove(it) }
+        cache.remove(src)
+        thumbs.remove(src)
     }
 
     /** Open the system picture picker; [done] gets the new "img:" source once it is copied in. */
@@ -160,8 +174,11 @@ object TextureLibrary {
     private fun copyIn(ctx: Context, uri: Uri): String {
         val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
         val bmp = decode(bytes, 1600) ?: error("not a picture")
-        val f = File(userDir(ctx), "pic_${System.currentTimeMillis()}.jpg")
-        f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+        // A picture with see-through parts (a frame, a sticker) stays PNG. JPEG has no alpha, so
+        // those parts would turn black and cover the video.
+        val alpha = bmp.hasAlpha()
+        val f = File(userDir(ctx), "pic_${System.currentTimeMillis()}.${if (alpha) "png" else "jpg"}")
+        f.outputStream().use { bmp.compress(if (alpha) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, 90, it) }
         return "img:" + f.absolutePath
     }
 }

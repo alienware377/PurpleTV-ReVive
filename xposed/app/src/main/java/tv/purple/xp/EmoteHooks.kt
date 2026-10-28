@@ -87,11 +87,12 @@ object EmoteHooks {
                 } else {
                     runCatching { ChatHighlight.apply(param.result, param.args) }
                         .onFailure { log("highlight error: $it") }
+                    // Only for shown lines: a hidden user mentioning you must not buzz the phone.
+                    runCatching { Mentions.onLine(param.args) }
+                        .onFailure { log("mention buzz error: $it") }
                 }
                 // LAST: the deleted-message carrier captures the finished body, and rides a slot
                 // that ChatIdentity rewrites wholesale, so anything earlier would be dropped.
-                runCatching { Mentions.onLine(param.args) }
-                    .onFailure { log("mention buzz error: $it") }
                 runCatching { ChatLineStyle.plantOriginal(param.result) }
                     .onFailure { log("carrier plant error: $it") }
             }
@@ -241,7 +242,8 @@ object EmoteHooks {
     /**
      * Put an emote picture on each word of the line's body that has one. [first] is the line's
      * first pass, which skips a body already done; later passes only add words still drawn as
-     * text. Returns true when a word is an emote whose picture is still downloading.
+     * text. Returns true when a word is an emote whose picture is still downloading, or one that
+     * must wait for the new channel's emotes.
      */
     internal fun fill(model: Any, first: Boolean): Boolean {
         val body = runCatching {
@@ -256,8 +258,14 @@ object EmoteHooks {
         // quick reject: any whole word a known (prefetched) emote?
         val hits = ArrayList<Triple<Int, Int, String>>(2)
         var waiting = false
+        // Read once so every word of the line follows the same decision.
+        val pending = EmoteRepo.channelPending()
         for (m in word.findAll(body)) {
             if (!EmoteRepo.map.containsKey(m.value) || !EmoteRepo.enabled(m.value)) continue
+            // While the new channel loads, the live set still holds the OLD channel's own emotes.
+            // Drawing one now would stick (later passes skip words that already have a picture),
+            // so leave the word for the late pass, which runs once the new channel is in.
+            if (pending && m.value in EmoteRepo.chNames) { waiting = true; continue }
             val s = m.range.first; val e = m.range.last + 1
             if (!first && spanned != null && spanned.getSpans(s, e, PtvEmoteSpan::class.java).isNotEmpty()) continue
             if (EmoteRepo.drawables.containsKey(m.value)) hits.add(Triple(s, e, m.value))

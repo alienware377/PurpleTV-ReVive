@@ -31,20 +31,28 @@ object PinnedChat {
     private const val DELAY_MS = 30_000L
 
     private val handler = Handler(Looper.getMainLooper())
-    /** Pins we pressed "Hide for Yourself" on: key -> (tries, when). Twitch forgets its hidden
-     *  pins when the chat is reopened, so a pin seen again later is simply hidden again. */
+    /** Pins we pressed "Hide for Yourself" on: key -> (tries in a row, when). Twitch forgets its
+     *  hidden pins when the chat is reopened, so a pin seen again later is simply hidden again. */
     private val done = HashMap<String, LongArray>()
+    /** Start of the Drops notice's key in [done]; pin keys start with the channel id. */
+    private const val DROPS = "drops|"
     /** Pins waiting for their 30 seconds. */
     private val timed = HashSet<String>()
-    /** Containers hidden by the fallback, so they can be shown again. */
+    /** Containers hidden by the pin fallback, so they can be shown again. */
     private val hidden = WeakHashMap<View, Boolean>()
+    /** Containers hidden by the Drops fallback -> when. Kept apart from [hidden] so the pin pass
+     *  does not show them again in the same pass (an endless hide/show layout loop). */
+    private val dropsHidden = WeakHashMap<View, Long>()
+    /** Containers made see-through while a pin or notice is dealt with, so they can be shown again. */
+    private val masked = WeakHashMap<View, Boolean>()
     private var busy = false
     private val compactTap = HashMap<String, Long>()
 
     fun apply(root: View) {
-        runCatching { applyDrops(root) }.onFailure { log("drops notice: $it") }
+        // Areas with a Drops notice on show: they stay masked below.
+        val drops = runCatching { applyDrops(root) }.onFailure { log("drops notice: $it") }.getOrNull() ?: emptySet()
         val mode = Settings.getInt(KEY, MODE_DEFAULT)
-        if (mode == MODE_DEFAULT) { if (!Settings.get(KEY_DROPS, false)) restoreAll(); return }
+        if (mode == MODE_DEFAULT) { restoreAll(); unmaskAreas(drops); return }
         val ctx = root.context
         fun id(n: String) = Res.id(ctx, n)
         val headerId = id("highlight_header")
@@ -56,6 +64,7 @@ object PinnedChat {
         val headers = ArrayList<TextView>()
         collect(root, headerId, headers)
         val pinsShown = HashSet<View>()
+        val seen = HashSet<String>()
         for (h in headers) {
             val t = h.text?.toString()?.trim() ?: continue
             val isPin = (notice != null && t.equals(notice, true)) || (prefix != null && t.startsWith(prefix, true))
@@ -67,6 +76,7 @@ object PinnedChat {
             if (!onScreen(h)) continue
             pinsShown.add(container)
             val key = keyOf(h, id("highlight_subheader"))
+            seen.add(key)
             val prev = done[key]
             if (prev != null) {
                 val since = android.os.SystemClock.uptimeMillis() - prev[1]
@@ -79,12 +89,18 @@ object PinnedChat {
                 MODE_DISABLED -> dismiss(container, h, key, mask = true)
                 MODE_TIMED -> if (timed.add(key)) handler.postDelayed({
                     if (h.isShown) dismiss(container, h, key, mask = false)
-                    else done[key] = longArrayOf(1, android.os.SystemClock.uptimeMillis())
+                    else done[key] = longArrayOf(0, android.os.SystemClock.uptimeMillis())
                 }, DELAY_MS)
             }
         }
         // A hidden container whose pin is gone (or no longer the page on show) comes back.
         for (v in weakKeys(hidden)) if (v !in pinsShown) { v.visibility = View.VISIBLE; hidden.remove(v) }
+        // Tries only count while the pin stays on show. One that went away (its button worked, or
+        // the chat was closed) starts from nothing when it is back, so the fallback above is only
+        // for a button that keeps not working, never for the same pin hidden again and again.
+        val now = android.os.SystemClock.uptimeMillis()
+        for ((k, v) in done) if (k !in seen && !k.startsWith(DROPS) && now - v[1] >= 2500) v[0] = 0
+        unmaskAreas(pinsShown + drops)
     }
 
     private fun dismiss(container: View, header: View, key: String, mask: Boolean) {
@@ -97,7 +113,7 @@ object PinnedChat {
         // Twitch first shows a short "Pinned Chat" banner without the expand arrow, then swaps in
         // the full one. Until the arrow (or the expanded card) is there, keep it masked and wait.
         if (already == null && arrow == null) {
-            if (mask) container.alpha = 0f
+            if (mask) maskArea(container)
             // The short banner turns into the full one when tapped; tap it once per second at most.
             val now = android.os.SystemClock.uptimeMillis()
             if (now - (compactTap[key] ?: 0L) > 1000) {
@@ -110,7 +126,7 @@ object PinnedChat {
         busy = true
         val attempt = (done[key]?.get(0) ?: 0L) + 1
         done[key] = longArrayOf(attempt, android.os.SystemClock.uptimeMillis())
-        if (mask) container.alpha = 0f
+        if (mask) maskArea(container)
         val ctx = container.context
         fun id(n: String) = Res.id(ctx, n)
         // Expand the banner: its action arrow, or the banner itself.
@@ -141,36 +157,87 @@ object PinnedChat {
     }
 
     private fun finish(container: View) {
-        handler.postDelayed({ container.alpha = 1f; busy = false }, 150)
+        handler.postDelayed({ container.alpha = 1f; masked.remove(container); busy = false }, 150)
+    }
+
+    private fun maskArea(v: View) { v.alpha = 0f; masked[v] = true }
+
+    /** Masked areas not in [keep] are shown again: a short banner can go away (unpinned, another
+     *  page swiped in, the option turned off) before the full one ever comes to be dismissed.
+     *  Not while a dismissal runs; its finish() shows its own area again. */
+    private fun unmaskAreas(keep: Set<View>) {
+        if (busy) return
+        for (v in weakKeys(masked)) if (v !in keep) { v.alpha = 1f; masked.remove(v) }
     }
 
     private fun hide(v: View) {
         if (v.visibility != View.GONE) { v.visibility = View.GONE; hidden[v] = true }
     }
 
+    /** Shows the areas the pin fallback hid. The Drops fallback keeps its own. */
     private fun restoreAll() {
         for (v in weakKeys(hidden)) v.visibility = View.VISIBLE
         hidden.clear()
     }
 
+    private fun hideDrops(v: View) {
+        if (v.visibility != View.GONE) { v.visibility = View.GONE; dropsHidden[v] = android.os.SystemClock.uptimeMillis() }
+    }
+
+    private fun restoreDrops() {
+        for (v in weakKeys(dropsHidden)) v.visibility = View.VISIBLE
+        dropsHidden.clear()
+    }
+
     // ---- Drops notice ----
 
-    private fun applyDrops(root: View) {
-        if (!Settings.get(KEY_DROPS, false)) return
+    /** Returns the areas with a Drops notice on show, which are left masked. */
+    private fun applyDrops(root: View): Set<View> {
+        val shown = HashSet<View>()
+        if (!Settings.get(KEY_DROPS, false)) { restoreDrops(); return shown }
         val ctx = root.context
         fun id(n: String) = Res.id(ctx, n)
-        val title = str(root, "twitch_drops") ?: return
+        val title = str(root, "twitch_drops") ?: return shown
+        val headerId = id("highlight_header")
+        val now = android.os.SystemClock.uptimeMillis()
+        // An area the fallback hid comes back once its notice is gone, whatever the pin mode. A
+        // hidden area is not laid out, so what it holds can be out of date: after 30 s it is shown
+        // again, still masked, and looked at afresh on the next pass, once it has been laid out.
+        for (v in weakKeys(dropsHidden)) {
+            val since = now - (dropsHidden[v] ?: continue)
+            if (since < 30_000 && holdsDrops(v, headerId, title)) continue
+            dropsHidden.remove(v)
+            if (since >= 30_000) { maskArea(v); shown.add(v) }
+            v.visibility = View.VISIBLE
+        }
+        if (shown.isNotEmpty()) return shown
         val headers = ArrayList<TextView>()
-        collect(root, id("highlight_header"), headers)
+        collect(root, headerId, headers)
+        val key = DROPS + (EmoteRepo.currentChannel() ?: "")
+        var seen = false
         for (h in headers) {
             if (!onScreen(h) || h.text?.toString()?.trim()?.equals(title, true) != true) continue
             val container = ancestor(h, id("community_highlight_container")) ?: continue
-            val key = "drops|" + (EmoteRepo.currentChannel() ?: "")
+            seen = true
+            shown.add(container)
             val prev = done[key]
-            if (prev != null && android.os.SystemClock.uptimeMillis() - prev[1] < 3000) continue
-            if (prev != null && prev[0] >= 3) { hide(container); continue }
+            if (prev != null && now - prev[1] < 3000) continue
+            if (prev != null && prev[0] >= 3) { hideDrops(container); continue }
             dismissDrops(root, container, h, key)
         }
+        // As with pins, tries only count while the notice stays up (or stays hidden by us), so
+        // notices dismissed fine before never add up to the fallback.
+        val prev = done[key]
+        if (!seen && dropsHidden.isEmpty() && prev != null && now - prev[1] >= 3000) prev[0] = 0
+        return shown
+    }
+
+    /** Whether [v] still holds the Drops notice, asking the views themselves: nothing inside a
+     *  hidden area counts as shown. */
+    private fun holdsDrops(v: View, headerId: Int, title: String): Boolean {
+        val hs = ArrayList<TextView>()
+        collect(v, headerId, hs)
+        return hs.any { it.visibility == View.VISIBLE && it.text?.toString()?.trim()?.equals(title, true) == true }
     }
 
     private fun dismissDrops(root: View, container: View, header: View, key: String) {
@@ -178,7 +245,7 @@ object PinnedChat {
         busy = true
         val attempt = (done[key]?.get(0) ?: 0L) + 1
         done[key] = longArrayOf(attempt, android.os.SystemClock.uptimeMillis())
-        container.alpha = 0f
+        maskArea(container)
         val ctx = root.context
         val label = str(root, "dismiss_drops") ?: "Dismiss This Message"
         val page = ancestor(header, Res.id(ctx, "highlight_container")) ?: header
@@ -193,7 +260,9 @@ object PinnedChat {
                     handler.postDelayed(this, 150)
                 } else {
                     log("drops notice: no dismiss button, hiding the highlight area instead")
-                    hide(container)
+                    // No button to press: while the notice stays, it is hidden straight away.
+                    done[key]?.set(0, 3)
+                    hideDrops(container)
                     finish(container)
                 }
             }

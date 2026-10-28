@@ -33,9 +33,18 @@ object FollowingSections {
         val rv = (root as? ViewGroup)?.findViewById<ViewGroup>(id) ?: return
         if (wired.containsKey(rv)) return
         wired[rv] = true
-        rv.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+        // rv is attached here, so this is the window's own observer, which outlives the list.
+        // Keep it so the listener can unhook itself once Twitch throws the list away; otherwise
+        // the window holds every old Following list for the rest of the session.
+        val vto = rv.viewTreeObserver
+        vto.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
-                if (!rv.isAttachedToWindow) return true
+                if (!rv.isAttachedToWindow) {
+                    // Forget rv too, so ViewHider wires it again if it is ever put back.
+                    runCatching { if (vto.isAlive) vto.removeOnPreDrawListener(this) }
+                    wired.remove(rv)
+                    return true
+                }
                 return runCatching { !pass(rv) }.getOrDefault(true)
             }
         })

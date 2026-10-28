@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 
 /**
@@ -100,14 +101,21 @@ object HomeTabs {
         val labels = labelsOf(act)
         var following: View? = null
         var hidSelected = false
+        // The strip's real selection. A tab view's own selected flag already flips half way
+        // through a swipe, while the finger is still down, so that flag is only the fallback.
+        val selectedPos = runCatching {
+            XposedHelpers.callMethod(strip, "getSelectedTabPosition") as? Int
+        }.getOrNull()
 
         for (i in 0 until row.childCount) {
             val tab = row.getChildAt(i)
             val text = firstText(tab)?.trim()?.lowercase() ?: continue
             when {
                 labels.remove.any { it.equals(text, true) } -> {
+                    // Checked even once the tab is gone: the pager still takes swipes, so the
+                    // user can land on a hidden page long after we hid its tab.
+                    if (selectedPos?.let { it == i } ?: tab.isSelected) hidSelected = true
                     if (tab.visibility != View.GONE) {
-                        if (tab.isSelected) hidSelected = true
                         tab.visibility = View.GONE
                         HIDDEN[tab] = true
                         restoreNeeded = true
@@ -118,8 +126,8 @@ object HomeTabs {
             }
         }
 
-        // Only steer the selection when the tab the user was on has just been taken away --
-        // otherwise this would yank them back to Following every single layout pass.
+        // Only steer the selection when the selected tab is one we hid -- otherwise this would
+        // yank the user back to Following from a tab they are allowed to pick (like Turbo).
         if (hidSelected && following != null && !following.isSelected) {
             runCatching { following.performClick() }
         }

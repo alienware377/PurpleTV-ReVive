@@ -1,7 +1,13 @@
 package tv.purple.xp
 
 import android.content.Context
+import android.net.Uri
+import de.robv.android.xposed.XC_MethodHook
+import de.robv.android.xposed.XposedBridge
 import org.json.JSONObject
+import java.lang.reflect.Modifier
+import java.util.Collections
+import java.util.WeakHashMap
 
 /**
  * Auto-claim Twitch channel-points bonus chests (task #7).
@@ -35,6 +41,16 @@ object ChannelPoints {
     /** One-shot: log the first successful context parse to confirm the GQL path end-to-end. */
     @Volatile private var probedOk = false
 
+    /**
+     * Channel each IVS player last loaded, and the channel of each player that is playing right now.
+     * Filled by hooks on the player's own threads, so the miner thread never calls into the native
+     * player (that could race Twitch releasing it and crash the app).
+     */
+    private val loaded = Collections.synchronizedMap(WeakHashMap<Any, String>())
+    private val playing = Collections.synchronizedMap(WeakHashMap<Any, String>())
+    /** Set once a known channel is seen playing, so hooks that never fire cannot switch mining off. */
+    @Volatile private var tracking = false
+
     /** Called by [Channels] whenever chat connects to a channel. */
     fun onChannel(id: String?, login: String?) {
         if (!id.isNullOrBlank()) channelId = id
@@ -44,6 +60,7 @@ object ChannelPoints {
     fun install(ctx: Context) {
         if (started) return
         started = true
+        runCatching { trackPlayers(ctx.classLoader) }.onFailure { log("CP player tracking failed: $it") }
         Thread({
             while (true) {
                 runCatching {
@@ -55,9 +72,60 @@ object ChannelPoints {
         log("CP auto-claim miner started (GQL poll every ${POLL_MS / 1000}s)")
     }
 
+    /**
+     * Watches the IVS player (its class keeps its real name in both Twitch versions) to know which
+     * channel is actually playing. Native state codes: 2 = buffering, 3 = playing; ready (paused),
+     * idle and ended all mean nothing is being watched on that player.
+     */
+    private fun trackPlayers(cl: ClassLoader) {
+        val c = cl.loadClass("com.amazonaws.ivs.player.CorePlayerImpl")
+        // Public load/preload only: the private native overloads of the same names stay unhooked.
+        val onLoad = object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                runCatching {
+                    val login = loginOf(p.args.getOrNull(0))
+                    if (login != null) loaded[p.thisObject] = login else loaded.remove(p.thisObject)
+                }
+            }
+        }
+        for (m in c.declaredMethods)
+            if ((m.name == "load" || m.name == "preload") && Modifier.isPublic(m.modifiers)) XposedBridge.hookMethod(m, onLoad)
+        XposedBridge.hookMethod(c.getMethod("handleStateChange", Int::class.javaPrimitiveType), object : XC_MethodHook() {
+            override fun afterHookedMethod(p: MethodHookParam) {
+                runCatching {
+                    val state = p.args[0] as Int
+                    val login = loaded[p.thisObject]
+                    if ((state == 2 || state == 3) && login != null) { playing[p.thisObject] = login; tracking = true }
+                    else playing.remove(p.thisObject)
+                }
+            }
+        })
+        // After the native release, so no late state callback from that player can add it back.
+        XposedBridge.hookMethod(c.getMethod("release"), object : XC_MethodHook() {
+            override fun afterHookedMethod(p: MethodHookParam) {
+                runCatching { playing.remove(p.thisObject); loaded.remove(p.thisObject) }
+            }
+        })
+    }
+
+    /** The live channel login from a stream address (".../api/channel/hls/<login>.m3u8"), or null. */
+    private fun loginOf(a0: Any?): String? {
+        val uri = a0 as? Uri ?: runCatching { a0?.javaClass?.getMethod("getUri")?.invoke(a0) as? Uri }.getOrNull() ?: return null
+        val path = uri.path ?: return null
+        val i = path.indexOf("/api/channel/hls/")
+        if (i < 0) return null
+        return path.substring(i + "/api/channel/hls/".length).substringBefore(".m3u8").takeIf { it.isNotBlank() }
+    }
+
+    private fun isPlaying(login: String): Boolean =
+        synchronized(playing) { playing.values.any { it.equals(login, ignoreCase = true) } }
+
     private fun tick(ctx: Context) {
         val login = channelLogin ?: return
         val id = channelId ?: return
+        // channelLogin is never cleared, so without this the old channel kept being polled every
+        // 30 s after its stream was closed. Background audio still counts as playing.
+        if (tracking && !isPlaying(login)) return
         val token = EmoteRepo.authToken(ctx)
         if (token.isBlank()) return
         val claimId = fetchAvailableClaim(token, login) ?: return

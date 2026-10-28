@@ -42,8 +42,27 @@ internal object BlacklistRows {
     @Volatile private var containerId = 0
     @Volatile private var resolved = false
 
-    /** Rows we collapsed, so a restore touches exactly those and nothing else. */
+    /** Rows we collapsed, so a restore touches exactly those and nothing else. The value is false
+     *  while a restore queued by [reapply] has yet to run, so a rebind can still cancel it. */
     private val COLLAPSED = java.util.WeakHashMap<View, Boolean>()
+
+    /** Every term in force when a row was collapsed or the list was last edited, so [reapply] can
+     *  tell a removal, which may free rows, from an add, which can only hide more. The marker does
+     *  not say which term matched, so this is as precise as the View layer can be. */
+    @Volatile private var known: Set<String> = emptySet()
+
+    /** The stored list [known] last took in, so collapsing a row only re-reads it after a change. */
+    @Volatile private var notedRaw: String? = null
+
+    private fun termKeys(): Set<String> =
+        Blacklist.terms().mapTo(HashSet()) { "${it.type}|${it.word}" }
+
+    private fun noteTerms() {
+        val raw = Settings.getString(Blacklist.KEY_WORDS)
+        if (raw == notedRaw) return
+        notedRaw = raw
+        known = known + termKeys()
+    }
 
     @Volatile private var missLogged = false
 
@@ -102,11 +121,18 @@ internal object BlacklistRows {
 
         val want = cs is Spanned &&
             cs.getSpans(0, cs.length, Blacklist.Marker::class.java).isNotEmpty()
-        val had = COLLAPSED[row] == true
-        if (want == had) return want
+        val state = COLLAPSED[row]
+        val had = state != null
+        if (want == had) {
+            // A cached row re-bound to another hidden message before its queued restore ran:
+            // cancel that restore, or it would show this message once the row is attached.
+            if (state == false) { COLLAPSED[row] = true; runCatching { noteTerms() } }
+            return want
+        }
 
         val lp = row.layoutParams ?: return want
         if (want) {
+            runCatching { noteTerms() }
             lp.height = 0
             row.visibility = View.INVISIBLE
             COLLAPSED[row] = true
@@ -131,10 +157,21 @@ internal object BlacklistRows {
      *  never re-bound, so nothing else would bring them back. */
     fun reapply() {
         val rows = runCatching { weakKeys(COLLAPSED) }.getOrNull() ?: return
+        val now = runCatching { termKeys() }.getOrDefault(emptySet())
+        val before = known
+        known = now
+        notedRaw = null
         if (rows.isEmpty()) return
+        // Only a removal can free a row. An add just hides more, and restoring here would show
+        // every message the other terms had hidden until each row happened to be re-bound.
+        if (now.containsAll(before)) return
         for (row in rows) {
+            COLLAPSED[row] = false
             row.post {
                 runCatching {
+                    // Checked when it runs, not when posted: a rebind in between may have
+                    // cancelled it, or already restored the row itself.
+                    if (COLLAPSED[row] != false) return@runCatching
                     row.layoutParams?.height = ViewGroup.LayoutParams.WRAP_CONTENT
                     row.visibility = View.VISIBLE
                     COLLAPSED.remove(row)

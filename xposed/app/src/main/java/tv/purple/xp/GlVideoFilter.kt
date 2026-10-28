@@ -48,6 +48,9 @@ object GlVideoFilter {
     private val byView = WeakHashMap<TextureView, Pipe>()
     @Volatile private var broken = false
     @Volatile private var bypass = false
+    /** Fallbacks in a row with no good frame in between. Kept outside the pipes, because every
+     *  retry builds a new pipe, so a count inside one never reached the give-up limit. */
+    @Volatile private var failures = 0
 
     /** Whether this device should use the GL path at all. */
     private fun wanted() = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || Settings.get(KEY_FORCE, false)
@@ -115,7 +118,6 @@ object GlVideoFilter {
             }
             return
         }
-        p.visible = tv.isShown
         p.params = if (on) Params.snapshot(tv) else null
         Gl.redraw(p)
     }
@@ -133,11 +135,11 @@ object GlVideoFilter {
         log("GL filter fallback: $why")
         Gl.dropWindow(p) {
             main.post {
-                synchronized(pipes) { pipes.remove(p.real) }
-                byView.remove(p.tv)
+                synchronized(pipes) { if (pipes[p.real] === p) pipes.remove(p.real) }
+                if (byView[p.tv] === p) byView.remove(p.tv)
                 if (!p.real.isReleasedCompat() && p.tv.surfaceTexture === p.real) replumb(p.tv, p.real, swap = false)
                 main.postDelayed({ Gl.teardown(p) }, 1000)
-                if (++p.failures >= 2 || why.startsWith("start")) broken = true
+                if (++failures >= 2 || why.startsWith("start")) broken = true
                 VideoFilters.refresh(p.tv)
             }
         }
@@ -151,10 +153,8 @@ object GlVideoFilter {
         var win: EGLSurface = EGL14.EGL_NO_SURFACE
         val stm = FloatArray(16)
         var hasFrame = false
-        @Volatile var visible = true
         @Volatile var dead = false
         @Volatile var params: Params? = null
-        var failures = 0
         var ovlTex = 0; var ovlKey: String? = null
         var gradTex = 0; var gradKey: String? = null
         var monoTex = 0; var monoKey: String? = null
@@ -180,8 +180,10 @@ object GlVideoFilter {
                 val bmp = if (src.startsWith("color:")) null else TextureLibrary.bitmap(src)
                 val color = if (src.startsWith("color:")) src.removePrefix("color:").toIntOrNull() ?: Color.MAGENTA else 0
                 val gi = FilterDefs.index("grain")
+                val tiled = VideoFilters.overlayTiled()
+                // Same defaults as the RuntimeShader path: a pattern at half size, a picture covering the video.
                 return Params(VideoFilters.uniforms(w, h), src + "|" + (bmp?.generationId ?: color), bmp, color,
-                    VideoFilters.overlayTiled(), FilterDefs.extraInt("ovl", "scale", 50).coerceIn(10, 400) / 100f,
+                    tiled, FilterDefs.extraInt("ovl", "scale", if (tiled) 50 else 100).coerceIn(10, 400) / 100f,
                     VideoFilters.gradientColors(), VideoFilters.monoColors(),
                     FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true),
                     VideoFilters.activeKeys())
@@ -279,14 +281,19 @@ object GlVideoFilter {
             val s = EGL14.eglCreateWindowSurface(dpy, cfg, p.real, intArrayOf(EGL14.EGL_NONE), 0)
             if (s == EGL14.EGL_NO_SURFACE) {
                 // The decoder is still connected to the real texture (switched on mid-playback).
-                if (tries > 0) h.postDelayed({ createWindow(p, tries - 1) }, 16)
+                // The retry is a bare message on our own thread, where nothing else would catch a throw
+                // and it would take Twitch down, so it gets the same guard as the first attempt.
+                if (tries > 0) h.postDelayed({
+                    try { createWindow(p, tries - 1) } catch (t: Throwable) { fallback(p, "window: $t") }
+                }, 16)
                 else fallback(p, "window: 0x" + Integer.toHexString(EGL14.eglGetError()))
                 return
             }
             p.win = s
             EGL14.eglMakeCurrent(dpy, s, s, ctx)
             EGL14.eglSwapInterval(dpy, 0)
-            if (p.hasFrame) draw(p)
+            // Often the first draw of this filter set, so its shader is built here and may be rejected.
+            if (p.hasFrame) try { draw(p) } catch (t: Throwable) { fallback(p, "frame: $t") }
         }
 
         private fun onFrame(p: Pipe) {
@@ -297,7 +304,9 @@ object GlVideoFilter {
                 p.input.updateTexImage()
                 p.input.getTransformMatrix(p.stm)
                 p.hasFrame = true
-                if (p.win != EGL14.EGL_NO_SURFACE && p.visible) draw(p)
+                // Drawn even while hidden: a visibility flag, only refreshed on a filter change, froze the
+                // picture once Twitch came back. Swap interval 0 keeps a hidden view from blocking us.
+                if (p.win != EGL14.EGL_NO_SURFACE) draw(p)
             } catch (t: Throwable) { fallback(p, "frame: $t") }
         }
 
@@ -358,7 +367,7 @@ object GlVideoFilter {
             if (!EGL14.eglSwapBuffers(dpy, p.win)) {
                 val e = EGL14.eglGetError()
                 if (p.real.isReleased) teardownNow(p) else fallback(p, "swap: 0x" + Integer.toHexString(e))
-            }
+            } else if (failures != 0) failures = 0  // a good frame: earlier failures were passing ones
         }
 
         private var measAt = 0L
@@ -469,8 +478,14 @@ object GlVideoFilter {
                 val ts = intArrayOf(p.ovlTex, p.gradTex, p.monoTex).filter { it != 0 }.toIntArray()
                 if (ts.isNotEmpty()) GLES30.glDeleteTextures(ts.size, ts, 0)
             }
-            synchronized(pipes) { pipes.remove(p.real) }
-            main.post { byView.remove(p.tv) }
+            // A newer pipe may already own the view (Twitch re-parents it and makes a fresh texture)
+            // or the same texture, so only drop entries that still point at this one.
+            synchronized(pipes) { if (pipes[p.real] === p) pipes.remove(p.real) }
+            main.post {
+                if (byView[p.tv] === p) byView.remove(p.tv)
+                p.tv.removeOnAttachStateChangeListener(p.attachListener)
+                p.params = null
+            }
             log("GL filter pipe released")
         }
 

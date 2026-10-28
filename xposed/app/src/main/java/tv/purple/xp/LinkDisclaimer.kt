@@ -14,8 +14,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  *
  * The warning is Twitch's generic alert dialog (layout alert_dialog_content_view), built in
  * obfuscated code, so the hook sits on the framework Dialog.show instead. Right after show the
- * content is attached; if the message view starts with the localized browser_link_disclaimer
- * text, the dialog is made invisible and its positive button pressed, which is exactly what the
+ * content is attached; if the message view starts (or, in Korean, ends) with the localized
+ * browser_link_disclaimer text, the dialog is made invisible and its positive button pressed, which is exactly what the
  * user would have done. Every other alert is left alone.
  */
 object LinkDisclaimer {
@@ -38,8 +38,9 @@ object LinkDisclaimer {
         val root = window.decorView
         val ctx = dialog.context
         val msg = find(root, ctx, "alert_dialog_message_view") as? TextView ?: return
-        val prefix = prefix(ctx) ?: return
-        if (!msg.text.toString().startsWith(prefix)) return
+        val (fixed, before) = fixedText(ctx) ?: return
+        val text = msg.text.toString()
+        if (!(if (before) text.startsWith(fixed) else text.trimEnd().endsWith(fixed))) return
         val ok = find(root, ctx, "alert_dialog_positive_button") ?: return
 
         // Hide first, so nothing flashes on screen for the frame before the click lands.
@@ -66,15 +67,24 @@ object LinkDisclaimer {
         return if (id == 0) null else root.findViewById(id)
     }
 
-    /** The text before the URL placeholder, e.g. "This link will take you to ". */
-    private var cached: String? = null
+    /** The fixed text beside the URL placeholder, and whether it comes before it. Normally the
+     *  text before, e.g. "This link will take you to". Korean puts the URL first, so there the
+     *  text after it is used instead. */
+    private var cached: Pair<String, Boolean>? = null
 
-    private fun prefix(ctx: Context): String? {
+    private fun fixedText(ctx: Context): Pair<String, Boolean>? {
         cached?.let { return it }
         val id = ctx.resources.getIdentifier("browser_link_disclaimer", "string", ctx.packageName)
         if (id == 0) return null
         val raw = ctx.resources.getText(id).toString()
-        val cut = raw.indexOf('%').takeIf { it > 0 } ?: return null
-        return raw.substring(0, cut).trimEnd().takeIf { it.length >= 4 }?.also { cached = it }
+        val ph = Regex("%(\\d+\\$)?s").find(raw) ?: return null
+        val before = raw.substring(0, ph.range.first).trimEnd()
+        val after = raw.substring(ph.range.last + 1).trim()
+        val part = when {
+            before.length >= 4 -> before to true
+            after.length >= 4 -> after to false
+            else -> return null
+        }
+        return part.also { cached = it }
     }
 }

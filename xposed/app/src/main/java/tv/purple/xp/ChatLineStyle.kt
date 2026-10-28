@@ -57,8 +57,13 @@ object ChatLineStyle {
 
     private const val GREY = 0xFF6E6E78.toInt()
 
-    /** Marks a line we've already styled -- Twitch re-assembles each line several times. */
+    /** Marks a line we've already revived, so [reviveDeleted] never runs on its own output. */
     private object Marker
+
+    /** Marks a body we've already given the `/me` style, since Twitch re-assembles each line
+     *  several times. Kept apart from [Marker]: a /me line that arrives already deleted gets its
+     *  placeholder styled here, and sharing the mark would make [reviveDeleted] skip it as revived. */
+    private object MeMarker
 
     /** "Username display style": Twitch's own "Name (login)", the international name alone, or
      *  the login alone. Only differs from Twitch for people whose display name is not their
@@ -143,7 +148,14 @@ object ChatLineStyle {
         val out = "$text "
         if (existing != null && existing.isNotEmpty()) {
             if (out == existing.toString()) return
-            XposedHelpers.setObjectField(model, Names.TIME_FIELD, out)
+            // Twitch mutes its slot with a colour span that follows the light or dark theme. A plain
+            // String would drop it and draw the time in full chat colour, so carry that colour over.
+            val color = (existing as? Spanned)
+                ?.getSpans(0, existing.length, ForegroundColorSpan::class.java)
+                ?.firstOrNull()?.foregroundColor ?: GREY
+            val sb = SpannableStringBuilder(out)
+            sb.setSpan(ForegroundColorSpan(color), 0, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            XposedHelpers.setObjectField(model, Names.TIME_FIELD, sb)
             return
         }
         // Twitch's own timestamps are off. Its line builder then leaves the time slot out of the
@@ -177,7 +189,7 @@ object ChatLineStyle {
 
         val body = XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence ?: return
         if (body.isEmpty()) return
-        if (body is Spanned && body.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return
+        if (body is Spanned && body.getSpans(0, body.length, MeMarker::class.java).isNotEmpty()) return
 
         val out = SpannableStringBuilder(body)
         val end = out.length
@@ -191,7 +203,7 @@ object ChatLineStyle {
                 out.setSpan(ForegroundColorSpan(it), 0, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
 
-        out.setSpan(Marker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+        out.setSpan(MeMarker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
         XposedHelpers.setObjectField(model, Names.BODY_FIELD, out)
         if (meSeen++ < 3) log("CLS /me styled (mode $meMode): ${body.take(40)}")
     }
@@ -232,14 +244,11 @@ object ChatLineStyle {
         if (spanned.getSpans(0, spanned.length, Marker::class.java).isNotEmpty()) return null
 
         val needle = needle(ctx) ?: return null
-        val cut = when {
-            n >= needle.length && endsAt(cs, n - needle.length, needle) -> n - needle.length
-            // RTL wraps the same placeholder in bidi isolates.
-            last == PDI && n >= needle.length + 2 && cs[n - needle.length - 2] == FSI &&
-                endsAt(cs, n - needle.length - 1, needle) -> n - needle.length - 2
-            else -> return null
-        }
+        val cut = placeholderStart(cs, needle)
         if (cut <= 0) return null
+        // Replace the placeholder and, in RTL, its own FSI..PDI. A second trailing PDI closes the
+        // isolate around the whole line, so it stays.
+        val stop = if (cs[cut] == FSI) cut + needle.length + 2 else n
 
         val body = fromCarrier(spanned, cut) ?: fromRevealSpan(spanned, cut) ?: run {
             if (!tripwire) {
@@ -250,7 +259,7 @@ object ChatLineStyle {
         }
 
         val out = SpannableStringBuilder(cs)
-        out.replace(cut, n, body)
+        out.replace(cut, stop, body)
         when (mode) {
             DEL_STRIKE -> out.setSpan(StrikethroughSpan(), cut, cut + body.length,
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -372,7 +381,24 @@ object ChatLineStyle {
     fun isPlainPlaceholder(ctx: android.content.Context, cs: CharSequence): Boolean {
         if (delMode() != DEL_DEFAULT) return false
         val needle = needle(ctx) ?: return false
-        return cs.length > needle.length && endsAt(cs, cs.length - needle.length, needle)
+        return placeholderStart(cs, needle) > 0
+    }
+
+    /**
+     * Where the placeholder starts in [cs], or -1 if [cs] does not end in one.
+     *
+     * RTL wraps it in FSI..PDI. A line sliced because it was deleted on screen ends there, but one
+     * that arrived already deleted is wrapped whole as well, so it ends in a second PDI. In RTL this
+     * returns the FSI's index, since that is where our carrier on the username slot ends.
+     */
+    private fun placeholderStart(cs: CharSequence, needle: String): Int {
+        val n = cs.length
+        if (endsAt(cs, n - needle.length, needle)) return n - needle.length
+        var k = 0
+        while (k < 2 && k < n && cs[n - 1 - k] == PDI) k++
+        if (k == 0) return -1
+        val fsi = n - k - needle.length - 1
+        return if (fsi >= 0 && cs[fsi] == FSI && endsAt(cs, fsi + 1, needle)) fsi else -1
     }
 
     private fun endsAt(cs: CharSequence, at: Int, s: String): Boolean {

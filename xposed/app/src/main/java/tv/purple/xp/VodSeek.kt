@@ -41,6 +41,8 @@ object VodSeek {
         val cls = runCatching { lp.classLoader.loadClass("com.amazonaws.ivs.player.CorePlayerImpl") }.getOrNull()
             ?: run { log("VS IVS player not found"); return }
         val m = cls.getDeclaredMethod("seekTo", java.lang.Long.TYPE)
+        val getPos = runCatching { cls.getMethod("getPosition") }.getOrNull()
+        val getDur = runCatching { cls.getMethod("getDuration") }.getOrNull()
         XposedBridge.hookMethod(m, object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 val f = fwd; val b = back
@@ -48,10 +50,16 @@ object VodSeek {
                 fwd = 0; back = 0
                 if (SystemClock.uptimeMillis() - lastTap > 2500 || !custom()) return
                 val ms = p.args[0] as Long
-                var target = ms - (TW_FWD_MS * f - TW_BACK_MS * b) + (fwdMs() * f - backMs() * b)
-                val dur = runCatching { cls.getMethod("getDuration").invoke(p.thisObject) as Long }.getOrDefault(-1L)
+                // Twitch clamps its own target to the start or end of the VOD, so taking its +30/-10
+                // back off the seek can land on the wrong side there. The player has not moved yet,
+                // so start from where it really is, and only undo Twitch's amounts if that fails.
+                val pos = runCatching { getPos!!.invoke(p.thisObject) as Long }.getOrDefault(-1L)
+                val base = if (pos >= 0) pos else ms - (TW_FWD_MS * f - TW_BACK_MS * b)
+                var target = base + fwdMs() * f - backMs() * b
+                val dur = runCatching { getDur!!.invoke(p.thisObject) as Long }.getOrDefault(-1L)
                 target = target.coerceAtLeast(0L)
-                if (dur > 0) target = target.coerceAtMost(dur)
+                // One short of the end, like Twitch's own seek, so it does not land on the very end.
+                if (dur > 0) target = target.coerceAtMost(dur - 1)
                 p.args[0] = target
                 log("VS seek adjusted: ${ms / 1000}s -> ${target / 1000}s")
             }

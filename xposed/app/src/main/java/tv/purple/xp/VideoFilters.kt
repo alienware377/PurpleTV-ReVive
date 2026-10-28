@@ -79,8 +79,9 @@ object VideoFilters {
                 applied[tv] = s
                 runCatching { apply(tv) }.onFailure { log("filters apply failed: $it") }
             }
-            scheduleGrain()
-            if (found.isNotEmpty()) DynLight.ensureRunning()
+            // Only screens with a player start the tickers; the grain one stops by itself once
+            // no video is showing.
+            if (found.isNotEmpty()) { scheduleGrain(); DynLight.ensureRunning() }
         }
         runCatching { attachButton(root) }.onFailure { log("filters button: $it") }
     }
@@ -106,10 +107,13 @@ object VideoFilters {
         for (i in FilterDefs.FILTERS.indices) {
             sb.append(FilterDefs.amount(i)).append(':').append(FilterDefs.lo(i)).append(':').append(FilterDefs.hi(i)).append(',')
         }
-        for (k in listOf("ovl" to "src", "ovl" to "blend", "ovl" to "scale", "ovl" to "tile", "gmap" to "preset",
-                "gmap" to "c1", "gmap" to "c2", "mono" to "color", "grain" to "size", "grain" to "color",
-                "vignette" to "size"))
-            sb.append(Settings.getString("vf_${k.first}_${k.second}", "")).append(Settings.getInt("vf_${k.first}_${k.second}", -1))
+        // Every other stored filter setting, whatever its type. A hand-picked list read with typed
+        // getters missed the switches (stored as Booleans) and the bokeh, speed and moving grain
+        // settings, so changing those never re-applied the filters. Panel layout and the tip are
+        // left out so they do not rebuild the effect, and the GL switch is already in the cache key.
+        for ((k, v) in Settings.all().toSortedMap())
+            if (k.startsWith("vf_") && !k.startsWith("vf_ui_") && !k.startsWith("vf_tip") && k != GlVideoFilter.KEY_FORCE)
+                sb.append(k).append('=').append(v).append(';')
         return sb.toString()
     }
 
@@ -290,11 +294,14 @@ object VideoFilters {
     private var grainRunning = false
     private val grainTick = object : Runnable {
         override fun run() {
-            if (!animated()) { grainRunning = false; return }
+            // Stop when no video is really on screen. A stopped activity (Twitch playing audio in
+            // the background) keeps its player attached, so checking that alone ran this forever.
+            // The next ViewHider pass starts it again through attach().
+            val live = weakKeys(views).filter { it.isAttachedToWindow && it.windowVisibility == View.VISIBLE && it.isShown }
+            if (live.isEmpty() || GlVideoFilter.available() || !animated()) { grainRunning = false; return }
             seed = (seed + 1.37f) % 997f
-            for (tv in weakKeys(views)) {
-                if (!tv.isAttachedToWindow) continue
-                if (shaderSupported() && !GlVideoFilter.available()) runCatching {
+            for (tv in live) {
+                if (shaderSupported()) runCatching {
                     tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))
                 }
             }

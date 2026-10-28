@@ -46,10 +46,15 @@ object RefreshButton {
                     else -> runCatching { a0.javaClass.getMethod("getUri").invoke(a0) as? Uri }.getOrNull()
                 } ?: return
                 if (uri.host.isNullOrEmpty()) return
+                // Side players (Picture-by-Picture ads, the vertical view, the feed) preload the "v2"
+                // address. Skip them, so the button keeps reloading the player on screen.
+                if (p.method.name == "preload" && uri.path?.contains("/api/v2/channel/hls/") == true) return
                 player = WeakReference(p.thisObject)
                 lastLoad = a0
+                // The clock is the age of the address. Our own reload and Twitch's reloads of the same
+                // address come through here too, so only a new address restarts it.
+                if (uri != lastUri) loadedAt = SystemClock.uptimeMillis()
                 lastUri = uri
-                loadedAt = SystemClock.uptimeMillis()
             }
         }
         val n = XposedBridge.hookAllMethods(c, "load", hook).size + XposedBridge.hookAllMethods(c, "preload", hook).size
@@ -59,12 +64,12 @@ object RefreshButton {
     /** The player Twitch is using now, for the stats box. */
     fun currentPlayer(): Any? = player?.get()
 
-    /** The live channel login, from the stream address (".../api/channel/hls/<login>.m3u8"). */
+    private val HLS = Regex("/api/(?:v2/)?channel/hls/([^/]+)\\.m3u8")
+
+    /** The live channel login, from the stream address (".../api/channel/hls/<login>.m3u8", or ".../api/v2/..."). */
     private fun liveLogin(): String? {
         val path = lastUri?.path ?: return null
-        val i = path.indexOf("/api/channel/hls/")
-        if (i < 0) return null
-        return path.substring(i + "/api/channel/hls/".length).substringBefore(".m3u8").takeIf { it.isNotBlank() }
+        return HLS.find(path)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
     }
 
     private fun refresh(v: View) {

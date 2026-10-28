@@ -28,6 +28,10 @@ object PickerSend {
     private const val KEY_DRY_RUN = "dev_send_dry_run"
     private val SEND_IDS = listOf("chat_message_send", "message_input_send")
     private const val INPUT_ID = "message_input"
+    private const val EMOTE_BUTTON_ID = "emoticon_picker"
+    /** A bottom sheet that opens within this long of the emote button being tapped is the picker. */
+    private const val TAP_WINDOW_MS = 3000L
+    @Volatile private var emoteTappedAt = 0L
     private var logged = 0
 
     /** Test safety: with the dry-run switch on, any press of Send is logged and blocked. */
@@ -35,7 +39,12 @@ object PickerSend {
         de.robv.android.xposed.XposedBridge.hookAllMethods(View::class.java, "performClick", object : de.robv.android.xposed.XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 val v = p.thisObject as? View ?: return
-                if (v.id == View.NO_ID || SEND_IDS.none { Res.id(v.context, it) == v.id }) return
+                if (v.id == View.NO_ID) return
+                // The Compose picker looks like any other bottom sheet from outside, so note when
+                // the emote button is tapped: the sheet that opens right after it is the picker.
+                val emote = Res.id(v.context, EMOTE_BUTTON_ID)
+                if (emote != 0 && v.id == emote) { emoteTappedAt = SystemClock.uptimeMillis(); return }
+                if (SEND_IDS.none { Res.id(v.context, it) == v.id }) return
                 if (!Settings.get(KEY_DRY_RUN, false)) return
                 log("PS Send was pressed (dry run: blocked, nothing sent)")
                 p.result = true
@@ -46,10 +55,16 @@ object PickerSend {
     /** From the picker sheet hook, when a bottom sheet is put into its window. */
     @SuppressLint("ClickableViewAccessibility")
     fun onSheet(sheet: ViewGroup) {
+        // Every Material bottom sheet comes through here (chat settings, viewer cards and the
+        // rest), and on a tablet or in landscape Send sits beside them, so a tap to close one of
+        // those posted the draft. Only watch the sheet the emote button just opened.
+        if (SystemClock.uptimeMillis() - emoteTappedAt >= TAP_WINDOW_MS) return
         val ctx = sheet.context
         val id = Res.id(ctx, "touch_outside")
         if (id == 0) return
         val outside = sheet.rootView?.findViewById<View>(id) ?: return
+        // Used up, so a sheet opened just after the picker closes does not count as the picker too.
+        emoteTappedAt = 0L
         val slop = ViewConfiguration.get(ctx).scaledTouchSlop * 2
         var downX = 0f; var downY = 0f; var downAt = 0L
         // A touch listener that only watches (returns false), so the sheet still closes as before.

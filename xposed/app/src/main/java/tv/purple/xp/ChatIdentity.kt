@@ -88,11 +88,18 @@ object ChatIdentity {
 
         // Pronoun first, so its insertion point isn't shifted by the badge inserts at index 0.
         // The slot reads "username: ", so the tag belongs just before the colon. A /me action line
-        // has no colon at all -- Twitch suppresses it for actions -- in which case appending at
-        // the end is correct. (The action flag lives on the MESSAGE, not on this line model; the
-        // line model's boolean is the layout direction. See ChatLineStyle.)
+        // ends the slot with a single space instead (Twitch picks isAction ? " " : ": "), and the
+        // body follows with no space of its own, so there the tag goes before that trailing space
+        // or it would run straight into the message text. (The action flag lives on the MESSAGE,
+        // not on this line model; the line model's boolean is the layout direction. See
+        // ChatLineStyle.)
         if (pronoun != null) {
-            val at = out.lastIndexOf(":").let { if (it < 0) out.length else it }
+            val colon = out.lastIndexOf(": ")
+            val at = if (colon >= 0) colon else {
+                var e = out.length
+                while (e > 0 && out[e - 1].isWhitespace()) e--
+                e
+            }
             val tag = " $pronoun"
             out.insert(at, tag)
             out.setSpan(RelativeSizeSpan(0.8f), at, at + tag.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)

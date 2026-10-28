@@ -22,6 +22,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+/** Loads one emote list into (name -> url, name -> source, name -> uploader) maps. */
+private typealias ListLoad = (MutableMap<String, String>, MutableMap<String, String>, MutableMap<String, String>) -> Unit
+
 /**
  * 7TV / BTTV / FFZ emote source (task #9 fetch half — trivial HTTP, obfuscation-immune).
  *
@@ -126,16 +129,20 @@ object EmoteRepo {
         val ch = if (chOrderFor != null && chOrderFor == activeChannel) chOrder else emptyList()
         val chSet = ch.toHashSet()
         for ((src, title) in PROVIDER_TITLES) {
-            val names = ch.filter { srcOf[it] == src && enabled(it) && map[it] !in gone }
+            val names = ch.filter { srcOf[it] == src && enabled(it) && pickable(it) }
             if (names.isNotEmpty()) out += "$title channel emotes" to names
         }
         val globals = synchronized(globalOrder) { globalOrder.toList() }
         for ((src, title) in PROVIDER_TITLES) {
-            val names = globals.filter { it !in chSet && srcOf[it] == src && enabled(it) && map[it] !in gone }.distinct()
+            val names = globals.filter { it !in chSet && srcOf[it] == src && enabled(it) && pickable(it) }.distinct()
             if (names.isNotEmpty()) out += "$title global emotes" to names
         }
         return out
     }
+
+    /** Has a url that still exists. While a channel publishes, a name can be in [srcOf] for a
+     *  moment with no url yet, and asking the [gone] set about a null url throws. */
+    private fun pickable(name: String): Boolean = map[name]?.let { it !in gone } ?: false
 
     /** A drawable for one picker cell: a fresh animated copy, or a private copy of the static one. */
     fun pickerDrawable(name: String): Drawable? {
@@ -147,8 +154,9 @@ object EmoteRepo {
     /** The url [name] resolves to in the current chat, or null if it is not available here. */
     fun urlOf(name: String): String? = map[name] ?: twitch[name]
 
-    /** Numeric id of the channel whose emotes are loaded, or null outside a channel. */
-    fun currentChannel(): String? = activeChannel
+    /** Numeric id of the channel whose emotes are loaded, or null outside a channel. Also while a
+     *  quality change reloads the emotes, so per-channel favorites and pins stay on that channel. */
+    fun currentChannel(): String? = activeChannel ?: reloadingFor
 
     // --- global snapshots (authoritative GLOBAL-only emote set) ---
     // The public maps above are the LIVE combined view (globals + the CURRENT channel) that the
@@ -171,6 +179,11 @@ object EmoteRepo {
     fun channelPending(): Boolean = activeChannel != null && activeChannel != publishedFor
     /** Login of [activeChannel], kept so [refetch] can reload the same channel. */
     @Volatile private var activeName: String? = null
+    /** The channel [refetch] is about to load again, while [activeChannel] is null for it. */
+    @Volatile private var reloadingFor: String? = null
+    /** Counts channel loads, so a late or retried list of an older load (another channel, or the
+     *  same one before a quality change) knows it is no longer wanted. */
+    private val chGen = java.util.concurrent.atomic.AtomicInteger()
 
     @Volatile private var globalsLoaded = false
     @Volatile private var twitchLoaded = false
@@ -275,18 +288,32 @@ object EmoteRepo {
      *  background task re-checks at start, so if the fast lane got there first it just skips. */
     private fun fetch(name: String) {
         if (drawables.containsKey(name)) return
-        val url = map[name] ?: return
+        var url = map[name] ?: return
         if (url in gone) return
         if (!inflight.add(name)) return
         try {
             var tries = 0
+            var hops = 0
             while (true) {
                 waitForNetwork()
                 try {
-                    val d = buildDrawable(name, getBytes(url), Resources.getSystem())
-                    if (d != null) { builtFrom[name] = url; drawables[name] = d; suggestDrawables.putIfAbsent(name, d) }
+                    val b = buildDrawable(getBytes(url), Resources.getSystem())
                     netBackoff = 2000L
-                    break
+                    // The channel or the quality can change while the picture downloads. It is only
+                    // kept if the name still means this url: otherwise the old chat's picture stuck
+                    // to the word, since nothing fetches a name that already has a picture.
+                    val now = synchronized(publishLock) {
+                        val cur = map[name]
+                        if (cur == url && b != null) {
+                            builtFrom[name] = url; drawables[name] = b.d; suggestDrawables.putIfAbsent(name, b.d)
+                            keepAnim(name, b)
+                        }
+                        cur
+                    }
+                    // It means another picture now. The new chat's prefetch skipped this name while
+                    // it was downloading here, so fetch that one instead of leaving it as text.
+                    if (now == null || now == url || now in gone || drawables.containsKey(name) || ++hops > 3) break
+                    url = now; tries = 0
                 } catch (t: Throwable) {
                     if (isNetTrouble(t) && ++tries < 4) { noteNetTrouble(t); continue }
                     if (isGone(t)) gone.add(url)
@@ -321,46 +348,112 @@ object EmoteRepo {
     fun refetch() {
         Thread({
             runCatching {
-                val ch = activeChannel; val chName = activeName
-                activeChannel = null
-                map.clear(); srcOf.clear(); stvGlobal.clear(); uploaderOf.clear()
-                gMap.clear(); gSrc.clear(); gUploader.clear()
-                drawables.clear(); gDraw.clear(); gSuggestDraw.clear()
-                animBytes.clear(); suggestDrawables.clear()
-                homies = null
-                globalOrder.clear(); chOrder = emptyList()
+                // Under the lock, so a picture finishing its download right now cannot be stored
+                // between its "same url still" check and these clears.
+                val (ch, chName) = synchronized(publishLock) {
+                    val c = activeChannel ?: reloadingFor
+                    // Kept for currentChannel() while activeChannel is null, so per-channel
+                    // favorites and pins do not fall back to the shared lists during the reload.
+                    reloadingFor = c
+                    activeChannel = null; publishedFor = null
+                    map.clear(); srcOf.clear(); stvGlobal.clear(); uploaderOf.clear()
+                    gMap.clear(); gSrc.clear(); gUploader.clear()
+                    drawables.clear(); gDraw.clear(); gSuggestDraw.clear()
+                    animBytes.clear(); animBounds.clear(); builtFrom.clear(); suggestDrawables.clear()
+                    // Twitch emote urls have the size in them too, and their loaders only run once.
+                    resizeTwitch(gTwitch); resizeTwitch(twitch)
+                    homies = null
+                    globalOrder.clear(); chOrder = emptyList()
+                    c to activeName
+                }
                 globalsLoaded = true
                 log("emote cache cleared; refetching at quality=${Settings.getInt(EmoteQuality.KEY, EmoteQuality.DEFAULT)}")
-                loadGlobalsNow()
+                val failed = runCatching { loadGlobalsNow() }.onFailure { log("refetch globals failed: $it") }
+                    .getOrDefault(emptyList())
+                // The channel goes back in before any retries: those can sleep for minutes, and the
+                // channel had no emotes of its own all that time.
                 if (ch != null && activeChannel == null) loadChannelAsync(ch, chName)
+                if (failed.isNotEmpty()) retryGlobals(failed)
             }.onFailure { log("refetch failed: $it") }
         }, "ptv-emote-refetch").apply { isDaemon = true }.start()
+    }
+
+    private val TWITCH_SIZE = Regex("^(https://static-cdn\\.jtvnw\\.net/emoticons/v[12]/.+/)[1-4]\\.0$")
+
+    /** Point every Twitch CDN url in [m] at the size the quality setting asks for now. */
+    private fun resizeTwitch(m: MutableMap<String, String>) {
+        for ((n, u) in m) {
+            val r = TWITCH_SIZE.find(u) ?: continue
+            val sized = r.groupValues[1] + EmoteQuality.twitch
+            if (sized != u) m[n] = sized
+        }
     }
 
     fun loadGlobalsAsync() {
         if (globalsLoaded) return
         globalsLoaded = true
-        Thread({ loadGlobalsNow() }, "ptv-emote-fetch").start()
+        Thread({
+            val failed = loadGlobalsNow()
+            if (failed.isNotEmpty()) retryGlobals(failed)
+        }, "ptv-emote-fetch").start()
     }
 
-    private fun loadGlobalsNow() {
+    /** Load the global sets and their pictures. Returns the sets whose server failed; the caller
+     *  retries them, so [refetch] can put the channel back first. */
+    private fun loadGlobalsNow(): List<Pair<String, ListLoad>> {
         emoteHeightPx = (28f * Resources.getSystem().displayMetrics.density).toInt().coerceAtLeast(36)
-        run {
-            val failed = ArrayList<Pair<String, () -> Unit>>()
-            runCatching { loadSevenTvGlobal() }.onFailure { failed += "7TV" to ::loadSevenTvGlobal; log("7TV global failed: $it") }
-            runCatching { loadBttvGlobal() }.onFailure { failed += "BTTV" to ::loadBttvGlobal; log("BTTV global failed: $it") }
-            runCatching { loadFfzGlobal() }.onFailure { failed += "FFZ" to ::loadFfzGlobal; log("FFZ global failed: $it") }
-            if (Settings.get(KEY_HOMIES, false))
-                runCatching { loadHomies(null, map, srcOf) }.onFailure { log("Homies global failed: $it") }
-            // Snapshot the global NAMES now (before any channel can merge in) so a later
-            // channel switch can restore exactly the global-only set.
-            gMap.putAll(map); gSrc.putAll(srcOf); gUploader.putAll(uploaderOf)
-            bumpPicker()
-            log("emote map ready: ${map.size} global emotes; prefetching images (h=${emoteHeightPx}px)")
-            prefetchDrawables()
-            gDraw.putAll(drawables); gSuggestDraw.putAll(suggestDrawables)
-            log("emote drawables ready: ${drawables.size}/${map.size}")
-            if (failed.isNotEmpty()) retryGlobals(failed)
+        val failed = ArrayList<Pair<String, ListLoad>>()
+        // Built off the live maps and merged after each set. Written straight into the live map,
+        // a channel that published meanwhile wiped the globals loaded so far, and its own emotes
+        // were then snapshotted as globals and showed up in every chat for the session.
+        val gm = HashMap<String, String>(); val gs = HashMap<String, String>(); val gu = HashMap<String, String>()
+        runCatching { loadSevenTvGlobal(gm, gs, gu) }.onFailure { failed += "7TV" to ::loadSevenTvGlobal; log("7TV global failed: $it") }
+        mergeGlobals(gm, gs, gu)
+        runCatching { loadBttvGlobal(gm, gs, gu) }.onFailure { failed += "BTTV" to ::loadBttvGlobal; log("BTTV global failed: $it") }
+        mergeGlobals(gm, gs, gu)
+        runCatching { loadFfzGlobal(gm, gs, gu) }.onFailure { failed += "FFZ" to ::loadFfzGlobal; log("FFZ global failed: $it") }
+        if (Settings.get(KEY_HOMIES, false))
+            runCatching { loadHomies(null, gm, gs) }.onFailure { log("Homies global failed: $it") }
+        mergeGlobals(gm, gs, gu)
+        bumpPicker()
+        log("emote map ready: ${gm.size} global emotes; prefetching images (h=${emoteHeightPx}px)")
+        prefetchDrawables()
+        snapshotGlobalPictures(gm.keys)
+        log("emote drawables ready: ${drawables.size}/${map.size}")
+        return failed
+    }
+
+    /**
+     * Add global emotes to the global snapshot, and to the live set where the channel does not
+     * use the name already. Under the publish lock, so a channel publishing at the same time can
+     * neither lose them nor be taken for globals. Returns the names new to the snapshot.
+     */
+    private fun mergeGlobals(gm: Map<String, String>, gs: Map<String, String>, gu: Map<String, String>): List<String> {
+        val added = ArrayList<String>()
+        synchronized(publishLock) {
+            for ((n, u) in gm) {
+                if (gMap.putIfAbsent(n, u) != null) continue
+                added += n
+                gs[n]?.let { gSrc[n] = it }
+                gu[n]?.let { gUploader[n] = it }
+                if (map.putIfAbsent(n, u) == null) {
+                    gs[n]?.let { srcOf[n] = it }
+                    gu[n]?.let { uploaderOf[n] = it }
+                }
+            }
+        }
+        return added
+    }
+
+    /** Keep the pictures of global [names] for every later channel, but only a picture made from
+     *  the global url. A channel using the same word for its own picture must not leave that
+     *  picture behind as the global one. */
+    private fun snapshotGlobalPictures(names: Collection<String>) = synchronized(publishLock) {
+        for (n in names) {
+            val u = gMap[n] ?: continue
+            val d = drawables[n] ?: continue
+            if (builtFrom[n] != u) continue
+            gDraw[n] = d; gSuggestDraw.putIfAbsent(n, d)
         }
     }
 
@@ -369,30 +462,23 @@ object EmoteRepo {
      * growing intervals, so they come back without restarting the app. New names join the global
      * snapshot, and the live set too unless the channel already uses that name.
      */
-    private fun retryGlobals(failed: List<Pair<String, () -> Unit>>) {
+    private fun retryGlobals(failed: List<Pair<String, ListLoad>>) {
         val todo = ArrayList(failed)
         for (wait in longArrayOf(20, 60, 180, 600)) {
             runCatching { Thread.sleep(wait * 1000L) }
             val it = todo.iterator()
             while (it.hasNext()) {
                 val (name, load) = it.next()
-                val before = HashSet(map.keys)
-                if (runCatching { load() }.onFailure { log("$name global retry failed: $it") }.isFailure) continue
+                // Into maps of its own: comparing the live map before and after also caught the
+                // emotes of a channel published meanwhile, which then became globals.
+                val gm = HashMap<String, String>(); val gs = HashMap<String, String>(); val gu = HashMap<String, String>()
+                if (runCatching { load(gm, gs, gu) }.onFailure { log("$name global retry failed: $it") }.isFailure) continue
                 it.remove()
-                val added = map.keys.filter { n -> n !in before }
-                synchronized(publishLock) {
-                    for (n in added) {
-                        val u = map[n] ?: continue
-                        gMap.putIfAbsent(n, u)
-                        srcOf[n]?.let { s -> gSrc.putIfAbsent(n, s) }
-                        uploaderOf[n]?.let { s -> gUploader.putIfAbsent(n, s) }
-                    }
-                }
+                val added = mergeGlobals(gm, gs, gu)
                 log("$name global back on retry: +${added.size}")
                 bumpPicker()
                 prefetchDrawables()
-                for (n in added) drawables[n]?.let { d -> gDraw.putIfAbsent(n, d) }
-                for (n in added) suggestDrawables[n]?.let { d -> gSuggestDraw.putIfAbsent(n, d) }
+                snapshotGlobalPictures(added)
             }
             if (todo.isEmpty()) return
         }
@@ -425,6 +511,7 @@ object EmoteRepo {
             }
         }
         if (!dbFile.exists()) { log("emotes.db missing"); return }
+        val got = HashMap<String, String>()
         val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
         db.use { d ->
             // One-time schema discovery: every table + columns + row count.
@@ -455,13 +542,29 @@ object EmoteRepo {
                         val name = cur.getString(0) ?: continue
                         val id = cur.getString(1) ?: continue
                         if (name.isEmpty() || id.isEmpty()) continue
-                        twitch[name] =
+                        got[name] =
                             "https://static-cdn.jtvnw.net/emoticons/v2/$id/default/dark/${EmoteQuality.twitch}"
                     }
                 }
             }.onFailure { log("frequent_emotes query failed: $it") }
         }
-        log("twitch frequent_emotes: ${twitch.size}")
+        // Straight into the user-wide set. They only reached it by being copied over from the live
+        // set later, so a channel that published first wiped them.
+        addTwitchGlobals(got)
+        log("twitch frequent_emotes: ${got.size}")
+    }
+
+    /** Add user-wide Twitch emotes: to the global snapshot, so channel switches keep them, and to
+     *  the live set. Under the publish lock, like everything a channel publish rebuilds. */
+    private fun addTwitchGlobals(m: Map<String, String>) = synchronized(publishLock) {
+        for ((n, u) in m) { gTwitch.putIfAbsent(n, u); twitch.putIfAbsent(n, u) }
+        keepTwitchPictures(m.keys)
+    }
+
+    /** Keep the pictures already here for user-wide Twitch emotes [names] across channel switches.
+     *  Not for a name 7TV/BTTV/FFZ also use, whose picture here could be a channel's emote. */
+    private fun keepTwitchPictures(names: Collection<String>) = synchronized(publishLock) {
+        for (n in names) if (!map.containsKey(n)) suggestDrawables[n]?.let { gSuggestDraw.putIfAbsent(n, it) }
     }
 
     /**
@@ -474,14 +577,16 @@ object EmoteRepo {
         if (twitchGlobalLoaded) return
         twitchGlobalLoaded = true
         Thread({
-            val before = twitch.size
+            val got = HashMap<String, String>()
             runCatching {
                 val arr = JSONArray(get("https://emotes.adamcy.pl/v1/global/emotes/all"))
-                addAdamcyTwitch(arr, twitch)
+                addAdamcyTwitch(arr, got)
             }.onFailure { log("adamcy global failed: $it") }
-            log("twitch global emotes: +${twitch.size - before} (total ${twitch.size}); prefetching")
+            // Only these become user-wide. Copying the whole live set also copied the channel open
+            // at the time, and its sub emotes were then suggested in every other channel.
+            addTwitchGlobals(got)
+            log("twitch global emotes: +${got.size} (total ${twitch.size}); prefetching")
             prefetchSuggestDrawables()
-            gTwitch.putAll(twitch); gSuggestDraw.putAll(suggestDrawables)
             log("suggest drawables ready: ${suggestDrawables.size}")
         }, "ptv-twitch-global").start()
     }
@@ -528,8 +633,10 @@ object EmoteRepo {
                     gTwitch.putAll(personal); twitch.putAll(personal)
                     log("personal emotes: +${twitch.size - before} (total twitch ${twitch.size}); prefetching")
                     runCatching { Favorites.channelChanged() }
+                    // Only these names' pictures. Copying every picture also kept the open channel's
+                    // emotes as if they were user-wide.
+                    keepTwitchPictures(personal.keys)
                     prefetchSuggestDrawables()
-                    gSuggestDraw.putAll(suggestDrawables)
                     log("suggest drawables ready: ${suggestDrawables.size}")
                 }.onFailure { log("personal emotes failed (will try again): $it") }.isSuccess
                 if (ok) return@Thread
@@ -699,12 +806,8 @@ object EmoteRepo {
             if (url in gone || !inflight.add("sug:$name")) continue
             hotPool.execute {
                 try {
-                    val d = buildDrawable(name, getBytes(url), res)
-                    if (d != null) {
-                        suggestDrawables[name] = d
-                        if (gTwitch.containsKey(name)) gSuggestDraw[name] = d
-                        onReady()
-                    }
+                    val b = buildDrawable(getBytes(url), res)
+                    if (b != null && keepSuggestion(name, url, b)) onReady()
                 } catch (t: Throwable) {
                     if (isGone(t)) gone.add(url)
                 } finally {
@@ -723,12 +826,8 @@ object EmoteRepo {
             if (!inflight.add("sug:$name")) continue
             sugPool.execute {
                 try {
-                    val d = buildDrawable(name, getBytes(url), res)
-                    if (d != null) {
-                        suggestDrawables[name] = d
-                        // User-wide emotes keep their picture across channel switches.
-                        if (gTwitch.containsKey(name)) gSuggestDraw[name] = d
-                    }
+                    val b = buildDrawable(getBytes(url), res)
+                    if (b != null) keepSuggestion(name, url, b)
                 } catch (t: Throwable) {
                     log("sug img fail '$name': $t")
                 } finally {
@@ -738,8 +837,73 @@ object EmoteRepo {
         }
     }
 
+    /**
+     * Store a suggestion picture downloaded from [url], unless [name] has meant another picture
+     * since (a channel switch or a quality change). Returns whether it was kept.
+     */
+    private fun keepSuggestion(name: String, url: String, b: Built): Boolean = synchronized(publishLock) {
+        if ((twitch[name] ?: map[name]) != url) return@synchronized false
+        suggestDrawables[name] = b.d
+        // User-wide emotes keep their picture across channel switches.
+        if (gTwitch.containsKey(name)) gSuggestDraw[name] = b.d
+        // Chat uses the same animation, so it is only kept when chat would use this url too.
+        // Stored for a Twitch url under a 7TV name, chat showed the Twitch emote moving.
+        if (urlOf(name) == url) { builtFrom[name] = url; keepAnim(name, b) }
+        true
+    }
+
+    /** Store (or clear) the animation that goes with a picture just kept for [name], so it always
+     *  belongs to the url in [builtFrom]. Called under [publishLock]. */
+    private fun keepAnim(name: String, b: Built) {
+        if (b.anim != null && b.bounds != null) { animBytes[name] = b.anim; animBounds[name] = b.bounds }
+        else { animBytes.remove(name); animBounds.remove(name) }
+    }
+
     // --- channel emotes (keyed by Twitch numeric channel id) ---
     private val publishLock = Any()
+
+    /** Runs a channel's emote lists side by side. Threads are made as needed and reused. */
+    private val chPool = Executors.newCachedThreadPool { r ->
+        Thread(r, "ptv-ch-list").apply { isDaemon = true }
+    }
+
+    /** How long a channel waits for all its lists before it publishes the ones that are back. */
+    private const val CH_WAIT_MS = 8_000L
+
+    /** One channel emote list, loaded into maps of its own so the lists can load side by side.
+     *  [gaps]: only adds names no other list took (Homies). [isTwitch]: goes to [twitch]. */
+    private class ChList(val name: String, val gaps: Boolean = false, val isTwitch: Boolean = false,
+                         val load: ListLoad) {
+        val map = LinkedHashMap<String, String>()
+        val src = HashMap<String, String>()
+        val up = HashMap<String, String>()
+        @Volatile var error: Throwable? = null
+        private val done = java.util.concurrent.CountDownLatch(1)
+
+        fun run() {
+            try { load(map, src, up) } catch (t: Throwable) { error = t } finally { done.countDown() }
+        }
+
+        /** Waits until [until] (uptime ms) at most. True once it has finished. */
+        fun waitUntil(until: Long): Boolean = runCatching {
+            done.await((until - android.os.SystemClock.uptimeMillis()).coerceAtLeast(0), TimeUnit.MILLISECONDS)
+        }.getOrDefault(false)
+
+        /** A fresh copy, for asking again. */
+        fun again() = ChList(name, gaps, isTwitch, load)
+    }
+
+    /** Put [l]'s emotes into the channel's set: a later list wins a name two lists share, as when
+     *  they loaded one after another, except a [ChList.gaps] list. */
+    private fun mergeList(l: ChList, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                          up: MutableMap<String, String>) {
+        for ((n, u) in l.map) {
+            if (l.gaps && out.containsKey(n)) continue
+            out[n] = u
+            l.src[n]?.let { src[n] = it }
+            l.up[n]?.let { up[n] = it }
+        }
+    }
 
     /**
      * Load a channel's 7TV/BTTV/FFZ + Twitch emote sets and make them the ONLY channel emotes
@@ -750,32 +914,56 @@ object EmoteRepo {
      * channel. This prevents a previous channel's emotes from leaking into a channel that
      * doesn't have them — including the race where the OLD channel's slow image prefetch / Twitch
      * fetch finishes AFTER the user already switched. The chat-connect ctor fires in a ~13× burst
-     * per channel; we dedup on [activeChannel] so only the first of a burst proceeds. Re-entering
-     * a channel re-fetches it (cheap, upstream-cached).
+     * per channel; we dedup on [activeChannel] so only the first of a burst proceeds. That also
+     * skips opening the same channel again, so a list that failed is asked again on a timer
+     * instead ([finishChannel]).
      */
     fun loadChannelAsync(channelId: String, channelName: String?) {
         if (channelId.isBlank()) return
         if (channelId == activeChannel) return // same channel (ctor burst / no switch) — ignore
         activeChannel = channelId
         activeName = channelName
+        reloadingFor = null
+        val myGen = chGen.incrementAndGet()
         Thread({
             val myId = channelId
-            // Build this channel's set in LOCAL maps — no writes to the live maps yet.
+            // Every list loads at the same time, into maps of its own. One after another, a single
+            // slow server (FFZ timing out after 10 s) held back the whole channel set.
+            val lists = arrayListOf(
+                ChList("7TV") { m, s, u -> loadSevenTvChannel(myId, m, s, u) },
+                ChList("BTTV") { m, s, u -> loadBttvChannel(myId, m, s, u, channelName) },
+                ChList("FFZ") { m, s, u -> loadFfzChannel(myId, m, s, u) })
+            if (Settings.get(KEY_HOMIES, false))
+                lists += ChList("Homies", gaps = true) { m, s, _ -> loadHomies(myId, m, s) }
+            if (!channelName.isNullOrBlank())
+                lists += ChList("Twitch", isTwitch = true) { m, _, _ -> loadTwitchChannel(channelName, m) }
+            for (l in lists) chPool.execute { l.run() }
+            // Build this channel's set in LOCAL maps: no writes to the live maps yet. Merged in
+            // the fixed order above, so a name two lists share resolves as it always did.
             val cMap = LinkedHashMap<String, String>()   // keeps each provider's own order for the picker
             val cSrc = HashMap<String, String>()
             val cUp = HashMap<String, String>()
             val cTwitch = HashMap<String, String>()
-            runCatching { loadSevenTvChannel(myId, cMap, cSrc, cUp) }.onFailure { log("7TV ch failed: $it") }
-            runCatching { loadBttvChannel(myId, cMap, cSrc, cUp, channelName) }.onFailure { log("BTTV ch failed: $it") }
-            runCatching { loadFfzChannel(myId, cMap, cSrc, cUp) }.onFailure { log("FFZ ch failed: $it") }
-            if (Settings.get(KEY_HOMIES, false))
-                runCatching { loadHomies(myId, cMap, cSrc) }.onFailure { log("Homies ch failed: $it") }
-            if (!channelName.isNullOrBlank())
-                runCatching { loadTwitchChannel(channelName, cTwitch) }.onFailure { log("twitch ch failed: $it") }
-            if (activeChannel != myId) { log("ch $myId superseded before publish — discarded"); return@Thread }
+            val late = ArrayList<ChList>()
+            val failed = ArrayList<ChList>()
+            val until = android.os.SystemClock.uptimeMillis() + CH_WAIT_MS
+            for (l in lists) {
+                if (!l.waitUntil(until)) { late += l; continue }
+                val e = l.error
+                when {
+                    // A 404 just means the channel has no account there: nothing to ask again.
+                    e != null -> { log("${l.name} ch failed: $e"); if (!isGone(e)) failed += l }
+                    l.isTwitch -> cTwitch.putAll(l.map)
+                    else -> mergeList(l, cMap, cSrc, cUp)
+                }
+            }
+            if (late.isNotEmpty()) log("ch $myId: ${late.joinToString { it.name }} not back yet, they join when they are")
+            if (activeChannel != myId || chGen.get() != myGen) { log("ch $myId superseded before publish, discarded"); return@Thread }
             // Publish atomically: live = globals + this channel only. Drops any prior channel.
             synchronized(publishLock) {
-                if (activeChannel != myId) { log("ch $myId superseded at publish — discarded"); return@Thread }
+                // The generation too: after a quality change the same channel loads again, and
+                // this older load must not publish urls of the old size over it.
+                if (activeChannel != myId || chGen.get() != myGen) { log("ch $myId superseded at publish, discarded"); return@Thread }
                 map.clear(); map.putAll(gMap); map.putAll(cMap)
                 srcOf.clear(); srcOf.putAll(gSrc); srcOf.putAll(cSrc)
                 uploaderOf.clear(); uploaderOf.putAll(gUploader); uploaderOf.putAll(cUp)
@@ -792,12 +980,16 @@ object EmoteRepo {
                     val from = builtFrom[n] ?: continue
                     if (from != urlOf(n)) { animBytes.remove(n); animBounds.remove(n); builtFrom.remove(n) }
                 }
+                // Inside the lock, so a list arriving late always finds the order it adds to.
+                chOrder = cMap.keys.toList(); chOrderFor = myId
             }
-            chOrder = cMap.keys.toList(); chOrderFor = myId
             bumpPicker()
             runCatching { Favorites.channelChanged() }
             runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post { PinnedChat.channelChanged() } }
             log("channel $myId ($channelName) published: +${cMap.size} inject, +${cTwitch.size} twitch (map=${map.size}); prefetching")
+            if (late.isNotEmpty() || failed.isNotEmpty()) Thread({
+                runCatching { finishChannel(myId, myGen, late, failed) }.onFailure { log("ch $myId late lists failed: $it") }
+            }, "ptv-ch-retry-$myId").apply { isDaemon = true }.start()
             // Download channel images into the live maps; aborts mid-loop if the user switches.
             // A short head start first, so Twitch's own chat and stream requests go out before
             // hundreds of picture downloads join them.
@@ -808,6 +1000,67 @@ object EmoteRepo {
             prefetchSuggestDrawables(myId)
             log("channel $myId drawables ready: ${drawables.size}/${map.size}")
         }, "ptv-ch-fetch-$channelId").start()
+    }
+
+    /**
+     * The channel lists that missed the publish: the ones still loading join as they arrive, and
+     * the ones whose server failed are asked again at growing intervals, like [retryGlobals].
+     * Before, a failed list stayed missing until the user visited another channel, since opening
+     * the same channel again is skipped. Stops as soon as another channel load starts.
+     */
+    private fun finishChannel(myId: String, myGen: Int, late: List<ChList>, failed: List<ChList>) {
+        val todo = ArrayList(failed)
+        for (l in late) {
+            if (chGen.get() != myGen) return
+            // Every request ends on its own connect or read timeout; this cap is only a backstop.
+            if (!l.waitUntil(android.os.SystemClock.uptimeMillis() + 120_000)) { todo += l.again(); continue }
+            val e = l.error
+            if (e == null) mergeLate(myId, myGen, l)
+            else { log("${l.name} ch failed: $e"); if (!isGone(e)) todo += l }
+        }
+        for (wait in longArrayOf(20, 60, 180, 600)) {
+            if (todo.isEmpty() || chGen.get() != myGen) return
+            runCatching { Thread.sleep(wait * 1000L) }
+            val it = todo.iterator()
+            while (it.hasNext()) {
+                if (chGen.get() != myGen) return
+                val l = it.next().again()
+                l.run()
+                val e = l.error
+                if (e != null) { log("${l.name} ch retry failed: $e"); if (isGone(e)) it.remove(); continue }
+                it.remove()
+                mergeLate(myId, myGen, l)
+            }
+        }
+    }
+
+    /** Add a list that came back after its channel was published. It only adds names, so what the
+     *  channel already shows keeps its picture and its place. */
+    private fun mergeLate(myId: String, myGen: Int, l: ChList) {
+        val added = ArrayList<String>()
+        synchronized(publishLock) {
+            if (chGen.get() != myGen || activeChannel != myId || publishedFor != myId) return
+            if (l.isTwitch) {
+                for ((n, u) in l.map) if (twitch.putIfAbsent(n, u) == null) added += n
+            } else {
+                val have = chNames
+                for ((n, u) in l.map) {
+                    if (n in have) continue
+                    map[n] = u
+                    l.src[n]?.let { srcOf[n] = it }
+                    l.up[n]?.let { uploaderOf[n] = it }
+                    // As in the publish: a channel emote reusing a global name has its own picture.
+                    if (gMap[n] != u) { drawables.remove(n); suggestDrawables.remove(n) }
+                    added += n
+                }
+                chNames = have + added
+                if (chOrderFor == myId) chOrder = chOrder + added
+            }
+        }
+        log("${l.name} ch joined late: +${added.size}")
+        if (added.isEmpty()) return
+        bumpPicker()
+        if (!l.isTwitch) for (n in added) imgPool.execute { if (chGen.get() == myGen) fetch(n) }
     }
 
     // 7TV channel: https://7tv.io/v3/users/twitch/<id> -> { emote_set:{ emotes:[ {name,id} ] } }
@@ -868,15 +1121,19 @@ object EmoteRepo {
         log("FFZ channel: $n")
     }
 
+    /** A decoded emote picture, plus the source bytes and row size when it is animated. */
+    private class Built(val d: Drawable, val anim: ByteArray? = null, val bounds: IntArray? = null)
+
     /**
      * Decode emote [bytes] into a ready-to-draw Drawable scaled to our row height. Animated
-     * sources (animated WebP / GIF) are detected here: we cache their bytes in [animBytes] +
-     * size in [animBounds] (so [makeAnimated] can mint fresh independently-animating copies) and
-     * return a STATIC first-frame BitmapDrawable as the stored fallback. Static sources return a
-     * plain BitmapDrawable. Uses ImageDecoder on API 28+ (animation requires it); below that, or
-     * on any failure, falls back to a static BitmapFactory decode.
+     * sources (animated WebP / GIF) are detected here: their bytes + size come back with it (so
+     * [makeAnimated] can mint fresh independently-animating copies) next to a STATIC first-frame
+     * BitmapDrawable as the stored fallback. The caller stores them ([keepAnim]) only once it
+     * knows the url is still the one in use. Static sources return a plain BitmapDrawable. Uses
+     * ImageDecoder on API 28+ (animation requires it); below that, or on any failure, falls back
+     * to a static BitmapFactory decode.
      */
-    private fun buildDrawable(name: String, bytes: ByteArray, res: Resources): Drawable? {
+    private fun buildDrawable(bytes: ByteArray, res: Resources): Built? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val d = runCatching {
                 val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
@@ -887,13 +1144,12 @@ object EmoteRepo {
                     dec.setTargetSize(tw.coerceAtLeast(1), emoteHeightPx)
                 }
                 if (decoded is AnimatedImageDrawable) {
-                    animBytes[name] = bytes
-                    animBounds[name] = intArrayOf(tw.coerceAtLeast(1), emoteHeightPx)
                     // Static first frame for the cached map (fallback + injection default).
                     val first = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes)))
-                    BitmapDrawable(res, first).apply { setBounds(0, 0, tw.coerceAtLeast(1), emoteHeightPx) }
+                    Built(BitmapDrawable(res, first).apply { setBounds(0, 0, tw.coerceAtLeast(1), emoteHeightPx) },
+                        bytes, intArrayOf(tw.coerceAtLeast(1), emoteHeightPx))
                 } else {
-                    decoded.apply { setBounds(0, 0, tw.coerceAtLeast(1), emoteHeightPx) }
+                    Built(decoded.apply { setBounds(0, 0, tw.coerceAtLeast(1), emoteHeightPx) })
                 }
             }.getOrNull()
             if (d != null) return d
@@ -901,7 +1157,7 @@ object EmoteRepo {
         return runCatching {
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("decode failed")
             val tw = if (bmp.height > 0) (emoteHeightPx * bmp.width / bmp.height) else emoteHeightPx
-            BitmapDrawable(res, bmp).apply { setBounds(0, 0, tw.coerceAtLeast(1), emoteHeightPx) }
+            Built(BitmapDrawable(res, bmp).apply { setBounds(0, 0, tw.coerceAtLeast(1), emoteHeightPx) })
         }.getOrNull()
     }
 
@@ -1075,7 +1331,8 @@ object EmoteRepo {
     }
 
     // 7TV: https://7tv.io/v3/emote-sets/global -> { emotes:[ {name,id} ] }
-    private fun loadSevenTvGlobal() {
+    private fun loadSevenTvGlobal(out: MutableMap<String, String>, src: MutableMap<String, String>,
+                                  up: MutableMap<String, String>) {
         val root = JSONObject(get("https://7tv.io/v3/emote-sets/global"))
         val arr = root.optJSONArray("emotes") ?: return
         var n = 0
@@ -1084,17 +1341,18 @@ object EmoteRepo {
             val name = e.optString("name")
             val id = e.optString("id")
             if (name.isEmpty() || id.isEmpty()) continue
-            map.putIfAbsent(name, "https://cdn.7tv.app/emote/$id/${EmoteQuality.sevenTv}.webp")
-            srcOf.putIfAbsent(name, "7tv"); globalOrder.add(name)
+            out.putIfAbsent(name, "https://cdn.7tv.app/emote/$id/${EmoteQuality.sevenTv}.webp")
+            src.putIfAbsent(name, "7tv"); globalOrder.add(name)
             stvGlobal.add(name)
-            ownerName(e.optJSONObject("data")?.optJSONObject("owner"))?.let { uploaderOf.putIfAbsent(name, it) }
+            ownerName(e.optJSONObject("data")?.optJSONObject("owner"))?.let { up.putIfAbsent(name, it) }
             n++
         }
         log("7TV global: $n")
     }
 
     // BTTV: https://api.betterttv.net/3/cached/emotes/global -> [ {id,code} ]
-    private fun loadBttvGlobal() {
+    private fun loadBttvGlobal(out: MutableMap<String, String>, src: MutableMap<String, String>,
+                               up: MutableMap<String, String>) {
         val arr = JSONArray(get("https://api.betterttv.net/3/cached/emotes/global"))
         var n = 0
         for (i in 0 until arr.length()) {
@@ -1102,16 +1360,17 @@ object EmoteRepo {
             val name = e.optString("code")
             val id = e.optString("id")
             if (name.isEmpty() || id.isEmpty()) continue
-            map.putIfAbsent(name, "https://cdn.betterttv.net/emote/$id/${EmoteQuality.bttv}")
-            srcOf.putIfAbsent(name, "bttv"); globalOrder.add(name)
-            uploaderOf.putIfAbsent(name, "BetterTTV")
+            out.putIfAbsent(name, "https://cdn.betterttv.net/emote/$id/${EmoteQuality.bttv}")
+            src.putIfAbsent(name, "bttv"); globalOrder.add(name)
+            up.putIfAbsent(name, "BetterTTV")
             n++
         }
         log("BTTV global: $n")
     }
 
     // FFZ: https://api.frankerfacez.com/v1/set/global -> { sets:{ "<id>":{ emoticons:[ {name,urls:{"1","2","4"}} ] } } }
-    private fun loadFfzGlobal() {
+    private fun loadFfzGlobal(out: MutableMap<String, String>, src: MutableMap<String, String>,
+                              up: MutableMap<String, String>) {
         val root = JSONObject(get("https://api.frankerfacez.com/v1/set/global"))
         val sets = root.optJSONObject("sets") ?: return
         var n = 0
@@ -1125,9 +1384,9 @@ object EmoteRepo {
                 val pick = urls.optString(EmoteQuality.ffz).ifEmpty { urls.optString("2") }.ifEmpty { urls.optString("1") }
                 if (pick.isEmpty()) continue
                 val full = if (pick.startsWith("//")) "https:$pick" else pick
-                map.putIfAbsent(name, full)
-                srcOf.putIfAbsent(name, "ffz"); globalOrder.add(name)
-                ownerName(e.optJSONObject("owner"))?.let { uploaderOf.putIfAbsent(name, it) }
+                out.putIfAbsent(name, full)
+                src.putIfAbsent(name, "ffz"); globalOrder.add(name)
+                ownerName(e.optJSONObject("owner"))?.let { up.putIfAbsent(name, it) }
                 n++
             }
         }

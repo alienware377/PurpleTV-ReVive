@@ -390,6 +390,9 @@ object FiltersPanel {
             // Puts only this section back to how it started.
             reset.setOnClickListener {
                 members.forEach { FilterDefs.resetFilter(it) }
+                // Switch the section back on first (as Reset all does), so the rows reload un-dimmed
+                // and a slider moved afterwards actually changes the video.
+                if (!FilterDefs.groupOn(g)) FilterDefs.setGroupOn(g, true)
                 groupRows.forEach { it.reload() }
                 syncHead(); changed()
             }
