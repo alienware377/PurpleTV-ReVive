@@ -133,8 +133,17 @@ object EmoteAutocomplete {
                 // doing so breaks the player's theater/fullscreen surface (turns it black, #4).
                 val landscape = v.resources.configuration.orientation ==
                     android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                @Suppress("DEPRECATION") val nav = if (landscape) 0 else insets.systemWindowInsetBottom
-                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, nav)
+                // The navigation bar only. The system window inset also holds a docked keyboard's
+                // height, and Twitch already makes room for the keyboard itself, so using it took
+                // the keyboard's space away twice: on the unfolded Fold the stream screen shrank
+                // to the window minus the keyboard and left a black band above it.
+                val nav = when {
+                    landscape -> 0
+                    android.os.Build.VERSION.SDK_INT >= 30 ->
+                        insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom
+                    else -> @Suppress("DEPRECATION") insets.stableInsetBottom
+                }
+                if (v.paddingBottom != nav) v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, nav)
                 insets
             }
             content.requestApplyInsets()
