@@ -15,16 +15,6 @@ If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually rende
 
 Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bttv-android has stopped updating. PurpleTV ReVive picks up their chat features for today's Twitch app. It works as a module for the official app, so your Twitch login stays as it is, and there is a ready-to-install patched APK if you do not use LSPosed.
 
-## What this module will never do
-
-**There is no ad blocking, and there are no money-related mods of any kind.** That is a deliberate design decision, not a missing feature, and pull requests adding either will be declined.
-
-- **No ad blocking.** Ads are how Twitch and the streamers on it get paid.
-- **No Bits, subscription, Turbo or payment workarounds.** Nothing here touches money, anywhere.
-- **No view-botting, auto-chatting, or faked engagement.**
-
-We fully support Twitch and the people who make a living on it. This module is about the *chat reading* experience (emotes, badges, and readability), and it is not interested in taking anything away from the platform or from creators.
-
 ## Features
 
 | Feature | What it does |
@@ -146,6 +136,16 @@ The result is a module that keeps working across Twitch updates far longer than 
 ## Compatibility
 
 Built and tested for **Twitch 31.7.0** and **Twitch 31.1.2**, the versions named in each release; the module picks the right setup for the one you have. From Twitch 31.5, phones open live streams in a new screen whose chat is out of the module's reach, so the module keeps the classic stream screen (**Use the classic stream screen** in its settings). A Twitch version newer than the ones named will most likely break some features until the module is updated, since a few hooks rely on names Twitch changes in every release. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/purpletv-revive/issues) with your Twitch version number.
+
+## What this module will never do
+
+**There is no ad blocking, and there are no money-related mods of any kind.** That is a deliberate design decision, not a missing feature, and pull requests adding either will be declined.
+
+- **No ad blocking.** Ads are how Twitch and the streamers on it get paid.
+- **No Bits, subscription, Turbo or payment workarounds.** Nothing here touches money, anywhere.
+- **No view-botting, auto-chatting, or faked engagement.**
+
+We fully support Twitch and the people who make a living on it. This module is about the *chat reading* experience (emotes, badges, and readability), and it is not interested in taking anything away from the platform or from creators.
 
 ## FAQ
 
