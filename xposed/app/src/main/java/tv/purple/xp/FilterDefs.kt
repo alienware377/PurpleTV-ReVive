@@ -141,10 +141,22 @@ object FilterDefs {
     // ---- stored values ----
 
     private fun k(i: Int, f: String) = "vf_${FILTERS[i].key}_$f"
-    fun amount(i: Int): Int {
+    /** The slider's value, whether or not the filter or its section is switched off. */
+    fun rawAmount(i: Int): Int {
         val v = Settings.getInt(k(i, "a"), 0)
         return if (FILTERS[i].bipolar) v.coerceIn(-100, 100) else v.coerceIn(0, 100)
     }
+
+    /** What the filter does right now: its value, or 0 while it or its section is switched off. */
+    fun amount(i: Int): Int = if (on(i)) rawAmount(i) else 0
+
+    // ---- on/off switches that keep the value ----
+
+    fun ownOn(i: Int) = !Settings.get(k(i, "off"), false)
+    fun setOwnOn(i: Int, on: Boolean) = Settings.set(k(i, "off"), !on)
+    fun groupOn(g: Group) = !Settings.get("vf_grp_${g.name}_off", false)
+    fun setGroupOn(g: Group, on: Boolean) = Settings.set("vf_grp_${g.name}_off", !on)
+    fun on(i: Int) = ownOn(i) && groupOn(FILTERS[i].group)
     fun lo(i: Int) = Settings.getInt(k(i, "lo"), 0).coerceIn(0, 100)
     fun hi(i: Int) = Settings.getInt(k(i, "hi"), 100).coerceIn(0, 100)
     fun setAmount(i: Int, v: Int) = Settings.setInt(k(i, "a"), v)
@@ -164,6 +176,7 @@ object FilterDefs {
     fun resetFilter(i: Int) {
         val f = FILTERS[i]
         setAmount(i, 0); setRange(i, 0, 100)
+        if (!ownOn(i)) setOwnOn(i, true)
         when {
             f.group == Group.DYNAMIC -> {
                 setExtraInt(f.key, "target", DynLight.DEF_TARGET[f.key] ?: 50)
@@ -177,9 +190,12 @@ object FilterDefs {
     }
 
     /** True when the filter is on or its tone range was narrowed. */
-    fun changed(i: Int) = amount(i) != 0 || lo(i) != 0 || hi(i) != 100
+    fun changed(i: Int) = rawAmount(i) != 0 || lo(i) != 0 || hi(i) != 100 || !ownOn(i)
 
-    fun resetAll() { for (i in FILTERS.indices) resetFilter(i) }
+    fun resetAll() {
+        for (i in FILTERS.indices) resetFilter(i)
+        for (g in Group.values()) if (!groupOn(g)) setGroupOn(g, true)
+    }
 
     // ---- gradient maps ----
 

@@ -76,6 +76,9 @@ object FiltersPanel {
         val seek = slider(ctx)
         val icon = AudioIcon(fx.key)
         val view: View
+        val toggle = onOff(ctx, AudioFilters.fxOn(fx.key), "Turn ${fx.name} on or off") { on ->
+            AudioFilters.setFxOn(fx.key, on); load(); AudioFilters.refresh()
+        }
 
         init {
             seek.max = fx.max - fx.min
@@ -84,6 +87,7 @@ object FiltersPanel {
                     if (!fromUser) return
                     val v = p + fx.min
                     AudioFilters.setAmount(fx.key, v); show(v); AudioFilters.refresh()
+                    if ((v != 0) != (toggle.visibility == View.VISIBLE)) load()
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) {}
@@ -105,6 +109,7 @@ object FiltersPanel {
                     addView(value, LinearLayout.LayoutParams(dp(ctx, 60f), ViewGroup.LayoutParams.WRAP_CONTENT))
                     addView(helpChip(ctx, fx.name, fx.help), LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f))
                         .apply { leftMargin = dp(ctx, 8f) })
+                    addView(toggle)
                 })
                 addView(seek)
             }
@@ -112,11 +117,19 @@ object FiltersPanel {
         }
 
         fun show(v: Int) {
+            val on = AudioFilters.fxOn(fx.key)
             value.text = if (v == 0) "Off" else (if (v > 0 && fx.min < 0) "+" else "") + v + fx.unit
-            icon.color = if (v != 0) PURPLE else Color.WHITE; icon.invalidateSelf()
+            value.setTextColor(if (v != 0 && on) PURPLE else MUTED)
+            icon.color = if (v != 0 && on) PURPLE else Color.WHITE; icon.invalidateSelf()
         }
 
-        fun load() { val v = AudioFilters.amount(fx.key); seek.progress = v - fx.min; show(v) }
+        fun load() {
+            val v = AudioFilters.rawAmount(fx.key); seek.progress = v - fx.min; show(v)
+            val on = AudioFilters.fxOn(fx.key)
+            toggle.visibility = if (v != 0 || !on) View.VISIBLE else View.GONE
+            if (toggle.isChecked != on) toggle.isChecked = on
+            seek.alpha = if (on) 1f else 0.4f
+        }
 
         fun setEnabled(on: Boolean) { seek.isEnabled = on; view.alpha = if (on) 1f else 0.45f }
     }
@@ -129,6 +142,9 @@ object FiltersPanel {
         private val body = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         private val icon = AudioIcon("eq")
         private val bands = ArrayList<Pair<SeekBar, TextView>>()
+        private val eqSwitch = onOff(ctx, AudioFilters.eqOn(), "Turn the equaliser on or off") { on ->
+            AudioFilters.setEqOn(on); load(); AudioFilters.refresh()
+        }
 
         init {
             val head = LinearLayout(ctx).apply {
@@ -141,7 +157,8 @@ object FiltersPanel {
                 addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { rightMargin = dp(ctx, 8f) })
                 addView(helpChip(ctx, "Equaliser", AudioFilters.EQ_HELP), LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f))
-                    .apply { rightMargin = dp(ctx, 8f) })
+                    .apply { rightMargin = dp(ctx, 4f) })
+                addView(eqSwitch)
                 addView(chevron)
                 setOnClickListener { Settings.set(KEY_OPEN, !Settings.get(KEY_OPEN, true)); syncOpen() }
             }
@@ -195,16 +212,18 @@ object FiltersPanel {
         }
 
         private fun syncStatus() {
-            val n = AudioFilters.EQ_HZ.indices.count { AudioFilters.eqGain(it) != 0 }
-            status.text = if (n == 0) "Flat" else "$n changed"
+            val n = AudioFilters.EQ_HZ.indices.count { AudioFilters.rawEqGain(it) != 0 }
+            status.text = if (n == 0) "Flat" else if (!AudioFilters.eqOn()) "$n changed, off" else "$n changed"
             icon.color = if (n > 0) PURPLE else Color.WHITE; icon.invalidateSelf()
         }
 
         fun load() {
             for ((i, b) in bands.withIndex()) {
-                val g = AudioFilters.eqGain(i)
+                val g = AudioFilters.rawEqGain(i)
                 b.first.progress = g + AudioFilters.EQ_MAX; b.second.text = gainText(g)
             }
+            if (eqSwitch.isChecked != AudioFilters.eqOn()) eqSwitch.isChecked = AudioFilters.eqOn()
+            body.alpha = if (AudioFilters.eqOn()) 1f else 0.4f
             syncStatus()
         }
 
@@ -327,6 +346,12 @@ object FiltersPanel {
             val defOpen = g == FilterDefs.Group.LIGHT || g == FilterDefs.Group.COLOR
             val chevron = TextView(ctx).apply { setTextColor(MUTED); textSize = 14f }
             val count = TextView(ctx).apply { setTextColor(PURPLE); textSize = 12.5f }
+            val groupRows = ArrayList<Row>()
+            var syncSec: () -> Unit = {}
+            // The whole section on or off, keeping every value in it.
+            val secSwitch = onOff(ctx, FilterDefs.groupOn(g), "Turn the ${g.title} section on or off") { on ->
+                FilterDefs.setGroupOn(g, on); groupRows.forEach { it.syncOn() }; syncSec(); changed()
+            }
             val reset = TextView(ctx).apply {
                 text = "Reset"; setTextColor(PURPLE); textSize = 12.5f; typeface = Typeface.DEFAULT_BOLD
                 setPadding(dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
@@ -339,6 +364,8 @@ object FiltersPanel {
                 val n = members.count { FilterDefs.amount(it) != 0 }
                 count.text = if (n > 0) "$n on" else ""
                 reset.visibility = if (members.any { FilterDefs.changed(it) }) View.VISIBLE else View.GONE
+                secSwitch.visibility = if (members.any { FilterDefs.rawAmount(it) != 0 } || !FilterDefs.groupOn(g)) View.VISIBLE else View.GONE
+                if (secSwitch.isChecked != FilterDefs.groupOn(g)) secSwitch.isChecked = FilterDefs.groupOn(g)
             }
             list.addView(LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -351,11 +378,11 @@ object FiltersPanel {
                 addView(count, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { rightMargin = dp(ctx, 10f) })
                 addView(reset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { rightMargin = dp(ctx, 10f) })
+                    .apply { rightMargin = dp(ctx, 4f) })
+                addView(secSwitch)
                 addView(chevron)
                 setOnClickListener { Settings.set(openKey, !Settings.get(openKey, defOpen)); syncHead() }
             })
-            val groupRows = ArrayList<Row>()
             for (i in members) {
                 val r = Row(ctx, i) { changed(); syncHead() }
                 rows.add(r); groupRows.add(r); body.addView(r.view)
@@ -367,6 +394,7 @@ object FiltersPanel {
                 syncHead(); changed()
             }
             list.addView(body)
+            syncSec = ::syncHead
             syncHead()
             heads += ::syncHead
         }
@@ -426,6 +454,15 @@ object FiltersPanel {
                     if (audioPane.visibility == View.VISIBLE) {
                         AudioFilters.resetAll(); audioRows.forEach { it.load() }; eqCard?.load(); AudioFilters.refresh(); changed()
                     } else { FilterDefs.resetAll(); rows.forEach { it.reload() }; heads.forEach { it() }; changed() }
+                }
+            })
+            addView(TextView(ctx).apply {
+                text = "Presets"; setTextColor(PURPLE); textSize = 15f; typeface = Typeface.DEFAULT_BOLD
+                setPadding(dp(ctx, 12f), dp(ctx, 10f), dp(ctx, 12f), dp(ctx, 10f))
+                setOnClickListener {
+                    val kind = if (audioPane.visibility == View.VISIBLE) FxPresets.Kind.AUDIO else FxPresets.Kind.VIDEO
+                    // A preset can change anything in the tab: open the panel afresh to show it.
+                    FxPresets.show(ctx, kind) { d.dismiss(); changed(); AudioFilters.refresh(); show(anchor) }
                 }
             })
             addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
@@ -506,6 +543,19 @@ object FiltersPanel {
         }
         val extras = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         val view: View
+        /** This filter's own on/off: shown once it has a value, so a look can be paused and kept. */
+        val toggle = onOff(ctx, FilterDefs.ownOn(i), "Turn ${f.name} on or off") { on ->
+            FilterDefs.setOwnOn(i, on); syncOn(); changed()
+        }
+
+        /** Dim a filter that is switched off (or whose section is), and show its switch when useful. */
+        fun syncOn() {
+            toggle.visibility = if (FilterDefs.rawAmount(i) != 0 || !FilterDefs.ownOn(i)) View.VISIBLE else View.GONE
+            if (toggle.isChecked != FilterDefs.ownOn(i)) toggle.isChecked = FilterDefs.ownOn(i)
+            val live = FilterDefs.on(i)
+            seek.alpha = if (live) 1f else 0.4f; extras.alpha = if (live) 1f else 0.4f
+            showValue(FilterDefs.rawAmount(i))
+        }
 
         fun syncToggle() {
             rangeToggle.text = (if (rangeBox.visibility == View.VISIBLE) "Hide tone range" else "Tone range") +
@@ -526,9 +576,11 @@ object FiltersPanel {
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 // Tap the number to put this filter back to 0.
                 value.setOnClickListener { if (usable) { FilterDefs.setAmount(i, 0); load(); changed() } }
+                value.minWidth = 0
                 addView(value, LinearLayout.LayoutParams(dp(ctx, 52f), ViewGroup.LayoutParams.WRAP_CONTENT))
                 addView(helpChip(ctx, f.name, f.help), LinearLayout.LayoutParams(dp(ctx, 26f), dp(ctx, 26f))
                     .apply { leftMargin = dp(ctx, 8f) })
+                if (usable) addView(toggle)
             }
             seek.max = if (f.bipolar) 200 else 100
             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -538,6 +590,7 @@ object FiltersPanel {
                     val raw = if (f.bipolar) p - 100 else p
                     val v = if (abs(raw) <= 3) 0 else raw
                     FilterDefs.setAmount(i, v); showValue(v); changed()
+                    if ((v != 0) != (toggle.visibility == View.VISIBLE)) syncOn()
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) { load() }
@@ -749,11 +802,11 @@ object FiltersPanel {
                         FilterDefs.setExtraInt("ovl", "blend", tex.blend)
                         FilterDefs.setExtraBool("ovl", "tile", tex.tile)
                         FilterDefs.setExtraInt("ovl", "scale", if (tex.tile) 50 else 100)
-                        if (FilterDefs.amount(i) == 0) FilterDefs.setAmount(i, tex.opacity)
+                        if (FilterDefs.rawAmount(i) == 0) FilterDefs.setAmount(i, tex.opacity)
                     } else {
                         FilterDefs.setExtraBool("ovl", "tile", false)
                         FilterDefs.setExtraInt("ovl", "scale", 100)
-                        if (FilterDefs.amount(i) == 0) FilterDefs.setAmount(i, 50)
+                        if (FilterDefs.rawAmount(i) == 0) FilterDefs.setAmount(i, 50)
                     }
                     syncSrc(); load(); onSourcePicked?.invoke(); onExtra()
                 } }
@@ -796,9 +849,9 @@ object FiltersPanel {
         }
 
         fun load() {
-            val v = FilterDefs.amount(i)
+            val v = FilterDefs.rawAmount(i)
             seek.progress = if (f.bipolar) v + 100 else v
-            showValue(v)
+            syncOn()
             range.set(FilterDefs.lo(i), FilterDefs.hi(i))
             rangeLabel.text = "Affects: " + rangeText(FilterDefs.lo(i), FilterDefs.hi(i))
             syncToggle()
@@ -806,7 +859,7 @@ object FiltersPanel {
 
         fun showValue(v: Int) {
             value.text = if (v > 0 && f.bipolar) "+$v" else "$v"
-            value.setTextColor(if (v == 0) MUTED else PURPLE)
+            value.setTextColor(if (v == 0 || !FilterDefs.on(i)) MUTED else PURPLE)
         }
 
         fun setEnabled(on: Boolean) {
@@ -858,6 +911,18 @@ object FiltersPanel {
             addView(sb, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(v, LinearLayout.LayoutParams(dp(ctx, 44f), ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+    }
+
+    /** A compact on/off switch for a filter or section: off keeps its settings but stops it. */
+    fun onOff(ctx: Context, on: Boolean, desc: String, set: (Boolean) -> Unit) = Switch(ctx).apply {
+        isChecked = on
+        contentDescription = desc
+        thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(PURPLE, 0xFFCCCCCC.toInt()))
+        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+            intArrayOf(0x88A970FF.toInt(), 0x55FFFFFF))
+        scaleX = 0.8f; scaleY = 0.8f
+        setOnCheckedChangeListener { _, v -> set(v) }
     }
 
     fun switchRow(ctx: Context, label: String, on: Boolean, sw: Switch = Switch(ctx), set: (Boolean) -> Unit): View {

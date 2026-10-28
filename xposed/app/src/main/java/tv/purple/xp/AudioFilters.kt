@@ -46,9 +46,17 @@ object AudioFilters {
 
     fun supported() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
 
-    fun amount(key: String) = Settings.getInt("af_$key", 0)
+    /** The slider's value, whether or not the effect is switched off. */
+    fun rawAmount(key: String) = Settings.getInt("af_$key", 0)
+    /** What the effect does right now: its value, or 0 while it is switched off. */
+    fun amount(key: String) = if (fxOn(key)) rawAmount(key) else 0
     fun setAmount(key: String, v: Int) = Settings.setInt("af_$key", v)
-    fun resetAll() { for (f in FX) setAmount(f.key, 0); resetEq() }
+    fun fxOn(key: String) = !Settings.get("af_${key}_off", false)
+    fun setFxOn(key: String, on: Boolean) = Settings.set("af_${key}_off", !on)
+    fun resetAll() {
+        for (f in FX) { setAmount(f.key, 0); if (!fxOn(f.key)) setFxOn(f.key, true) }
+        resetEq(); if (!eqOn()) setEqOn(true)
+    }
 
     /** The full equaliser replaces Bass and Treble while it is switched on. */
     const val KEY_EQ_FULL = "af_eq_full"
@@ -66,7 +74,10 @@ object AudioFilters {
     const val EQ_HELP = "Turn single frequency ranges up or down. The low numbers are bass and rumble (30 to 200 Hz), " +
         "the middle is where voices live (300 Hz to 4k), and the high numbers are treble, hiss and sparkle (5k to 16k)."
 
-    fun eqGain(i: Int) = Settings.getInt("af_eq_$i", 0).coerceIn(-EQ_MAX, EQ_MAX)
+    fun rawEqGain(i: Int) = Settings.getInt("af_eq_$i", 0).coerceIn(-EQ_MAX, EQ_MAX)
+    fun eqGain(i: Int) = if (eqOn()) rawEqGain(i) else 0
+    fun eqOn() = !Settings.get("af_eq_off", false)
+    fun setEqOn(on: Boolean) = Settings.set("af_eq_off", !on)
     fun setEqGain(i: Int, v: Int) = Settings.setInt("af_eq_$i", v.coerceIn(-EQ_MAX, EQ_MAX))
     fun resetEq() { for (i in EQ_HZ.indices) Settings.setInt("af_eq_$i", 0) }
     fun eqLabel(i: Int): String { val hz = EQ_HZ[i]; return if (hz >= 1000) "${hz / 1000}k" else "$hz Hz" }
