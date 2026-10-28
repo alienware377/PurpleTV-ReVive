@@ -24,6 +24,9 @@ object Channels {
     private const val KEY_CLASS =
         "tv.twitch.android.shared.chat.pub.messages.data.ChannelChatConnectionKey"
 
+    @Volatile private var loggedId: String? = null
+    @Volatile private var loggedAt = 0L
+
     fun install(lp: LoadPackageParam) {
         val key = Names.cls(lp, KEY_CLASS) ?: run {
             log("CH ${KEY_CLASS} not found — channel-emote anchor stale")
@@ -37,7 +40,13 @@ object Channels {
                     val name = runCatching {
                         XposedHelpers.getObjectField(o, "channelName")?.toString()
                     }.getOrNull()
-                    log("CH channel connect: id=$id name=$name")
+                    // Twitch builds this key 10 or more times in a few ms on every channel open, so
+                    // only the first of a burst is logged. Everything below still runs each time.
+                    val now = android.os.SystemClock.uptimeMillis()
+                    if (id != loggedId || now - loggedAt > 2000) {
+                        loggedId = id; loggedAt = now
+                        log("CH channel connect: id=$id name=$name")
+                    }
                     EmoteRepo.loadChannelAsync(id, name)
                     ChannelPoints.onChannel(id, name)
                     RaidCard.onChannel(id)

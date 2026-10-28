@@ -80,6 +80,9 @@ object LateEmotes {
         if (n > 0) log("late emotes drawn on $n chat line(s)")
     }
 
+    /** A space, or an invisible formatting mark such as the bidi isolates Twitch wraps the body in. */
+    private fun edge(c: Char) = c.isWhitespace() || c.category == CharCategory.FORMAT
+
     private fun patch(tv: TextView, filled: List<Spanned>): Boolean {
         val t = tv.text ?: return false
         val ts = t.toString()
@@ -89,9 +92,12 @@ object LateEmotes {
             if (bs.isEmpty()) continue
             val at = ts.lastIndexOf(bs)
             if (at < 0) continue
-            // The whole message, not a piece of a longer word.
-            if (at > 0 && !ts[at - 1].isWhitespace()) continue
-            if (at + bs.length < ts.length && !ts[at + bs.length].isWhitespace()) continue
+            // The whole message, not a piece of a longer word. A body that starts with a space is
+            // already cut off from what is before it: a reply's body is " text" (Twitch drops the
+            // leading @name), and follows "Reply to: name" with no space of its own. In a right to
+            // left layout the body sits inside bidi isolates, which count as a break too.
+            if (at > 0 && !bs.first().isWhitespace() && !edge(ts[at - 1])) continue
+            if (at + bs.length < ts.length && !bs.last().isWhitespace() && !edge(ts[at + bs.length])) continue
             for (sp in b.getSpans(0, b.length, EmoteHooks.PtvEmoteSpan::class.java)) {
                 val s = at + b.getSpanStart(sp); val e = at + b.getSpanEnd(sp)
                 val have = (out ?: t as? Spanned)?.getSpans(s, e, EmoteHooks.PtvEmoteSpan::class.java)

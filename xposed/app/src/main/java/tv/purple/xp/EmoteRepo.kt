@@ -961,7 +961,7 @@ object EmoteRepo {
                 val e = l.error
                 when {
                     // A 404 just means the channel has no account there: nothing to ask again.
-                    e != null -> { log("${l.name} ch failed: $e"); if (!isGone(e)) failed += l }
+                    e != null -> if (isGone(e)) log("${l.name} ch: none for this channel") else { log("${l.name} ch failed: $e"); failed += l }
                     l.isTwitch -> cTwitch.putAll(l.map)
                     else -> mergeList(l, cMap, cSrc, cUp)
                 }
@@ -1035,7 +1035,8 @@ object EmoteRepo {
             if (!l.waitUntil(android.os.SystemClock.uptimeMillis() + 120_000)) { todo += l.again(); continue }
             val e = l.error
             if (e == null) mergeLate(myId, myGen, l)
-            else { log("${l.name} ch failed: $e"); if (!isGone(e)) todo += l }
+            else if (isGone(e)) log("${l.name} ch: none for this channel")
+            else { log("${l.name} ch failed: $e"); todo += l }
         }
         // Every late list is in or given up on. Chat lines do not wait through the retries below,
         // which take minutes; the 45 s a line is kept would run out long before.

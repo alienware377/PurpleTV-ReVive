@@ -501,6 +501,8 @@ object FiltersPanel {
                     (if (AudioFilters.blocked()) "\n\nAnother audio app (an equaliser or sound effects app) is in control of Twitch's sound right now, so these can't take effect until it lets go." else "")
                 else "Only changes how the stream looks on your screen. Works on lives and VODs."
             val key = if (audio) AudioFilters.KEY_ON else VideoFilters.KEY_ON
+            // Named like the other switches, so a screen reader says more than just "switch".
+            master.contentDescription = if (audio) "Turn audio filters on or off" else "Turn video filters on or off"
             master.setOnCheckedChangeListener(null)
             master.isChecked = Settings.get(key, true)
             master.setOnCheckedChangeListener { _, v ->

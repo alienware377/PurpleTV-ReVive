@@ -97,6 +97,8 @@ object DynLight {
     /** Turn one measurement into eased corrections, each seeing the earlier ones' effect. */
     private fun update(mean0: Float, black0: Float, white0: Float) {
         val now = SystemClock.uptimeMillis()
+        // A first measurement, or the first after a pause (player closed, light turned off).
+        val fresh = lastAt == 0L || now - lastAt > 5000
         val dt = if (lastAt == 0L) 1f else ((now - lastAt) / 1000f).coerceIn(0.01f, 1f)
         lastAt = now
         var m = mean0; var b = black0; var w = white0
@@ -136,7 +138,9 @@ object DynLight {
                 "d_gamma" -> { val e = 2f.pow(a * cur[0]); m = m.pow(e); b = b.pow(e); w = w.pow(e) }
             }
         }
-        if (now - logged > 5000) {
+        // Every 5 s filled a release log with these lines while the light was on. A release
+        // build logs when measuring starts and then once a minute.
+        if (fresh || now - logged > (if (BuildConfig.DEBUG) 5_000L else 60_000L)) {
             logged = now
             log("DL mean=%.2f black=%.2f white=%.2f -> %s".format(mean0, black0, white0,
                 out.entries.joinToString(" ") { "${it.key}=%.2f/%.2f".format(it.value[0], it.value[1]) }))

@@ -116,15 +116,37 @@ object DevBridge {
             EmoteRepo.refetch()
     }
 
-    /** Every setting, or only the keys matching [re]; in chunks, since one log line holds about 4 KB. */
+    /**
+     * Every setting, or only the keys matching [re]. One log line holds about 4 KB, so lines are
+     * filled up to a size rather than a count: one large value (sync_mtimes) used to push its whole
+     * line past the limit, and every key after it in that line was cut off. A value too big for a
+     * line of its own is sent in numbered parts, as key[1/3]=..., key[2/3]=... and so on.
+     */
     private fun dump(ctx: Context, re: String?) {
         val rx = re?.let { runCatching { Regex(it) }.getOrNull() }
         val all = ctx.getSharedPreferences("ptv_settings", Context.MODE_PRIVATE).all
             .filterKeys { rx == null || rx.containsMatchIn(it) }
-        all.toSortedMap().entries.map { "${it.key}=${it.value}" }.chunked(40)
-            .forEach { log("DEV dump: " + it.joinToString("; ")) }
+        val line = StringBuilder()
+        fun flush() { if (line.isNotEmpty()) { log("DEV dump: $line"); line.setLength(0) } }
+        for ((k, v) in all.toSortedMap()) {
+            val e = "$k=$v"
+            if (e.length > DUMP_PART) {
+                flush()
+                // In characters: at most 3 bytes each in UTF-8, so a part always fits a line.
+                val parts = v.toString().chunked(DUMP_PART)
+                parts.forEachIndexed { i, p -> log("DEV dump: $k[${i + 1}/${parts.size}]=$p") }
+                continue
+            }
+            if (line.isNotEmpty() && line.length + 2 + e.length > DUMP_PART) flush()
+            if (line.isNotEmpty()) line.append("; ")
+            line.append(e)
+        }
+        flush()
         if (all.isEmpty()) log("DEV dump: (none)")
     }
+
+    /** Characters per dump line: well inside logcat's 4 KB even if every one takes 3 bytes. */
+    private const val DUMP_PART = 1000
 
     /**
      * Report every view with this resource entry name on the current screen: whether it is set
