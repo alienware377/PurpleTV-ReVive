@@ -7,7 +7,8 @@ import android.view.ViewGroup
 import android.widget.TextView
 
 /**
- * The View half of the blacklist: collapse the chat row whose text carries [Blacklist.Marker].
+ * The View half of the blacklist: collapse the chat row whose text carries a [Blacklist.Marker]
+ * naming a term that is still in the list.
  *
  * Driven from the existing framework hook on TextView.setText (see [EmoteHooks]), which is both
  * obfuscation-immune and exactly the right moment: RecyclerView binds a row BEFORE measuring it,
@@ -42,26 +43,32 @@ internal object BlacklistRows {
     @Volatile private var containerId = 0
     @Volatile private var resolved = false
 
-    /** Rows we collapsed, so a restore touches exactly those and nothing else. The value is false
-     *  while a restore queued by [reapply] has yet to run, so a rebind can still cancel it. */
-    private val COLLAPSED = java.util.WeakHashMap<View, Boolean>()
+    /** A row we collapsed. [terms] are the keys its message's marker names, so [reapply] frees it
+     *  only once none of them is left in the list. [restoring] is true while a restore queued by
+     *  [reapply] has yet to run, so a rebind can still cancel it. */
+    private class Held(var terms: Set<String>) {
+        var restoring = false
+    }
 
-    /** Every term in force when a row was collapsed or the list was last edited, so [reapply] can
-     *  tell a removal, which may free rows, from an add, which can only hide more. The marker does
-     *  not say which term matched, so this is as precise as the View layer can be. */
-    @Volatile private var known: Set<String> = emptySet()
+    /** Rows we collapsed, so a restore touches exactly those and nothing else. */
+    private val COLLAPSED = java.util.WeakHashMap<View, Held>()
 
-    /** The stored list [known] last took in, so collapsing a row only re-reads it after a change. */
-    @Volatile private var notedRaw: String? = null
+    /** The keys named by every [Blacklist.Marker] on [cs], empty when it carries none. */
+    private fun markedTerms(cs: CharSequence): Set<String> {
+        if (cs !is Spanned) return emptySet()
+        val marks = cs.getSpans(0, cs.length, Blacklist.Marker::class.java)
+        return when (marks.size) {
+            0 -> emptySet()
+            1 -> marks[0].terms
+            else -> marks.flatMapTo(HashSet()) { it.terms }
+        }
+    }
 
-    private fun termKeys(): Set<String> =
-        Blacklist.terms().mapTo(HashSet()) { "${it.type}|${it.word}" }
-
-    private fun noteTerms() {
-        val raw = Settings.getString(Blacklist.KEY_WORDS)
-        if (raw == notedRaw) return
-        notedRaw = raw
-        known = known + termKeys()
+    /** True while any of [terms] is still in the list. When the list cannot be read the row stays
+     *  hidden, as it always did before the marker named its terms. */
+    private fun stillListed(terms: Set<String>): Boolean {
+        val now = runCatching { Blacklist.keys() }.getOrNull() ?: return true
+        return terms.any { it in now }
     }
 
     @Volatile private var missLogged = false
@@ -119,23 +126,28 @@ internal object BlacklistRows {
             return false
         }
 
-        val want = cs is Spanned &&
-            cs.getSpans(0, cs.length, Blacklist.Marker::class.java).isNotEmpty()
-        val state = COLLAPSED[row]
-        val had = state != null
-        if (want == had) {
-            // A cached row re-bound to another hidden message before its queued restore ran:
-            // cancel that restore, or it would show this message once the row is attached.
-            if (state == false) { COLLAPSED[row] = true; runCatching { noteTerms() } }
+        // Checked against the list as it is now, not just for a marker: Twitch keeps the marked
+        // line for as long as it stays in chat, so a row freed by removing its term would be
+        // hidden again the next time it is bound.
+        val terms = markedTerms(cs)
+        val want = terms.isNotEmpty() && stillListed(terms)
+        val held = COLLAPSED[row]
+        if (want == (held != null)) {
+            if (held != null) {
+                // A cached row re-bound to another hidden message: it is judged by this message's
+                // terms from now on, and a restore still queued for the old one is cancelled, or
+                // it would show this message once the row is attached.
+                held.terms = terms
+                held.restoring = false
+            }
             return want
         }
 
         val lp = row.layoutParams ?: return want
         if (want) {
-            runCatching { noteTerms() }
             lp.height = 0
             row.visibility = View.INVISIBLE
-            COLLAPSED[row] = true
+            COLLAPSED[row] = Held(terms)
             // Quiet but provable: the first hide confirms the whole chain end to end, and the
             // running total afterwards is the only way to tell "nothing matched" apart from
             // "matching silently stopped working".
@@ -153,32 +165,35 @@ internal object BlacklistRows {
         return want
     }
 
-    /** Restore every row we hid. Called when the term list changes: rows already on screen are
-     *  never re-bound, so nothing else would bring them back. */
+    /** Restore every row we hid whose terms have all left the list. Called when the term list
+     *  changes: rows already on screen are never re-bound, so nothing else would bring them back.
+     *  A row that a remaining term also matched stays hidden, and an add frees nothing. */
     fun reapply() {
         val rows = runCatching { weakKeys(COLLAPSED) }.getOrNull() ?: return
-        val now = runCatching { termKeys() }.getOrDefault(emptySet())
-        val before = known
-        known = now
-        notedRaw = null
         if (rows.isEmpty()) return
-        // Only a removal can free a row. An add just hides more, and restoring here would show
-        // every message the other terms had hidden until each row happened to be re-bound.
-        if (now.containsAll(before)) return
+        // Unreadable means keep everything hidden: a row shown by mistake stays shown until it
+        // happens to be re-bound.
+        val now = runCatching { Blacklist.keys() }.getOrNull() ?: return
+        var freed = 0
         for (row in rows) {
-            COLLAPSED[row] = false
-            row.post {
-                runCatching {
-                    // Checked when it runs, not when posted: a rebind in between may have
-                    // cancelled it, or already restored the row itself.
-                    if (COLLAPSED[row] != false) return@runCatching
-                    row.layoutParams?.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                    row.visibility = View.VISIBLE
-                    COLLAPSED.remove(row)
-                    row.requestLayout()
+            runCatching {
+                val held = COLLAPSED[row] ?: return@runCatching
+                if (held.terms.any { it in now }) return@runCatching
+                held.restoring = true
+                freed++
+                row.post {
+                    runCatching {
+                        // Checked when it runs, not when posted: a rebind in between may have
+                        // cancelled it, or already restored the row itself.
+                        if (COLLAPSED[row]?.restoring != true) return@runCatching
+                        row.layoutParams?.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        row.visibility = View.VISIBLE
+                        COLLAPSED.remove(row)
+                        row.requestLayout()
+                    }
                 }
             }
         }
-        log("BL restored ${rows.size} row(s) after a term change")
+        if (freed > 0) log("BL restored $freed row(s) after a term change")
     }
 }

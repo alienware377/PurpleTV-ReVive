@@ -132,6 +132,10 @@ object GlVideoFilter {
 
     /** Move the player straight back onto the real SurfaceTexture and drop our pipe. */
     fun fallback(p: Pipe, why: String) {
+        // Once per pipe. Frames already queued on the GL thread still see the window until dropWindow
+        // runs and fail the same way again; counting those too gave up on the GL path after one failure.
+        if (p.failed) return
+        p.failed = true
         log("GL filter fallback: $why")
         Gl.dropWindow(p) {
             main.post {
@@ -154,6 +158,8 @@ object GlVideoFilter {
         val stm = FloatArray(16)
         var hasFrame = false
         @Volatile var dead = false
+        /** Set by the first [fallback]; this pipe stops drawing and is never counted twice. */
+        @Volatile var failed = false
         @Volatile var params: Params? = null
         var ovlTex = 0; var ovlKey: String? = null
         var gradTex = 0; var gradKey: String? = null
@@ -277,7 +283,8 @@ object GlVideoFilter {
         }
 
         private fun createWindow(p: Pipe, tries: Int) {
-            if (p.dead || p.real.isReleased) return
+            // A failed pipe is being handed back to the real texture, so a pending retry must not grab it.
+            if (p.dead || p.failed || p.real.isReleased) return
             val s = EGL14.eglCreateWindowSurface(dpy, cfg, p.real, intArrayOf(EGL14.EGL_NONE), 0)
             if (s == EGL14.EGL_NO_SURFACE) {
                 // The decoder is still connected to the real texture (switched on mid-playback).
@@ -306,11 +313,13 @@ object GlVideoFilter {
                 p.hasFrame = true
                 // Drawn even while hidden: a visibility flag, only refreshed on a filter change, froze the
                 // picture once Twitch came back. Swap interval 0 keeps a hidden view from blocking us.
-                if (p.win != EGL14.EGL_NO_SURFACE) draw(p)
+                // After a failure the frame is still taken, so the decoder never stalls, but not drawn:
+                // drawing would only rebuild the rejected shader again until the window is dropped.
+                if (p.win != EGL14.EGL_NO_SURFACE && !p.failed) draw(p)
             } catch (t: Throwable) { fallback(p, "frame: $t") }
         }
 
-        fun redraw(p: Pipe) = h.post { if (!p.dead && p.hasFrame && p.win != EGL14.EGL_NO_SURFACE) runCatching { draw(p) } }
+        fun redraw(p: Pipe) = h.post { if (!p.dead && !p.failed && p.hasFrame && p.win != EGL14.EGL_NO_SURFACE) runCatching { draw(p) } }
 
         private fun draw(p: Pipe) {
             EGL14.eglMakeCurrent(dpy, p.win, p.win, ctx)

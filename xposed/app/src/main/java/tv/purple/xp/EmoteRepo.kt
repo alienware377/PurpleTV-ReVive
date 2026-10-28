@@ -184,6 +184,15 @@ object EmoteRepo {
     /** Counts channel loads, so a late or retried list of an older load (another channel, or the
      *  same one before a quality change) knows it is no longer wanted. */
     private val chGen = java.util.concurrent.atomic.AtomicInteger()
+    /** The load ([chGen]) whose channel is published while a list that puts emotes in chat is
+     *  still on its way, or 0. Before the lists loaded side by side, the channel only published
+     *  once every list was back, so chat lines waited for all of them. */
+    private val lateGen = java.util.concurrent.atomic.AtomicInteger()
+
+    /** True while the current channel is published but one of its 7TV/BTTV/FFZ/Homies lists has
+     *  not joined yet. Lines drawn now may hold that list's words, so they are kept and filled
+     *  again once it is in. */
+    fun listsLate(): Boolean { val g = lateGen.get(); return g != 0 && g == chGen.get() }
 
     @Volatile private var globalsLoaded = false
     @Volatile private var twitchLoaded = false
@@ -969,6 +978,10 @@ object EmoteRepo {
                 uploaderOf.clear(); uploaderOf.putAll(gUploader); uploaderOf.putAll(cUp)
                 chNames = cMap.keys.toSet()
                 twitch.clear(); twitch.putAll(gTwitch); twitch.putAll(cTwitch)
+                // Raised together with the publish, never after it: in between, a chat line would
+                // see neither the channel loading nor a list late, and be given up on. Twitch's own
+                // list never goes into chat lines, so it does not hold them.
+                lateGen.set(if (late.any { !it.isTwitch }) myGen else 0)
                 publishedFor = myId
                 drawables.clear(); drawables.putAll(gDraw)
                 suggestDrawables.clear(); suggestDrawables.putAll(gSuggestDraw)
@@ -988,7 +1001,13 @@ object EmoteRepo {
             runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post { PinnedChat.channelChanged() } }
             log("channel $myId ($channelName) published: +${cMap.size} inject, +${cTwitch.size} twitch (map=${map.size}); prefetching")
             if (late.isNotEmpty() || failed.isNotEmpty()) Thread({
-                runCatching { finishChannel(myId, myGen, late, failed) }.onFailure { log("ch $myId late lists failed: $it") }
+                try {
+                    runCatching { finishChannel(myId, myGen, late, failed) }.onFailure { log("ch $myId late lists failed: $it") }
+                } finally {
+                    // However it ended, lines must not wait on this load any more. Only its own
+                    // flag, though: a newer channel may have raised one of its own by now.
+                    lateGen.compareAndSet(myGen, 0)
+                }
             }, "ptv-ch-retry-$myId").apply { isDaemon = true }.start()
             // Download channel images into the live maps; aborts mid-loop if the user switches.
             // A short head start first, so Twitch's own chat and stream requests go out before
@@ -1018,6 +1037,9 @@ object EmoteRepo {
             if (e == null) mergeLate(myId, myGen, l)
             else { log("${l.name} ch failed: $e"); if (!isGone(e)) todo += l }
         }
+        // Every late list is in or given up on. Chat lines do not wait through the retries below,
+        // which take minutes; the 45 s a line is kept would run out long before.
+        lateGen.compareAndSet(myGen, 0)
         for (wait in longArrayOf(20, 60, 180, 600)) {
             if (todo.isEmpty() || chGen.get() != myGen) return
             runCatching { Thread.sleep(wait * 1000L) }
@@ -1060,6 +1082,9 @@ object EmoteRepo {
         log("${l.name} ch joined late: +${added.size}")
         if (added.isEmpty()) return
         bumpPicker()
+        // An open favorites bar worked out which favorites this chat has when it was drawn, and
+        // only redraws on a Favorites change. A list joining late can make some of them usable.
+        runCatching { Favorites.channelChanged() }
         if (!l.isTwitch) for (n in added) imgPool.execute { if (chGen.get() == myGen) fetch(n) }
     }
 

@@ -93,6 +93,9 @@ object ChatAppearance {
         val sizeSp = if (stored > 0) stored.coerceIn(8, 24).toFloat() else 0f
         val altBg = Settings.get(KEY_ALT_BG, false)
         val root = act.window?.decorView ?: return
+        // With the toggle off nothing reads the shading anchors, so drop them now instead of
+        // leaving them to wait for the garbage collector.
+        if (!altBg && !SHADED_FOR.isEmpty()) SHADED_FOR.clear()
 
         // Visible rows, grouped per chat list and shaded after the walk (see [shadeRows]). Only
         // built while the toggle is on, so the common case allocates nothing.
@@ -160,8 +163,13 @@ object ChatAppearance {
     private val TINTED = java.util.WeakHashMap<View, Boolean>()
 
     /** The message each row was last shaded for: its chat_message_item text object, compared by
-     *  identity. A row still holding the same object is still showing the same message. */
-    private val SHADED_FOR = java.util.WeakHashMap<View, CharSequence>()
+     *  identity. A row still holding the same object is still showing the same message.
+     *  The text is held weakly on purpose. Twitch's text is a Spannable, and the TextView hangs a
+     *  watcher on it that points back at the TextView, whose parent is the row, the very key here.
+     *  A strong value would therefore keep its own key alive, so no row (or the chat list and
+     *  Activity behind it) would ever be freed. The TextView holds its current text strongly, so
+     *  the weak copy lasts exactly as long as the comparison can still match. */
+    private val SHADED_FOR = java.util.WeakHashMap<View, java.lang.ref.WeakReference<CharSequence>>()
 
     /**
      * Alternate the shade down one chat list, tied to the messages rather than to screen slots.
@@ -178,14 +186,16 @@ object ChatAppearance {
         var offset = 0
         for (i in rows.indices) {
             val t = texts[i] ?: continue
-            if (SHADED_FOR[rows[i]] === t) {
+            if (SHADED_FOR[rows[i]]?.get() === t) {
                 offset = (if (TINTED[rows[i]] == true) 1 else 0) xor (i and 1)
                 break
             }
         }
         for (i in rows.indices) {
             val t = texts[i]
-            if (t != null) SHADED_FOR[rows[i]] = t else SHADED_FOR.remove(rows[i])
+            if (t == null) SHADED_FOR.remove(rows[i])
+            // Only re-wrap when the message changed, so a steady layout pass allocates nothing.
+            else if (SHADED_FOR[rows[i]]?.get() !== t) SHADED_FOR[rows[i]] = java.lang.ref.WeakReference(t)
             applyAltBackground(rows[i], ((i and 1) xor offset) == 1)
         }
     }

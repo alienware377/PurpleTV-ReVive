@@ -79,7 +79,11 @@ object ChannelPoints {
      */
     private fun trackPlayers(cl: ClassLoader) {
         val c = cl.loadClass("com.amazonaws.ivs.player.CorePlayerImpl")
-        // Public load/preload only: the private native overloads of the same names stay unhooked.
+        // Public load and loadSource only: the private native overloads of the same names stay unhooked.
+        // loadSource is how a preloaded stream actually starts (the vertical theatre plays that way),
+        // so without it the player on screen kept no login or a stale one. preload is left out on
+        // purpose: it only fetches a stream ahead of time, on Twitch's separate preloader player that
+        // never plays, and labelling a player from it could overwrite the channel it really plays.
         val onLoad = object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 runCatching {
@@ -89,7 +93,7 @@ object ChannelPoints {
             }
         }
         for (m in c.declaredMethods)
-            if ((m.name == "load" || m.name == "preload") && Modifier.isPublic(m.modifiers)) XposedBridge.hookMethod(m, onLoad)
+            if ((m.name == "load" || m.name == "loadSource") && Modifier.isPublic(m.modifiers)) XposedBridge.hookMethod(m, onLoad)
         XposedBridge.hookMethod(c.getMethod("handleStateChange", Int::class.javaPrimitiveType), object : XC_MethodHook() {
             override fun afterHookedMethod(p: MethodHookParam) {
                 runCatching {
@@ -108,13 +112,18 @@ object ChannelPoints {
         })
     }
 
-    /** The live channel login from a stream address (".../api/channel/hls/<login>.m3u8"), or null. */
+    /** Same pattern as RefreshButton: the vertical theatre and Picture-by-Picture use the "v2" address. */
+    private val HLS = Regex("/api/(?:v2/)?channel/hls/([^/]+)\\.m3u8")
+
+    /**
+     * The live channel login from a stream address (".../api/channel/hls/<login>.m3u8", or the
+     * ".../api/v2/..." form), or null. The argument is a Uri, LoadOptions or Source; the last two
+     * both have a public getUri(). A released Source answers an empty Uri, which gives null here.
+     */
     private fun loginOf(a0: Any?): String? {
         val uri = a0 as? Uri ?: runCatching { a0?.javaClass?.getMethod("getUri")?.invoke(a0) as? Uri }.getOrNull() ?: return null
         val path = uri.path ?: return null
-        val i = path.indexOf("/api/channel/hls/")
-        if (i < 0) return null
-        return path.substring(i + "/api/channel/hls/".length).substringBefore(".m3u8").takeIf { it.isNotBlank() }
+        return HLS.find(path)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
     }
 
     private fun isPlaying(login: String): Boolean =

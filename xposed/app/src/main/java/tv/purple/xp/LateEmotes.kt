@@ -44,6 +44,8 @@ object LateEmotes {
         scheduled = false
         val now = SystemClock.uptimeMillis()
         val pending = EmoteRepo.channelPending()
+        // A channel list that came in after the channel was shown: keep its early lines until it lands.
+        val late = EmoteRepo.listsLate()
         val snapshot = synchronized(lines) { ArrayList(lines) }
         val done = HashSet<Line>()
         val filled = ArrayList<Spanned>()
@@ -55,7 +57,7 @@ object LateEmotes {
             val waiting = runCatching { EmoteHooks.fill(m, first = false) }.getOrDefault(false)
             val after = body(m)
             if (after !== before && after is Spanned) filled += after
-            if (!waiting) done += l
+            if (!waiting && !late) done += l
         }
         synchronized(lines) { lines.removeAll(done) }
         if (filled.isNotEmpty()) runCatching { redraw(filled) }.onFailure { log("late emotes redraw: $it") }
@@ -93,8 +95,11 @@ object LateEmotes {
             for (sp in b.getSpans(0, b.length, EmoteHooks.PtvEmoteSpan::class.java)) {
                 val s = at + b.getSpanStart(sp); val e = at + b.getSpanEnd(sp)
                 val have = (out ?: t as? Spanned)?.getSpans(s, e, EmoteHooks.PtvEmoteSpan::class.java)
-                if (!have.isNullOrEmpty()) continue
+                // A row already showing this same picture is left alone; one showing another picture
+                // (the global emote of the same name, before the channel's own arrived) is swapped.
+                if (!have.isNullOrEmpty() && have.any { it.url == sp.url }) continue
                 val o = out ?: SpannableStringBuilder(t).also { out = it }
+                for (old in o.getSpans(s, e, EmoteHooks.PtvEmoteSpan::class.java)) o.removeSpan(old)
                 o.setSpan(sp, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }

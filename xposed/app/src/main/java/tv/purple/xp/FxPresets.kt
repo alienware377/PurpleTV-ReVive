@@ -87,24 +87,76 @@ object FxPresets {
 
     /**
      * Make the tab's settings the preset's. Settings it leaves out are set back to their start
-     * values, not removed: sync only carries values, so a removed setting would come back from the
-     * sync file or another device. [Settings.replace] skips sync, so each changed setting is stamped
-     * here; without a fresh change time the next sync would put the file's older values back.
+     * values, not removed: a device still on an older build cannot pass a removal on, so a removed
+     * setting would come back from it. That includes settings this device never stored, so another
+     * device's older change to one of them cannot come back over the preset at the next sync.
+     *
+     * Picked colours, gradients and overlay pictures have no single start value. A built-in look
+     * keeps them, like the reset buttons do. Your own preset was saved with every setting stored at
+     * the time, so a pick it lacks was still at its start value then: it is removed, and the start
+     * value comes back.
+     *
+     * [Settings.replace] skips sync, so every setting the preset decides is stamped here, changed or
+     * not, the same as Reset all; without a fresh change time the next sync would put the file's
+     * older values back. Kept picks are not stamped, so a newer pick on another device still wins.
      */
     fun apply(kind: Kind, p: Preset) {
-        val before = capture(kind)
         val target = HashMap<String, Any?>()
-        for ((k, v) in before) target[k] = neutral(k, v) ?: v
-        for ((k, v) in p.values) if (covers(kind, k)) target[k] = v
-        Settings.replace(target) { covers(kind, it) }
-        for ((k, v) in target) if (before[k] != v) SettingsSync.changed(k)
+        val decided = HashSet<String>()
+        for ((k, v) in runCatching { startValues(kind) }.getOrDefault(emptyMap())) { target[k] = v; decided += k }
+        for ((k, v) in capture(kind)) {
+            val n = neutral(k, v)
+            when {
+                n != null -> { target[k] = n; decided += k }
+                // Left out of your own preset's target, so replace() removes it.
+                p.builtIn -> target[k] = v
+            }
+        }
+        for ((k, v) in p.values) if (covers(kind, k)) { target[k] = v; decided += k }
+        val changed = Settings.replace(target) { covers(kind, it) }
+        // Only what really holds the preset's value now: if the write failed, stamping the old
+        // values as new would push them over other devices' changes.
+        val stored = Settings.all()
+        SettingsSync.changed(changed + decided.filter { stored[it] == target[it] })
         log("FX applied ${kind.title.lowercase()} preset ${p.name}")
     }
 
     /**
+     * Every setting a reset writes, at the value it writes ([FilterDefs.resetFilter],
+     * [AudioFilters.resetAll]), with every on/off switch at on and the full equaliser off. A preset
+     * writes these even where this device never stored them. The extras per filter are the same
+     * ones [FilterDefs.resetFilter] sets.
+     */
+    private fun startValues(kind: Kind): Map<String, Any?> {
+        val m = HashMap<String, Any?>()
+        if (kind == Kind.AUDIO) {
+            for (f in AudioFilters.FX) { m["af_${f.key}"] = 0; m["af_${f.key}_off"] = false }
+            for (i in AudioFilters.EQ_HZ.indices) m["af_eq_$i"] = 0
+            m["af_eq_off"] = false; m[AudioFilters.KEY_EQ_FULL] = false
+        } else {
+            for (f in FilterDefs.FILTERS) {
+                val extras = when {
+                    f.group == FilterDefs.Group.DYNAMIC -> listOf("target", "speed")
+                    f.group == FilterDefs.Group.GLITCH -> listOf("speed")
+                    f.key == "grain" || f.key == "vignette" -> listOf("size")
+                    f.key == "bokeh" -> listOf("size", "density", "speed")
+                    else -> emptyList()
+                }
+                for (s in listOf("a", "lo", "hi", "off") + extras) {
+                    val k = "vf_${f.key}_$s"
+                    neutral(k, null)?.let { m[k] = it }
+                }
+            }
+            for (g in FilterDefs.Group.values()) m["vf_grp_${g.name}_off"] = false
+        }
+        return m.filterKeys { covers(kind, it) }
+    }
+
+    /**
      * Where a setting the preset leaves out goes: the start value the panel's reset buttons use
-     * ([FilterDefs.resetFilter], [AudioFilters.resetAll]). Null keeps it as it is, for picked
-     * colours, gradients and overlay pictures, which a reset keeps too.
+     * ([FilterDefs.resetFilter], [AudioFilters.resetAll]). Null means it has no single start value:
+     * picked colours, gradients and overlay pictures, which a reset keeps too. [apply] keeps those
+     * for a built-in look and removes them for your own preset.
      */
     private fun neutral(k: String, cur: Any?): Any? {
         // Every audio setting starts at 0 or switched off.

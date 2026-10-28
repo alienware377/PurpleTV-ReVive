@@ -130,26 +130,34 @@ object Settings {
 
     /**
      * Make the settings whose keys pass [mine] exactly [values]: written, replaced, or removed when
-     * absent. One commit, one [rev] bump, and no sync echo. Returns how many changed.
+     * absent. One write and one [rev] bump. Returns the keys it actually changed (written or
+     * removed). It does not tell [SettingsSync] about them, because sync itself uses this to apply
+     * other devices' values, which must not count as changes made here. A caller making its own
+     * change passes the returned keys to [SettingsSync.changed].
      */
-    fun replace(values: Map<String, Any?>, mine: (String) -> Boolean): Int {
-        val c = appCtx ?: return 0
-        val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val cur = p.all
-        val e = p.edit()
-        var n = 0
-        for ((k, v) in cur) if (mine(k) && k !in values) { e.remove(k); n++ }
-        for ((k, v) in values) {
-            if (!mine(k) || cur[k] == v) continue
-            when (v) {
-                is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Long -> e.putLong(k, v)
-                is Float -> e.putFloat(k, v); is String -> e.putString(k, v)
-                is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
-                else -> continue
+    fun replace(values: Map<String, Any?>, mine: (String) -> Boolean): Set<String> {
+        val c = appCtx ?: return emptySet()
+        return runCatching {
+            val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val cur = p.all
+            val e = p.edit()
+            val changed = HashSet<String>()
+            for (k in cur.keys) if (mine(k) && k !in values) { e.remove(k); changed += k }
+            for ((k, v) in values) {
+                if (!mine(k) || cur[k] == v) continue
+                when (v) {
+                    is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Long -> e.putLong(k, v)
+                    is Float -> e.putFloat(k, v); is String -> e.putString(k, v)
+                    is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+                    else -> continue
+                }
+                changed += k
             }
-            n++
-        }
-        if (n > 0) { e.commit(); rev++ }
-        return n
+            // apply(), not commit(): presets call this from a dialog tap on the main thread, and
+            // commit() would write the whole file to disk there. apply() updates the in-memory
+            // values at once, and every reader (sync included) reads those, never the file.
+            if (changed.isNotEmpty()) { e.apply(); rev++ }
+            changed
+        }.getOrDefault(emptySet())
     }
 }

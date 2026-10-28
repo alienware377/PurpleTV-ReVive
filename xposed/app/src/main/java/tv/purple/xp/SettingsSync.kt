@@ -52,7 +52,7 @@ object SettingsSync {
      *  syncs again, so it could not pick up being switched back on. */
     fun local(key: String) = key.startsWith("sync_") || key.startsWith("update_") || key.startsWith("dev_") ||
         key == GlVideoFilter.KEY_FORCE || key.startsWith("vf_ui_") || key.startsWith("af_ui_") ||
-        key == Settings.KEY_ENABLED
+        key.startsWith("fav_ui_") || key == Settings.KEY_ENABLED
 
     private fun uri(): Uri? = Settings.getString(KEY_URI, "").takeIf { it.isNotEmpty() }?.let(Uri::parse)
 
@@ -116,9 +116,14 @@ object SettingsSync {
     }
 
     /** From every settings write: note when this key changed here, and sync a moment later. */
-    fun changed(key: String) {
-        if (local(key) || !enabled()) return
-        synchronized(lock) { val m = mtimes(); m[key] = System.currentTimeMillis(); saveMtimes(m) }
+    fun changed(key: String) { changed(listOf(key)) }
+
+    /** The same for several keys changed at once (a preset), with one save of the change times. */
+    fun changed(keys: Collection<String>) {
+        val synced = keys.filter { !local(it) }
+        if (synced.isEmpty() || !enabled()) return
+        val now = System.currentTimeMillis()
+        synchronized(lock) { val m = mtimes(); for (k in synced) m[k] = now; saveMtimes(m) }
         main.removeCallbacks(syncLater)
         main.postDelayed(syncLater, PUSH_DELAY)
     }
@@ -140,7 +145,9 @@ object SettingsSync {
 
     // ---- the file ----
 
-    private class Remote(val at: Long, val device: String, val values: Map<String, Any?>, val mtimes: Map<String, Long>)
+    /** [gone] holds the settings the file says were removed; [mtimes] has a time for those too. */
+    private class Remote(val at: Long, val device: String, val values: Map<String, Any?>,
+                         val gone: Set<String>, val mtimes: Map<String, Long>)
 
     private fun snapshot(at: Long, values: Map<String, Any?>, mt: Map<String, Long>): String {
         val o = JSONObject(); val m = JSONObject()
@@ -153,7 +160,11 @@ object SettingsSync {
             o.put(k, JSONArray().put(t).put(if (v is Set<*>) JSONArray(v.map { it.toString() }) else v))
             m.put(k, mt[k] ?: 0L)
         }
-        return JSONObject().put("app", "purpletv-revive").put("v", 2).put("at", at)
+        // A setting removed here goes out as a tombstone with the time it was removed, so the
+        // other devices drop it too instead of handing their old copy back. Version 3 added these;
+        // older builds skip a type they do not know, so the file still reads fine there.
+        for ((k, t) in mt) if (k !in values && !local(k)) { o.put(k, JSONArray().put("x")); m.put(k, t) }
+        return JSONObject().put("app", "purpletv-revive").put("v", 3).put("at", at)
             .put("device", Build.MODEL).put("settings", o).put("mtimes", m).toString(1)
     }
 
@@ -163,19 +174,22 @@ object SettingsSync {
         val at = root.getLong("at")
         val o = root.getJSONObject("settings")
         val out = HashMap<String, Any?>()
+        val gone = HashSet<String>()
         for (k in o.keys()) {
             val a = o.optJSONArray(k) ?: continue
             out[k] = when (a.optString(0)) {
                 "b" -> a.getBoolean(1); "i" -> a.getInt(1); "l" -> a.getLong(1)
                 "f" -> a.getDouble(1).toFloat(); "s" -> a.getString(1)
                 "ss" -> a.getJSONArray(1).let { arr -> (0 until arr.length()).map { arr.getString(it) }.toSet() }
+                // A tombstone: removed on the device that wrote it.
+                "x" -> { gone += k; continue }
                 else -> continue
             }
         }
         // Files from 1.2.0 have no per-setting times: every setting counts as changed when the file was.
         val mo = root.optJSONObject("mtimes")
-        val mt = out.keys.associateWith { k -> mo?.optLong(k, at) ?: at }
-        Remote(at, root.optString("device"), out, mt)
+        val mt = (out.keys + gone).associateWith { k -> mo?.optLong(k, at) ?: at }
+        Remote(at, root.optString("device"), out, gone, mt)
     }.getOrNull()
 
     private fun read(ctx: Context, u: Uri): String? {
@@ -196,8 +210,9 @@ object SettingsSync {
     /**
      * Read the file, merge setting by setting (whichever device changed it last wins), take what is
      * newer there and write back what is newer here. Merging per setting means two devices changing
-     * different things in between never undo each other. [take] (picking an existing file) takes
-     * every setting the file has, keeping only this device's settings the file does not know yet.
+     * different things in between never undo each other. A removed setting travels as a tombstone,
+     * so it is removed on the other devices too. [take] (picking an existing file) takes every
+     * setting and removal the file has, keeping only this device's settings the file does not know yet.
      */
     fun sync(ctx: Context, quiet: Boolean, take: Boolean = false, done: ((Boolean) -> Unit)? = null) {
         val u = uri() ?: return
@@ -207,16 +222,21 @@ object SettingsSync {
             var took = 0; var wrote = false
             val r = runCatching {
                 val text = read(ctx, u)
-                val remote = if (text.isNullOrBlank()) Remote(0, "", emptyMap(), emptyMap())
+                val remote = if (text.isNullOrBlank()) Remote(0, "", emptyMap(), emptySet(), emptyMap())
                     else parse(text) ?: error("not a PurpleTV settings file")
-                val here = Settings.all().filterKeys { !local(it) }
+                val all = Settings.all()
+                // Settings that could not be read come back empty, and every setting would then look
+                // removed here and go out as a tombstone. The sync file's own address is always there.
+                if (KEY_URI !in all) error("could not read this device's settings")
+                val here = all.filterKeys { !local(it) }
                 val lm = mtimes()
                 // A setting with no change time here has not changed since this device last synced.
                 val base = Settings.getString(KEY_AT, "0").toLongOrNull() ?: 0L
                 val merged = HashMap<String, Any?>(here); val mm = HashMap(lm)
                 val taken = HashMap<String, Any?>()
+                val dropped = HashSet<String>()
                 var newerHere = false
-                for (k in remote.values.keys + here.keys) {
+                for (k in remote.values.keys + remote.gone + here.keys) {
                     // A file from an older version can still hold settings that are now device-only.
                     if (local(k)) continue
                     val inFile = k in remote.values
@@ -228,10 +248,22 @@ object SettingsSync {
                     val same = inFile && here[k] == remote.values[k]
                     when {
                         same -> {}
+                        k in remote.gone -> when {
+                            // Gone on both sides: keep the later removal time, so a later write
+                            // passes the tombstone on.
+                            k !in here -> mm[k] = maxOf(rt, lm[k] ?: rt)
+                            // Removed in the file after it last changed here. A tie keeps the
+                            // setting, just as a tie with a value in the file brings a removed one
+                            // back, so the devices still settle on the same state.
+                            take || rt > lt -> { took++; merged.remove(k); dropped += k; mm[k] = maxOf(rt, lt) }
+                            else -> newerHere = true
+                        }
                         // Newer in the file, or a tie (on a tie the file wins, so devices settle on one value).
                         inFile && (take || rt >= lt) -> {
                             took++; merged[k] = remote.values[k]; taken[k] = remote.values[k]; mm[k] = maxOf(rt, lt)
                         }
+                        // Newer here: a value the file lacks or has older, or a removal the file
+                        // does not know yet (written as a tombstone, since it is not in `merged`).
                         else -> newerHere = true
                     }
                 }
@@ -240,9 +272,11 @@ object SettingsSync {
                     // ran: that change is newer. Writing all of `here` back would undo such changes.
                     val cur = Settings.all()
                     val keep = taken.filterKeys { cur[it] == here[it] }
-                    Settings.replace(keep) { it in keep }
+                    val drop = dropped.filterTo(HashSet()) { cur[it] == here[it] }
+                    // Not stamped: these are other devices' changes, and `mm` already holds their times.
+                    Settings.replace(keep) { it in keep || it in drop }
                     // The playing stream's sound effect only reads the settings when told to.
-                    if (keep.keys.any { it.startsWith("af_") }) runCatching { AudioFilters.refresh() }
+                    if ((keep.keys + drop).any { it.startsWith("af_") }) runCatching { AudioFilters.refresh() }
                 }
                 // Untracked settings go out with this device's last sync time, never "now", so an
                 // old value can not pass itself off as a new change on the other devices.
@@ -262,7 +296,18 @@ object SettingsSync {
             r.onFailure { log("SY sync failed: $it") }
             val ok = r.isSuccess
             main.post {
-                if (took > 0) runCatching { ViewHider.reapply() }
+                if (took > 0) {
+                    runCatching { ViewHider.reapply() }
+                    // Features that read their settings only at certain moments (a screen opening,
+                    // a toggle in the menu) would otherwise show the loaded settings only later.
+                    runCatching { ChatAppearance.reapply() }
+                    runCatching { HomeTabs.reapply() }
+                    runCatching { BlacklistRows.reapply() }
+                    runCatching { BadgeRepo.refresh() }
+                    // Starts the pronoun worker if sync just switched pronouns on. Safe to repeat:
+                    // it returns at once when the worker is already running.
+                    runCatching { if (Pronouns.enabled()) Pronouns.loadAsync() }
+                }
                 if (!quiet) toast(ctx, when {
                     !ok -> "Could not reach the sync file"
                     took > 0 -> "Settings synced ($took loaded). A few take effect after restarting Twitch."

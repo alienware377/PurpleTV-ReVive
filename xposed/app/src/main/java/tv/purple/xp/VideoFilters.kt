@@ -69,7 +69,10 @@ object VideoFilters {
         val ctx = root.context
         val id = Res.id(ctx, "playback_view_container")
         if (id != 0) {
-            val sig = cachedSignature()
+            // Which path draws the filters is part of the key: when the GL path gives up (or the
+            // GL switch is flipped) the settings stay the same, so without it no view would ever
+            // be handed over to the RuntimeShader or colour matrix path.
+            val sig = cachedSignature() + (if (GlVideoFilter.available()) "|gl" else "|fb")
             val found = ArrayList<TextureView>()
             collectVideos(root, id, found)
             for (tv in found) {
@@ -110,7 +113,8 @@ object VideoFilters {
         // Every other stored filter setting, whatever its type. A hand-picked list read with typed
         // getters missed the switches (stored as Booleans) and the bokeh, speed and moving grain
         // settings, so changing those never re-applied the filters. Panel layout and the tip are
-        // left out so they do not rebuild the effect, and the GL switch is already in the cache key.
+        // left out so they do not rebuild the effect, and the GL switch is already in the cache key
+        // and in the path attach() adds to each view's key.
         for ((k, v) in Settings.all().toSortedMap())
             if (k.startsWith("vf_") && !k.startsWith("vf_ui_") && !k.startsWith("vf_tip") && k != GlVideoFilter.KEY_FORCE)
                 sb.append(k).append('=').append(v).append(';')
@@ -132,6 +136,9 @@ object VideoFilters {
         when {
             GlVideoFilter.available() -> {
                 if (shaderSupported()) tv.setRenderEffect(null)
+                // A view filtered by the colour matrix before the GL path was ready would
+                // otherwise keep it on top of the GL picture, doing those filters twice.
+                tv.setLayerPaint(null)
                 GlVideoFilter.update(tv, on)
             }
             shaderSupported() -> {

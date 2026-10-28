@@ -53,8 +53,10 @@ object EmoteHooks {
     private object Marker
 
     /** Our injected emote span, carrying the emote name so a tap can open the preview. Subclasses
-     *  ImageSpan so the existing animation driver (getSpans(ImageSpan)) still finds it. */
-    class PtvEmoteSpan(d: Drawable, val emoteName: String) : ImageSpan(d, ALIGN_BASELINE)
+     *  ImageSpan so the existing animation driver (getSpans(ImageSpan)) still finds it. [url] is
+     *  the address the name had when the picture was put on, so a later pass can tell when the
+     *  name has since moved to another picture (a channel emote that reuses a global name). */
+    class PtvEmoteSpan(d: Drawable, val emoteName: String, val url: String? = null) : ImageSpan(d, ALIGN_BASELINE)
 
     /** TextViews we've already attached the tap-to-preview touch listener to. */
     private val TOUCH_WIRED = java.util.Collections.newSetFromMap(
@@ -236,14 +238,14 @@ object EmoteHooks {
         model ?: return
         val waiting = fill(model, first = true)
         // Drawn before its channel's emotes or their pictures arrived: filled in once they do.
-        if (waiting || EmoteRepo.channelPending()) LateEmotes.add(model)
+        if (waiting || EmoteRepo.channelPending() || EmoteRepo.listsLate()) LateEmotes.add(model)
     }
 
     /**
      * Put an emote picture on each word of the line's body that has one. [first] is the line's
-     * first pass, which skips a body already done; later passes only add words still drawn as
-     * text. Returns true when a word is an emote whose picture is still downloading, or one that
-     * must wait for the new channel's emotes.
+     * first pass, which skips a body already done; later passes add words still drawn as text and
+     * swap a picture whose name now points somewhere else. Returns true when a word is an emote
+     * whose picture is still downloading, or one that must wait for the new channel's emotes.
      */
     internal fun fill(model: Any, first: Boolean): Boolean {
         val body = runCatching {
@@ -267,7 +269,14 @@ object EmoteHooks {
             // so leave the word for the late pass, which runs once the new channel is in.
             if (pending && m.value in EmoteRepo.chNames) { waiting = true; continue }
             val s = m.range.first; val e = m.range.last + 1
-            if (!first && spanned != null && spanned.getSpans(s, e, PtvEmoteSpan::class.java).isNotEmpty()) continue
+            // A word that already has a picture keeps it while the name still points at that
+            // picture. A global drawn while the new channel loaded does not, when that channel
+            // turns out to have its own emote by the same name: it is drawn again below, and the
+            // old picture stays up until the new one has downloaded.
+            if (!first && spanned != null) {
+                val now = EmoteRepo.map[m.value]
+                if (spanned.getSpans(s, e, PtvEmoteSpan::class.java).any { it.url == now }) continue
+            }
             if (EmoteRepo.drawables.containsKey(m.value)) hits.add(Triple(s, e, m.value))
             // In the set but its picture is not here yet: jump it to the front of the queue so
             // the line can be filled in when it lands.
@@ -279,9 +288,15 @@ object EmoteHooks {
         for ((s, e, name) in hits) {
             // Fresh animated copy when the emote is animated (independent frame cursor +
             // callback per line); else the shared static drawable. PtvEmoteSpan carries the
-            // emote name so a tap can open the preview.
+            // emote name so a tap can open the preview. The url is read BEFORE the picture: if a
+            // channel publishes in between, the span records the older url and a later pass swaps
+            // it, rather than recording the new url over the old picture for good.
+            val u = EmoteRepo.map[name]
             val d = EmoteRepo.makeAnimated(name) ?: EmoteRepo.drawables[name] ?: continue
-            out.setSpan(PtvEmoteSpan(d, name), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            // A picture already on this word is an outdated one being replaced (see above). Two
+            // pictures on one word would draw unpredictably, so the old one goes.
+            for (old in out.getSpans(s, e, PtvEmoteSpan::class.java)) out.removeSpan(old)
+            out.setSpan(PtvEmoteSpan(d, name, u), s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         if (out.getSpans(0, out.length, Marker::class.java).isEmpty())
             out.setSpan(Marker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)

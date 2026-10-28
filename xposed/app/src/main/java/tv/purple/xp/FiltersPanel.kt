@@ -34,6 +34,10 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 /**
@@ -213,8 +217,11 @@ object FiltersPanel {
 
         private fun syncStatus() {
             val n = AudioFilters.EQ_HZ.indices.count { AudioFilters.rawEqGain(it) != 0 }
-            status.text = if (n == 0) "Flat" else if (!AudioFilters.eqOn()) "$n changed, off" else "$n changed"
-            icon.color = if (n > 0) PURPLE else Color.WHITE; icon.invalidateSelf()
+            val on = AudioFilters.eqOn()
+            status.text = if (n == 0) "Flat" else if (!on) "$n changed, off" else "$n changed"
+            // Same rule as AudioRow: switched off means not active, so the icon goes white
+            // even when bands are still set.
+            icon.color = if (n > 0 && on) PURPLE else Color.WHITE; icon.invalidateSelf()
         }
 
         fun load() {
@@ -830,7 +837,10 @@ object FiltersPanel {
             val sizeBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
             fun sizeSlider() {
                 sizeBox.removeAllViews()
-                sizeBox.addView(miniSlider(ctx, "Size", 10, 400, FilterDefs.extraInt("ovl", "scale", 50), "%") {
+                // Same default the shaders use: a pattern at half size, a picture at full size.
+                // Without it the slider showed 50% for a picture that was really drawn at 100%.
+                val def = if (VideoFilters.overlayTiled()) 50 else 100
+                sizeBox.addView(miniSlider(ctx, "Size", 10, 400, FilterDefs.extraInt("ovl", "scale", def), "%") {
                     FilterDefs.setExtraInt("ovl", "scale", it); onExtra()
                 })
             }
@@ -839,7 +849,9 @@ object FiltersPanel {
             extras.addView(sizeBox)
             tileSwitch = Switch(ctx)
             extras.addView(switchRow(ctx, "Repeat as a pattern", VideoFilters.overlayTiled(), tileSwitch) {
-                FilterDefs.setExtraBool("ovl", "tile", it); onExtra()
+                // Rebuild the slider too: with no size saved yet, the size the video uses
+                // follows the pattern setting, so the old number would now be wrong.
+                FilterDefs.setExtraBool("ovl", "tile", it); sizeSlider(); onExtra()
             })
             syncSrc()
         }
@@ -879,11 +891,22 @@ object FiltersPanel {
         else -> "Nothing chosen"
     }
 
+    /** Two shared workers for thumbnails. The texture picker asks for a whole grid at once, and a
+     *  new thread per picture meant dozens of decodes fighting the video for the CPU. The
+     *  workers are let go after a short idle, since thumbnails are only needed while a picker
+     *  or the panel is open. */
+    private val thumbPool = ThreadPoolExecutor(2, 2, 30L, TimeUnit.SECONDS, LinkedBlockingQueue<Runnable>(),
+        ThreadFactory { r -> Thread(r, "ptv-thumb").apply { isDaemon = true } }
+    ).apply { allowCoreThreadTimeOut(true) }
+
     fun loadThumb(src: String, done: (Bitmap) -> Unit) {
-        Thread({
-            val b = TextureLibrary.thumb(src)
-            if (b != null) handler.post { done(b) }
-        }, "ptv-thumb").start()
+        runCatching {
+            thumbPool.execute {
+                // An exception escaping a worker would take Twitch down with it.
+                val b = runCatching { TextureLibrary.thumb(src) }.getOrNull()
+                if (b != null) handler.post { runCatching { done(b) } }
+            }
+        }
     }
 
     // ---- small building blocks ----

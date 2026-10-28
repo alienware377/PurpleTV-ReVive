@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.TextureView
+import android.view.View
 import java.nio.ByteBuffer
 import kotlin.math.abs
 import kotlin.math.exp
@@ -172,14 +174,24 @@ object DynLight {
 
     private val tick = object : Runnable {
         override fun run() {
-            if (!active() || GlVideoFilter.available()) { running = false; return }
-            runCatching { measureView() }.onFailure { log("DL measure: $it") }
+            // Stop when no player is really on screen. Twitch in the background keeps its player
+            // attached with its window hidden, so checking attachment alone measured forever, and a
+            // closed player leaves nothing to measure. The next VideoFilters.attach() pass starts
+            // this again through ensureRunning().
+            val live: List<TextureView> = runCatching { if (active() && !GlVideoFilter.available()) liveViews() else emptyList() }
+                .getOrDefault(emptyList())
+            if (live.isEmpty()) { running = false; return }
+            runCatching { measureView(live) }.onFailure { log("DL measure: $it") }
             main.postDelayed(this, TICK_MS)
         }
     }
 
-    private fun measureView() {
-        val tv = VideoFilters.videoViews().firstOrNull { it.isAttachedToWindow && it.isShown && it.isAvailable && it.width > 0 } ?: return
+    /** Video views that are attached, in a visible window and not hidden by a parent. */
+    private fun liveViews(): List<TextureView> = VideoFilters.videoViews()
+        .filter { it.isAttachedToWindow && it.windowVisibility == View.VISIBLE && it.isShown }
+
+    private fun measureView(live: List<TextureView>) {
+        val tv = live.firstOrNull { it.isAvailable && it.width > 0 } ?: return
         val b = bmp ?: Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888).also { bmp = it }
         // The view's own frame, before its RenderEffect, so the filters never measure themselves.
         tv.getBitmap(b) ?: return
