@@ -37,6 +37,7 @@ object DevBridge {
     private const val ACTION_UPDATE = "tv.purple.xp.DEV_UPDATE"
     private const val ACTION_VIEW = "tv.purple.xp.DEV_VIEW"
     private const val ACTION_SYNC = "tv.purple.xp.DEV_SYNC"
+    private const val ACTION_EMINFO = "tv.purple.xp.DEV_EMINFO"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -62,6 +63,7 @@ object DevBridge {
                         ACTION_MODLOG -> ModLogs.test(i.getStringExtra("text").orEmpty())
                         ACTION_FREQ -> FrequentEmotes.test(app, i.getStringExtra("name").orEmpty())
                         ACTION_RAID -> RaidCard.simulate(i.getStringExtra("src").orEmpty(), i.getStringExtra("dst").orEmpty(), i.getIntExtra("n", 5))
+                        ACTION_EMINFO -> for (n in i.getStringExtra("names").orEmpty().split(",").filter { it.isNotBlank() }) log("DEV eminfo $n: " + EmoteRepo.debugInfo(n) + " available=" + Favorites.isAvailable(n))
                         ACTION_SYNC -> SettingsSync.debugRead(app, i.getStringExtra("re"))
                         ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
@@ -72,7 +74,7 @@ object DevBridge {
         }
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
-            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE); addAction(ACTION_VIEW); addAction(ACTION_SYNC)
+            addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE); addAction(ACTION_VIEW); addAction(ACTION_SYNC); addAction(ACTION_EMINFO)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {

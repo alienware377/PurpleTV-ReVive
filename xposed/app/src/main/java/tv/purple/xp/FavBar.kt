@@ -101,6 +101,7 @@ object FavBar {
     fun render(host: FrameLayout) {
         val ctx = host.context ?: return
         host.removeAllViews()
+        runCatching { Favorites.shareTwitchPictures() }
         syncTip(host)
         val groups = Favorites.groups()
         val loose = Favorites.loose()

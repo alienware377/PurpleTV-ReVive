@@ -514,21 +514,36 @@ object EmoteRepo {
         if (personalLoaded) return
         personalLoaded = true
         Thread({
-            runCatching {
-                val token = readAuthToken(ctx)
-                if (token.isBlank()) { log("personal emotes: not logged in (no token) — skipped"); return@Thread }
-                val personal = HashMap<String, String>()
-                fetchUserEmotes(token, personal)
-                if (personal.isEmpty()) { log("personal emotes: none returned"); return@Thread }
-                val before = twitch.size
-                gTwitch.putAll(personal); twitch.putAll(personal)
-                log("personal emotes: +${twitch.size - before} (total twitch ${twitch.size}); prefetching")
-                prefetchSuggestDrawables()
-                gSuggestDraw.putAll(suggestDrawables)
-                log("suggest drawables ready: ${suggestDrawables.size}")
-            }.onFailure { log("personal emotes failed: $it") }
+            // A dropped connection at startup (a sleeping tablet, a VPN reconnecting) used to leave
+            // every sub emote unknown for the whole session, so favorites said "not available".
+            for (wait in longArrayOf(0, 15, 45, 120, 300, 900)) {
+                if (wait > 0) runCatching { Thread.sleep(wait * 1000L) }
+                val ok = runCatching {
+                    val token = readAuthToken(ctx)
+                    if (token.isBlank()) { log("personal emotes: not logged in (no token), skipped"); return@Thread }
+                    val personal = HashMap<String, String>()
+                    fetchUserEmotes(token, personal)
+                    if (personal.isEmpty()) { log("personal emotes: none returned"); return@Thread }
+                    val before = twitch.size
+                    gTwitch.putAll(personal); twitch.putAll(personal)
+                    log("personal emotes: +${twitch.size - before} (total twitch ${twitch.size}); prefetching")
+                    runCatching { Favorites.channelChanged() }
+                    prefetchSuggestDrawables()
+                    gSuggestDraw.putAll(suggestDrawables)
+                    log("suggest drawables ready: ${suggestDrawables.size}")
+                }.onFailure { log("personal emotes failed (will try again): $it") }.isSuccess
+                if (ok) return@Thread
+            }
         }, "ptv-personal-emotes").start()
     }
+
+    /** Twitch emotes another device knew (from the synced favorites), until this one learns them. */
+    fun addKnownTwitch(urls: Map<String, String>) {
+        for ((n, u) in urls) if (!twitch.containsKey(n) && !map.containsKey(n)) { gTwitch.putIfAbsent(n, u); twitch.putIfAbsent(n, u) }
+    }
+
+    /** The picture address of a Twitch emote this device knows, for sharing with the others. */
+    fun twitchUrl(name: String): String? = if (map.containsKey(name)) null else twitch[name]
 
     /** Public OAuth-token accessor for sibling modules (e.g. channel-points auto-claim). Returns
      *  "" when logged out. The token is read locally and must only ever be sent to gql.twitch.tv. */
@@ -672,6 +687,10 @@ object EmoteRepo {
      * pictures in no particular order, so on a fresh install the few emotes actually on screen
      * (a suggestion list, the favorites bar) could wait minutes for theirs.
      */
+    /** Test aid: where an emote name is known from. */
+    fun debugInfo(name: String) = "twitch=${twitch.containsKey(name)} global=${gTwitch.containsKey(name)} 3p=${map.containsKey(name)} " +
+        "channelOwned=${name in channelOwned} pic=${suggestDrawables.containsKey(name)} channel=$activeName twitchTotal=${twitch.size}"
+
     fun wantPictures(names: Collection<String>, onReady: () -> Unit) {
         val res = Resources.getSystem()
         for (name in names) {

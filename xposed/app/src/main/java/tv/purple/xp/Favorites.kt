@@ -116,6 +116,34 @@ object Favorites {
         writeGroups(gs); write(loose)
     }
 
+    // ---- Twitch favorites' pictures, shared between devices ----
+    //
+    // A device only knows a sub emote once it has fetched the account's emotes (or seen it used).
+    // Each favorite Twitch emote's picture address is kept in a synced setting, so a device that
+    // has not fetched them yet, or failed to, still knows they are yours and can draw them.
+
+    private const val KEY_URLS = "fav_twitch_urls"
+
+    private fun urls(): MutableMap<String, String> = runCatching {
+        val o = org.json.JSONObject(Settings.getString(KEY_URLS, "{}").ifBlank { "{}" })
+        o.keys().asSequence().associateWith { o.getString(it) }.toMutableMap()
+    }.getOrDefault(HashMap())
+
+    /** Note the picture of every favorite this device knows as a Twitch emote, and teach EmoteRepo
+     *  the ones other devices noted. Cheap: a small map, written only when something new turns up. */
+    fun shareTwitchPictures() {
+        val known = urls()
+        var changed = false
+        for (n in list()) {
+            if (known.containsKey(n)) continue
+            EmoteRepo.twitchUrl(n)?.let { known[n] = it; changed = true }
+        }
+        val keep = list().toSet()
+        if (known.keys.retainAll(keep)) changed = true
+        if (changed) Settings.setString(KEY_URLS, org.json.JSONObject(known as Map<*, *>).toString())
+        EmoteRepo.addKnownTwitch(known)
+    }
+
     /** Twitch and sub emotes the user owns, and any 7TV / BTTV / FFZ / Homies emote. */
     fun isFavoritable(name: String): Boolean =
         name.isNotBlank() && (EmoteRepo.twitch.containsKey(name) || EmoteRepo.map.containsKey(name))
