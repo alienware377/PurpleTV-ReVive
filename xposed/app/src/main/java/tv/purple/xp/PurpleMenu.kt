@@ -347,10 +347,10 @@ object PurpleMenu {
     )
 
     private val INFO = listOf(
-        Link("Source code", "github.com/alienware377/purpletv-revive",
-            "https://github.com/alienware377/purpletv-revive"),
+        Link("Source code", "github.com/alienware377/PurpleTV-ReVive",
+            "https://github.com/alienware377/PurpleTV-ReVive"),
         Link("Report an issue", "Bug reports and feature requests",
-            "https://github.com/alienware377/purpletv-revive/issues"),
+            "https://github.com/alienware377/PurpleTV-ReVive/issues"),
         Link("7TV", "7tv.app", "https://7tv.app"),
         Link("BetterTTV", "betterttv.com", "https://betterttv.com"),
         Link("FrankerFaceZ", "frankerfacez.com", "https://frankerfacez.com")

@@ -39,8 +39,8 @@ object UpdateChecker {
     private const val KEY_SKIP = "update_skip_version"
     private const val KEY_LAST_CHECK = "update_last_check"
     private const val KEY_LAST_SHOWN = "update_last_shown"
-    private const val API = "https://api.github.com/repos/alienware377/purpletv-revive/releases?per_page=15"
-    private const val PAGE = "https://github.com/alienware377/purpletv-revive/releases/latest"
+    private const val API = "https://api.github.com/repos/alienware377/PurpleTV-ReVive/releases?per_page=15"
+    private const val PAGE = "https://github.com/alienware377/PurpleTV-ReVive/releases/latest"
     private const val CHECK_EVERY_MS = 6 * 3600_000L
     /** "Later" waits this long before the same version is offered again. */
     private const val REMIND_AFTER_MS = 24 * 3600_000L

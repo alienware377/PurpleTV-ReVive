@@ -4,7 +4,7 @@
 
 If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually render in Twitch mobile chat instead of showing up as plain text, this module does that, without replacing the Twitch app and without touching your login.
 
-[![Latest release](https://img.shields.io/github/v/release/alienware377/purpletv-revive?label=download&style=flat-square)](https://github.com/alienware377/purpletv-revive/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/alienware377/PurpleTV-ReVive?label=download&style=flat-square)](https://github.com/alienware377/PurpleTV-ReVive/releases/latest)
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square)](#requirements)
 [![Xposed](https://img.shields.io/badge/Xposed-LSPosed%20%7C%20LSPatch-9146ff?style=flat-square)](#installation)
 [![Website](https://img.shields.io/badge/website-purpletv--revive-7c3aed?style=flat-square)](https://alienware377.github.io/purpletv-revive/)
@@ -83,7 +83,7 @@ Easiest: in LSPosed, open the **Repository** tab, search for **PurpleTV ReVive**
 
 Or by hand:
 
-1. Download the module file from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest): the one named `purpletv-revive-<version>-module-twitch<version>.apk` (older releases call it `purpletv-xp.apk`).
+1. Download the module file from the [latest release](https://github.com/alienware377/PurpleTV-ReVive/releases/latest): the one named `purpletv-revive-<version>-module-twitch<version>.apk` (older releases call it `purpletv-xp.apk`).
 2. Install it like a normal app.
 3. Open LSPosed → **Modules** → enable **PurpleTV ReVive**.
 4. In the module's scope list, tick **Twitch**.
@@ -91,7 +91,7 @@ Or by hand:
 
 ### Non-rooted: LSPatch
 
-1. Download the module file (`purpletv-revive-<version>-module-twitch<version>.apk`) from the [latest release](https://github.com/alienware377/purpletv-revive/releases/latest).
+1. Download the module file (`purpletv-revive-<version>-module-twitch<version>.apk`) from the [latest release](https://github.com/alienware377/PurpleTV-ReVive/releases/latest).
 2. In LSPatch, select your installed Twitch app, choose **Integrated** patch mode, and add the module file as an embedded module.
 3. Install the patched Twitch APK that LSPatch produces.
 
@@ -115,7 +115,7 @@ The settings row itself stays put while the module is switched off, showing just
 ## Building from source
 
 ```bash
-git clone https://github.com/alienware377/purpletv-revive.git
+git clone https://github.com/alienware377/PurpleTV-ReVive.git
 cd purpletv-revive/xposed
 ./gradlew :app:assembleRelease
 ```
@@ -135,7 +135,7 @@ The result is a module that keeps working across Twitch updates far longer than 
 
 ## Compatibility
 
-Built and tested for **Twitch 31.7.0** and **Twitch 31.1.2**, the versions named in each release; the module picks the right setup for the one you have. From Twitch 31.5, phones open live streams in a new screen whose chat is out of the module's reach, so the module keeps the classic stream screen (**Use the classic stream screen** in its settings). A Twitch version newer than the ones named will most likely break some features until the module is updated, since a few hooks rely on names Twitch changes in every release. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/purpletv-revive/issues) with your Twitch version number.
+Built and tested for **Twitch 31.7.0** and **Twitch 31.1.2**, the versions named in each release; the module picks the right setup for the one you have. From Twitch 31.5, phones open live streams in a new screen whose chat is out of the module's reach, so the module keeps the classic stream screen (**Use the classic stream screen** in its settings). A Twitch version newer than the ones named will most likely break some features until the module is updated, since a few hooks rely on names Twitch changes in every release. If a feature stops working after a Twitch update, please [open an issue](https://github.com/alienware377/PurpleTV-ReVive/issues) with your Twitch version number.
 
 ## What this module will never do
 
@@ -172,7 +172,7 @@ The emote image is cached per channel. Favorites from a channel you are not curr
 
 ## Contributing
 
-Questions, ideas and show-and-tell go in [Discussions](https://github.com/alienware377/purpletv-revive/discussions). Bug reports go in [Issues](https://github.com/alienware377/purpletv-revive/issues), and pull requests are welcome. When reporting a bug, include your Android version, Twitch app version, and whether you are using LSPosed or LSPatch.
+Questions, ideas and show-and-tell go in [Discussions](https://github.com/alienware377/PurpleTV-ReVive/discussions). Bug reports go in [Issues](https://github.com/alienware377/PurpleTV-ReVive/issues), and pull requests are welcome. When reporting a bug, include your Android version, Twitch app version, and whether you are using LSPosed or LSPatch.
 
 ## Credits
 
