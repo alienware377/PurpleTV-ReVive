@@ -48,7 +48,7 @@ Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bt
 | **Overlays** | Lay a texture, your own picture or a solid colour over the video with any of Photoshop's 27 blend modes and an opacity slider. Comes with 32 built-in textures: grunge, paper, film grain, light leaks, bokeh, manga screentones and speed lines, retro scanlines, rain and more. |
 | **Audio filters** | An Audio tab next to the video filters: volume boost, auto volume, compressor, limiter, voice clarity, rumble cut, and Bass and Treble or a full 16-band equaliser (30 Hz to 16k). Made for talk streams: even out the volume, tame loud moments and make voices clearer. Android 9 or newer. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
-| **Sleep timer** | A clock button in the player controls that pauses the stream after 15 minutes to 2 hours. |
+| **Sleep timer** | A crescent moon button in the player controls (purple while a timer runs). Pick 15 minutes to 2 hours, or any time in hours and minutes; when time is up it closes Twitch like PurpleTV did, or only pauses the stream if you prefer. |
 | **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
 | **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind (on by default). |
 | **Player stats** | A button in the player controls that shows quality, bitrate, frame rate, how far behind live you are, the buffer, the network estimate and dropped frames over the video. |
