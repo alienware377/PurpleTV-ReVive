@@ -17,7 +17,7 @@ import android.os.Build
  *   adb shell am broadcast -p tv.twitch.android.app -a tv.purple.xp.DEV_DUMP
  *
  * Ad volume (AdVolume), set the level first with DEV_SET --es key ad_volume --ei i 25 (100, 50,
- * 25 or 15), then read the "AV" lines in logcat:
+ * 25, 15, 10 or 5), then read the "AV" lines in logcat:
  *   ... -a tv.purple.xp.DEV_ADVOL --es op start [--ei s 15]   an ad window on the main player's
  *        audio session for s seconds (default 30), restored by itself after that
  *   ... -a tv.purple.xp.DEV_ADVOL --es op start --es via cue  the same through the DATERANGE parser
@@ -28,6 +28,33 @@ import android.os.Build
  *        presenter pushes it (client, audio, surestream or none)
  *   ... -a tv.purple.xp.DEV_ADVOL --es op status              logs players, sessions and track gains
  * None of them calls an IVS native method; status only reads Java fields.
+ *
+ * Picture-by-Picture ad breaks (PbypPreview, "PP" lines):
+ *   ... -a tv.purple.xp.DEV_PBYP --es op start     a simulated break on the current stream screen:
+ *        a ticking TEST LIVE stand-in in Twitch's live box (Twitch's own player is never moved)
+ *   ... -a tv.purple.xp.DEV_PBYP --es op end       ends it, everything goes back
+ *   ... -a tv.purple.xp.DEV_PBYP --es op dump      logs where every view is (Java state only)
+ *        (--ei on 1 or 0 works as start or end too)
+ * Captions (CaptionHub, "CH" lines). Injected text shows in the box while a break (or the
+ * simulation) shows it, and finished lines go on to read-aloud:
+ *   ... -a tv.purple.xp.DEV_CAPTION --es text "hello there" [--ez final false]   as speech-to-text
+ *        output (final by default; false is a live guess, drawn dimmer)
+ *   ... -a tv.purple.xp.DEV_CAPTION --es op cc --es text "HELLO THERE"   as Twitch's own captions
+ *        (or --es json '{"caption":{"text":"..."}}' through the real parser)
+ *   ... -a tv.purple.xp.DEV_CAPTION --es op demo [--es src stt]   12 sample lines 1.5 s apart
+ *   ... -a tv.purple.xp.DEV_CAPTION --es op clear | status
+ * Speech to text (Stt, "STT" lines; "do" works in place of "op"):
+ *   ... -a tv.purple.xp.DEV_STT --es op status
+ *   ... -a tv.purple.xp.DEV_STT --es op feed_main  feeds the MAIN player's sound (the stream on
+ *        screen) to the recognizer, to test it outside an ad. Needs stt_captions on and both
+ *        downloads; DEV_SET --es key dev_stt_log --ez b true logs the text it hears
+ *   ... -a tv.purple.xp.DEV_STT --es op stop       ends feed_main (and a WAV feed)
+ *   ... -a tv.purple.xp.DEV_STT --es op load | unload | wav --es path P | pack_download
+ *        [--es which engine|model|both] | pack_verify | pack_delete | pack_corrupt
+ * Read-aloud (ReadAloud, "RA" lines):
+ *   ... -a tv.purple.xp.DEV_TTS --es op say --es text "hello" [--ez force true]   force says it
+ *        now, like the menu's Test voice; without it, only during a shown break
+ *   ... -a tv.purple.xp.DEV_TTS --es op stop | engines | probe | status | shutdown
  *
  * Only something holding android.permission.DUMP can send these, which in practice means the adb
  * shell or the system. An ordinary app on the phone cannot reach it.
@@ -52,6 +79,10 @@ object DevBridge {
     private const val ACTION_SYNC = "tv.purple.xp.DEV_SYNC"
     private const val ACTION_EMINFO = "tv.purple.xp.DEV_EMINFO"
     private const val ACTION_ADVOL = "tv.purple.xp.DEV_ADVOL"
+    private const val ACTION_PBYP = "tv.purple.xp.DEV_PBYP"
+    private const val ACTION_CAPTION = "tv.purple.xp.DEV_CAPTION"
+    private const val ACTION_STT = "tv.purple.xp.DEV_STT"
+    private const val ACTION_TTS = "tv.purple.xp.DEV_TTS"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -80,6 +111,10 @@ object DevBridge {
                         ACTION_EMINFO -> for (n in i.getStringExtra("names").orEmpty().split(",").filter { it.isNotBlank() }) log("DEV eminfo $n: " + EmoteRepo.debugInfo(n) + " available=" + Favorites.isAvailable(n))
                         ACTION_SYNC -> SettingsSync.debugRead(app, i.getStringExtra("re"))
                         ACTION_ADVOL -> AdVolume.dev(i)
+                        ACTION_PBYP -> pbyp(i)
+                        ACTION_CAPTION -> CaptionHub.dev(i)
+                        ACTION_STT -> Stt.dev(i)
+                        ACTION_TTS -> ReadAloud.dev(i)
                         ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
@@ -91,6 +126,7 @@ object DevBridge {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
             addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE); addAction(ACTION_VIEW); addAction(ACTION_SYNC); addAction(ACTION_EMINFO)
             addAction(ACTION_ADVOL)
+            addAction(ACTION_PBYP); addAction(ACTION_CAPTION); addAction(ACTION_STT); addAction(ACTION_TTS)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -131,6 +167,23 @@ object DevBridge {
         if (key == AdVolume.KEY || key.startsWith("af_")) runCatching { AdVolume.refresh() }
         if (key == EmoteQuality.KEY || key == EmoteQuality.KEY_BTTV_WEBP || key == EmoteRepo.KEY_HOMIES)
             EmoteRepo.refetch()
+        // The preview, read-aloud and speech to text, as the menu's switches do it.
+        AdBreakSettings.changed(key, byUser = true)
+    }
+
+    /** DEV_PBYP: op start, end or dump (or --ei on 1 / 0). The simulation posts to the main thread. */
+    private fun pbyp(i: Intent) {
+        val op = i.getStringExtra("op") ?: when (i.getIntExtra("on", -1)) {
+            1 -> "start"
+            0 -> "end"
+            else -> "dump"
+        }
+        when (op) {
+            "start" -> PbypPreview.simulateStart()
+            "end" -> PbypPreview.simulateEnd()
+            "dump" -> PbypPreview.dump()
+            else -> log("DEV pbyp: unknown op '$op' (start, end or dump)")
+        }
     }
 
     /**

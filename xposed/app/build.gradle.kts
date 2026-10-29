@@ -13,8 +13,8 @@ android {
         applicationId = "io.github.alienware377.purpletvrevive"
         minSdk = 26
         targetSdk = 36
-        versionCode = 27
-        versionName = "1.4.1-twitch31.7.0"
+        versionCode = 28
+        versionName = "1.5.0-twitch31.7.0"
     }
 
     buildFeatures {
@@ -59,6 +59,6 @@ tasks.named("preBuild") { dependsOn(packTextures) }
 dependencies {
     compileOnly("de.robv.android.xposed:api:82")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // org.json ships in android.jar at runtime — compileOnly avoids a duplicate-class dex error.
+    // org.json ships in android.jar at runtime, so compileOnly avoids a duplicate-class dex error.
     compileOnly("org.json:json:20240303")
 }

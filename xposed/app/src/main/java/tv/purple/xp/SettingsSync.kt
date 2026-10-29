@@ -52,7 +52,9 @@ object SettingsSync {
      *  syncs again, so it could not pick up being switched back on. */
     fun local(key: String) = key.startsWith("sync_") || key.startsWith("update_") || key.startsWith("dev_") ||
         key == GlVideoFilter.KEY_FORCE || key.startsWith("vf_ui_") || key.startsWith("af_ui_") ||
-        key.startsWith("fav_ui_") || key == Settings.KEY_ENABLED
+        key.startsWith("fav_ui_") || key == Settings.KEY_ENABLED ||
+        // Text-to-speech engines differ from phone to phone.
+        key == ReadAloud.KEY_ENGINE
 
     private fun uri(): Uri? = Settings.getString(KEY_URI, "").takeIf { it.isNotEmpty() }?.let(Uri::parse)
 
@@ -307,6 +309,8 @@ object SettingsSync {
                     // Starts the pronoun worker if sync just switched pronouns on. Safe to repeat:
                     // it returns at once when the worker is already running.
                     runCatching { if (Pronouns.enabled()) Pronouns.loadAsync() }
+                    // The ad-break preview, read-aloud and speech to text.
+                    runCatching { AdBreakSettings.changedAll() }
                 }
                 if (!quiet) toast(ctx, when {
                     !ok -> "Could not reach the sync file"

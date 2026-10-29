@@ -32,7 +32,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
             object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val ctx = param.args[0] as Context
-                    log("Application.attach fired — injection LIVE on Twitch. ctx=$ctx")
+                    log("Application.attach fired: injection LIVE on Twitch. ctx=$ctx")
                     onTwitchContext(ctx, lpparam, param.thisObject as? Application)
                 }
             }
@@ -50,16 +50,16 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         val disabled = runCatching {
             android.provider.Settings.Global.getInt(ctx.contentResolver, "purplexp_disable", 0) == 1
         }.getOrDefault(false)
-        if (disabled) { log("DISABLED via purplexp_disable=1 — no features wired"); return }
+        if (disabled) { log("DISABLED via purplexp_disable=1, no features wired"); return }
         runCatching { TwitchVersion.init(ctx) }
         runCatching { Settings.init(ctx) }.onFailure { log("settings init failed: $it") }
         runCatching { DevBridge.install(ctx) }.onFailure { log("dev bridge failed: $it") }
 
         // Master switch. Off means the app must behave like stock Twitch, so nothing below is
-        // wired -- but the settings entry still is, otherwise the only way back would be to
+        // wired, but the settings entry still is, otherwise the only way back would be to
         // reinstall. That screen shows just the one switch while we are off.
         if (!Settings.get(Settings.KEY_ENABLED, true)) {
-            log("PurpleTV is switched OFF — wiring the settings entry only")
+            log("PurpleTV is switched OFF, wiring the settings entry only")
             runCatching { SettingsEntry.install(lpparam) }
                 .onFailure { log("settings entry failed: $it") }
             return
@@ -84,12 +84,21 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
         runCatching { PickerSend.install() }.onFailure { log("picker send failed: $it") }
         runCatching { PickerBackspace.install(lpparam) }.onFailure { log("picker backspace failed: $it") }
+        runCatching { ChatMenuLandscape.install(lpparam) }.onFailure { log("chat menu in landscape failed: $it") }
         runCatching { ClassicTheatre.install(lpparam) }.onFailure { log("classic theatre failed: $it") }
         runCatching { ModLogs.install(lpparam) }.onFailure { log("mod logs failed: $it") }
         runCatching { ChatGuards.install(lpparam) }.onFailure { log("chat guards failed: $it") }
         runCatching { PlayerStats.install(lpparam) }.onFailure { log("player stats failed: $it") }
         runCatching { AudioFilters.install() }.onFailure { log("audio filters failed: $it") }
         runCatching { AdVolume.install(lpparam) }.onFailure { log("ad volume failed: $it") }
+        // Picture-by-Picture ad breaks: the bigger live preview first, since it keeps PbypWatch
+        // (the break state the other three listen to), then the captions it shows, read-aloud,
+        // and speech to text, which only hooks the player's sound when its option is on and both
+        // downloads are there. Each on its own, so one failing leaves the others working.
+        runCatching { PbypPreview.install(lpparam) }.onFailure { log("pbyp preview failed: $it") }
+        runCatching { CaptionHub.install(lpparam) }.onFailure { log("captions failed: $it") }
+        runCatching { ReadAloud.install() }.onFailure { log("read aloud failed: $it") }
+        runCatching { Stt.install(lpparam) }.onFailure { log("speech to text failed: $it") }
         runCatching { RaidCard.install(lpparam) }.onFailure { log("raid card failed: $it") }
         // The Application itself, so it watches screens from the very first one.
         runCatching { InAppUpdate.install(app ?: ctx) }.onFailure { log("in-app update failed: $it") }

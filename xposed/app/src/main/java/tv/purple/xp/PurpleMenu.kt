@@ -102,13 +102,51 @@ object PurpleMenu {
     ) : Item()
 
     /** A row that opens a screen built in code rather than declared here. Needed wherever the
-     *  content is dynamic — the keyword list is edited at runtime and can't be a static tree. */
+     *  content is dynamic: the keyword list is edited at runtime and can't be a static tree. */
     class Custom(
         override val title: String,
         override val summary: String = "",
         val onClick: (Context) -> Unit,
         override val done: Boolean = true
     ) : Item()
+
+    /** An on/off switch for a setting stored as an Int (0 off, 1 on), for features whose key is an
+     *  Int so it can grow more choices later. A Boolean under that key would read as the default. */
+    class IntToggle(
+        override val title: String,
+        override val summary: String = "",
+        val key: String,
+        val def: Int = 0,
+        override val done: Boolean = false
+    ) : Item()
+
+    /**
+     * A row whose summary is worked out when it is drawn ([describe]), for state that changes: a
+     * download, the chosen voice. [onClick] gets a setter for that line. With [live] the line is
+     * worked out again every second while the row is on screen, so a download started anywhere
+     * (or before the page was opened) shows how far it is.
+     */
+    class Action(
+        override val title: String,
+        val describe: (Context) -> String,
+        val onClick: (Context, (String) -> Unit) -> Unit,
+        val live: Boolean = false,
+        override val done: Boolean = true
+    ) : Item() {
+        override val summary: String get() = ""
+    }
+
+    /** A section title inside a page, to group a few rows. */
+    class Header(override val title: String) : Item() {
+        override val summary: String get() = ""
+        override val done: Boolean get() = true
+    }
+
+    /** A plain line of explanation, not clickable. */
+    class Note(override val summary: String) : Item() {
+        override val title: String get() = ""
+        override val done: Boolean get() = true
+    }
 
     // ---------------------------------------------------------------- tree
     //
@@ -197,6 +235,9 @@ object PurpleMenu {
         Toggle("Auto-claim channel points",
             "Claim bonus chests automatically, whether or not the chest is on screen",
             Settings.KEY_AUTO_POINTS, def = true, done = true),
+        Toggle("Chat menu button in landscape",
+            "Show the three-dots chat menu beside the chat box in landscape too, like in portrait. Shows the next time the chat box updates",
+            ChatMenuLandscape.KEY, def = ChatMenuLandscape.DEF, done = true),
         Slide("Landscape chat opacity", "Adjust the opacity of the chat window in landscape mode",
             Settings.KEY_CHAT_OPACITY, min = 0, max = 100, def = 100, done = true),
         Toggle("Alternating Background", "Display chat lines with alternating background colors",
@@ -287,6 +328,46 @@ object PurpleMenu {
             { HighlightUi.showMentionColor(it) })
     )
 
+    /**
+     * The ad-break group at the end of the Player page. None of it blocks, shortens, mutes, covers
+     * or resizes the ad: the ad plays in full and still counts for the streamer. These only make
+     * the wait easier. Declared above [PLAYER], which appends it: object properties are set up in
+     * the order they are written.
+     */
+    private val ADS: List<Item> = listOf(
+        Header("During ad breaks"),
+        Drop("Ad volume",
+            "Turn ads down to 50%, 25%, 15%, 10% or 5% of their normal loudness. Ads are mixed louder than most streams, so 25% sits about level with the stream. The ad still plays in full and still counts for the streamer",
+            AdVolume.KEY, AdVolume.OPTIONS, def = AdVolume.DEF, done = true, values = AdVolume.VALUES),
+        IntToggle("Bigger live preview during ad breaks",
+            "When Twitch keeps the stream going in a small picture during an ad, show it bigger beside the ad, still muted. Classic stream screen only",
+            PbypPreview.KEY, def = PbypPreview.DEF, done = true),
+        Toggle("Captions during ad breaks",
+            "Show what the streamer says under that live picture. Twitch's own captions are used when the streamer sends them, " +
+                "otherwise speech-to-text below if you turn it on",
+            CaptionHub.KEY, def = true, done = true),
+        Toggle("Speech-to-text captions",
+            "When the stream has no captions of its own, make them on this phone from the live picture's sound. " +
+                "Nothing is sent anywhere. Needs the two downloads below",
+            Stt.KEY, def = false, done = true),
+        Action("Download captions engine", { packSummary(it, model = false) },
+            { ctx, set -> downloadPack(ctx, model = false, set = set) }, live = true),
+        Action("Download speech model", { packSummary(it, model = true) },
+            { ctx, set -> downloadPack(ctx, model = true, set = set) }, live = true),
+        Custom("Delete downloaded captions files",
+            "Removes the captions engine and the speech model from this phone. You can download them again any time",
+            { confirmDeletePacks(it) }),
+        IntToggle("Read captions aloud",
+            "Read the captions out with an offline voice of this phone while the small live picture is shown during an ad. " +
+                "The ad keeps its own sound and volume",
+            ReadAloud.KEY, def = 0, done = true),
+        Action("Voice", { voiceSummary(it) }, { ctx, set -> pickVoice(ctx, set) }),
+        Slide("Read-aloud volume", "How loud the voice reads, in %",
+            ReadAloud.KEY_VOLUME, min = 10, max = 100, def = ReadAloud.DEF_VOLUME, step = 5, done = true),
+        Note("Captions and read-aloud only work when Twitch shows the small live picture during an ad. " +
+            "Ads that take over the whole player have no live sound to caption.")
+    )
+
     private val PLAYER = listOf(
         Toggle("Hide \"Mature content\"",
             "Enabling this option removes the UI elements associated with the mature content warning",
@@ -297,9 +378,6 @@ object PurpleMenu {
         Toggle("Disable low latency",
             "Live streams play a few seconds further behind, but stutter and rebuffer less on a weak connection. Applies from the next stream you open.",
             PlayerStats.KEY_NO_LOW_LATENCY, done = true),
-        Drop("Ad volume",
-            "Turn ads down to 50%, 25% or 15% of their normal loudness. The ad still plays in full and still counts for the streamer",
-            AdVolume.KEY, AdVolume.OPTIONS, def = AdVolume.DEF, done = true, values = AdVolume.VALUES),
         Toggle("Turn off autoplay", "When a video or clip ends, don't play the next one by itself. The Up next card stays so you can still tap it",
             ChatGuards.KEY_NO_AUTOPLAY, done = true),
         Toggle("Show stats button",
@@ -321,7 +399,7 @@ object PurpleMenu {
             min = 5, max = 120, def = 30, step = 5, done = true),
         Slide("Player backward seek", "How far the VOD back button jumps, in seconds", VodSeek.KEY_BACK,
             min = 5, max = 120, def = 10, step = 5, done = true)
-    )
+    ) + ADS
 
     private val GESTURES = listOf(
         Toggle("Volume gesture control",
@@ -368,7 +446,21 @@ object PurpleMenu {
             "https://github.com/alienware377/PurpleTV-ReVive/issues"),
         Link("7TV", "7tv.app", "https://7tv.app"),
         Link("BetterTTV", "betterttv.com", "https://betterttv.com"),
-        Link("FrankerFaceZ", "frankerfacez.com", "https://frankerfacez.com")
+        Link("FrankerFaceZ", "frankerfacez.com", "https://frankerfacez.com"),
+        // The speech-to-text downloads. The model's licence (CC-BY-SA) asks for this credit. The
+        // licence files inside the packs sit in Twitch's private storage, where nobody can open
+        // them, so the release page that carries them (and the source links) is linked here.
+        Link("sherpa-onnx", "The speech-to-text engine, by k2-fsa, Apache-2.0, with ONNX Runtime (MIT). " +
+            "It includes espeak-ng (GPL-3.0)",
+            "https://github.com/k2-fsa/sherpa-onnx"),
+        Link("Kroko ASR by Banafo, CC-BY-SA", "The English speech model for speech-to-text captions, " +
+            "converted for sherpa-onnx by csukuangfj",
+            "https://huggingface.co/Banafo/Kroko-ASR"),
+        Link("CC BY-SA 4.0", "The licence of the Kroko speech model",
+            PackPins.MODEL_LICENCE_URL),
+        Link("Captions downloads: licences and source", "The full licence texts of the engine and the speech model, " +
+            "and where their source is",
+            PackPins.RELEASE_PAGE)
     )
 
     private val UPDATES = listOf(
@@ -491,6 +583,19 @@ object PurpleMenu {
 
     /** Build one settings row. Rows for unimplemented features are dimmed and inert. */
     private fun row(ctx: Context, item: Item): View {
+        if (item is Header) return TextView(ctx).apply {
+            text = item.title
+            setTextColor(PURPLE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(dp(ctx, 16f), dp(ctx, 20f), dp(ctx, 16f), dp(ctx, 4f))
+        }
+        if (item is Note) return TextView(ctx).apply {
+            text = item.summary
+            setTextColor(TEXT_DIM)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setPadding(dp(ctx, 16f), dp(ctx, 8f), dp(ctx, 16f), dp(ctx, 16f))
+        }
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(ctx, 16f), dp(ctx, 12f), dp(ctx, 16f), dp(ctx, 12f))
@@ -517,8 +622,8 @@ object PurpleMenu {
                     if (item.key == Settings.KEY_ENABLED) {
                         // Hooks are installed once, at startup, so this cannot take effect until
                         // the app is started again. Say so rather than letting it look broken.
-                        toast(ctx, if (v) "PurpleTV on — restart the Twitch app"
-                                   else "PurpleTV off — restart the Twitch app")
+                        toast(ctx, if (v) "PurpleTV on. Restart the Twitch app"
+                                   else "PurpleTV off. Restart the Twitch app")
                         return@setOnCheckedChangeListener
                     }
                     // The format is baked into each BTTV url at fetch time, like quality is.
@@ -533,6 +638,17 @@ object PurpleMenu {
                     if (v) {
                         if (item.key == Pronouns.KEY) Pronouns.loadAsync() else BadgeRepo.refresh()
                     }
+                    // The user's own switch: speech to text may put its hooks in now (see Stt.maybeHook).
+                    AdBreakSettings.changed(item.key, byUser = true)
+                    if (item.key == Stt.KEY && v) sttNeedsDownloads(ctx)
+                }
+            })
+            is IntToggle -> titleRow.addView(android.widget.Switch(ctx).apply {
+                isChecked = Settings.getInt(item.key, item.def) != 0
+                isEnabled = item.done
+                setOnCheckedChangeListener { _, v ->
+                    Settings.setInt(item.key, if (v) 1 else 0)
+                    AdBreakSettings.changed(item.key, byUser = true)
                 }
             })
             is Sub -> titleRow.addView(TextView(ctx).apply {
@@ -555,21 +671,29 @@ object PurpleMenu {
                 setTextColor(if (item.done) PURPLE else TEXT_DIM)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             }.also { titleRow.addView(it) }
-            is Custom -> titleRow.addView(TextView(ctx).apply {
+            is Custom, is Action -> titleRow.addView(TextView(ctx).apply {
                 text = "›"
                 setTextColor(TEXT_DIM)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             })
+            // Drawn above and returned early; listed so this stays exhaustive.
+            is Header, is Note -> {}
         }
         box.addView(titleRow)
 
-        if (item.summary.isNotBlank()) {
-            box.addView(TextView(ctx).apply {
-                text = item.summary
+        // An Action works its summary out now; a failure there must not break the page.
+        val summary = if (item is Action) runCatching { item.describe(ctx) }.getOrDefault("") else item.summary
+        var summaryView: TextView? = null
+        if (summary.isNotBlank() || item is Action) {
+            val sv = TextView(ctx).apply {
+                text = summary
                 setTextColor(TEXT_DIM)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setPadding(0, dp(ctx, 3f), dp(ctx, 40f), 0)
-            })
+            }
+            box.addView(sv)
+            summaryView = sv
+            if (item is Action && item.live) keepFresh(ctx, sv, item)
         }
 
         // A slider needs its track inline, under the label.
@@ -589,6 +713,7 @@ object PurpleMenu {
                                 item.key == ChatTransparency.KEY_CHAT_WIDTH
                             ) ChatTransparency.reapply()
                             if (item.key == ChatAppearance.KEY_FONT_SIZE) ChatAppearance.reapply()
+                            AdBreakSettings.changed(item.key)
                         }
                     }
                     override fun onStartTrackingTouch(sb: SeekBar) {}
@@ -610,6 +735,11 @@ object PurpleMenu {
             }
             is Drop -> box.setOnClickListener { pickOption(ctx, item, valueView) }
             is Custom -> box.setOnClickListener { item.onClick(ctx) }
+            is Action -> box.setOnClickListener {
+                val sv = summaryView
+                runCatching { item.onClick(ctx) { s -> sv?.text = s } }
+                    .onFailure { log("menu ${item.title} failed: $it"); toast(ctx, "That did not work, sorry") }
+            }
             else -> {}
         }
         return box
@@ -624,6 +754,7 @@ object PurpleMenu {
                 valueView?.text = item.options[which]
                 // An ad playing right now takes the new level at once.
                 if (item.key == AdVolume.KEY) AdVolume.refresh()
+                AdBreakSettings.changed(item.key)
                 // Quality is baked into each CDN url at fetch time, so re-download at the new size.
                 if (item.key == EmoteQuality.KEY && which != cur) {
                     EmoteRepo.refetch()
@@ -634,6 +765,156 @@ object PurpleMenu {
             .show()
     }
 
+    // ---------------------------------------------------------------- ad-break helpers
+
+    /** Speech-to-text was just switched on: say what is still missing, if anything. */
+    private fun sttNeedsDownloads(ctx: Context) {
+        when {
+            !SttPacks.supported() -> toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor")
+            !SttPacks.engineReady(ctx) || !SttPacks.modelReady(ctx) ->
+                toast(ctx, "Now download the captions engine and the speech model below")
+        }
+    }
+
+    /** Re-work an [Action]'s summary every second while it is on screen, and stop when it is not. */
+    private fun keepFresh(ctx: Context, v: TextView, item: Action) {
+        val tick = object : Runnable {
+            override fun run() {
+                if (!v.isAttachedToWindow) return
+                runCatching { item.describe(ctx) }.onSuccess { if (v.text.toString() != it) v.text = it }
+                v.postDelayed(this, 1000L)
+            }
+        }
+        v.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(x: View) { x.removeCallbacks(tick); x.postDelayed(tick, 1000L) }
+            override fun onViewDetachedFromWindow(x: View) { x.removeCallbacks(tick) }
+        })
+    }
+
+    private fun mb(b: Long) = (b + 500_000) / 1_000_000
+
+    /** What a download row says: what the pack is, its sizes, and whether it is there or how far. */
+    private fun packSummary(ctx: Context, model: Boolean): String =
+        (if (model) "Kroko ASR English, by Banafo (CC-BY-SA). "
+         else "sherpa-onnx ${PackPins.SHERPA_VERSION}, by k2-fsa (Apache-2.0), includes espeak-ng (GPL-3.0). ") +
+            SttPacks.packLine(ctx, model)
+
+    /**
+     * Each pack is its own download, started only after the user agrees to its size. The files
+     * come from the captions-pack release of PurpleTV ReVive on GitHub and are checked against
+     * their pinned SHA-256 before anything is used.
+     */
+    private fun downloadPack(ctx: Context, model: Boolean, set: (String) -> Unit) {
+        val what = if (model) "speech model" else "captions engine"
+        if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
+        if (SttPacks.packBusy(model)) { toast(ctx, "The $what is already downloading"); return }
+        if (if (model) SttPacks.modelReady(ctx) else SttPacks.engineReady(ctx)) {
+            toast(ctx, "The $what is already downloaded and checked"); return
+        }
+        val bytes = if (model) PackPins.MODEL_BYTES else PackPins.ENGINE_BYTES
+        val unpacked = if (model) PackPins.MODEL_UNPACKED_BYTES else PackPins.ENGINE_UNPACKED_BYTES
+        // Plain text in a dialog, so the addresses are written out. Licences and source: the release page.
+        val credit = if (model) "\n\nKroko ASR by Banafo, licensed CC-BY-SA (${PackPins.MODEL_LICENCE_URL}), " +
+                         "converted for sherpa-onnx by csukuangfj. Licence and source: ${PackPins.RELEASE_PAGE}"
+                     else "\n\nsherpa-onnx by k2-fsa (Apache-2.0) with ONNX Runtime (MIT); it includes espeak-ng (GPL-3.0). " +
+                         "Licences and source: ${PackPins.RELEASE_PAGE}"
+        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Download the $what?")
+            .setMessage("About ${mb(bytes)} MB from PurpleTV ReVive's GitHub releases (${PackPins.TAG}). " +
+                "It takes ${mb(unpacked)} MB on this phone and is checked before it is used. " +
+                "Use Wi-Fi if your mobile data is limited." + credit)
+            .setPositiveButton("Download") { _, _ ->
+                val fresh = { set(packSummary(ctx, model)) }
+                // The download ends on its own time, maybe in the middle of an ad: the toast then
+                // waits until the ad is over (the row's own summary already shows the result).
+                val done = { _: Boolean, msg: String -> AdTime.toast(msg); fresh() }
+                if (model) SttPacks.downloadModel(ctx, { fresh() }, done)
+                else SttPacks.downloadEngine(ctx, { fresh() }, done)
+                fresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmDeletePacks(ctx: Context) {
+        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Delete the captions files?")
+            .setMessage("The captions engine and the speech model are removed from this phone, and a download " +
+                "that is running stops. Speech-to-text works again once both are downloaded again.")
+            .setPositiveButton("Delete") { _, _ ->
+                SttPacks.deleteAll(ctx)
+                toast(ctx, "Captions files deleted")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Names of the voices from the last list shown, so the row can name the one picked. */
+    private val voiceNames = HashMap<String, String>()
+
+    private fun voiceSummary(ctx: Context): String {
+        val pkg = Settings.getString(ReadAloud.KEY_ENGINE, "")
+        val name = if (pkg.isEmpty()) "Phone's default voice" else voiceNames[pkg] ?: appLabel(ctx, pkg) ?: pkg
+        val now = if (ReadAloud.on()) " (${ReadAloud.status()})" else ""
+        return "$name$now. Offline voices only. Classic voices like eSpeak NG or RHVoice can be installed " +
+            "from the Play Store or F-Droid, and show up here when you open this list again"
+    }
+
+    /** An app's name, when Android lets Twitch see that app. */
+    private fun appLabel(ctx: Context, pkg: String): String? = runCatching {
+        val pm = ctx.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    /** The installed offline voices, with "Test voice" to hear the one in use. */
+    private fun pickVoice(ctx: Context, set: (String) -> Unit) {
+        val list = runCatching { ReadAloud.engines(ctx) }.getOrNull().orEmpty()
+            .ifEmpty { listOf("" to "Phone's default voice") }
+        for ((p, l) in list) if (p.isNotEmpty()) voiceNames[p] = l
+        val cur = Settings.getString(ReadAloud.KEY_ENGINE, "")
+        val at = list.indexOfFirst { it.first == cur }.coerceAtLeast(0)
+        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Voice for read-aloud")
+            .setSingleChoiceItems(list.map { it.second }.toTypedArray(), at) { d, which ->
+                val pkg = list[which].first
+                if (pkg != cur) {
+                    Settings.setString(ReadAloud.KEY_ENGINE, pkg)
+                    AdBreakSettings.changed(ReadAloud.KEY_ENGINE)
+                }
+                set(voiceSummary(ctx))
+                d.dismiss()
+            }
+            .setNeutralButton("Test voice") { _, _ -> runCatching { ReadAloud.test() } }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     private fun dp(ctx: Context, v: Float): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
+}
+
+/**
+ * Ad-break settings take effect at once, from the menu, DevBridge and sync alike: the preview
+ * places itself again, read-aloud picks up a new voice or stops, and speech to text hooks, loads
+ * or unloads to match (it runs only when its own switch is on and someone uses the text: the
+ * caption box or read-aloud). Its own small object, so DevBridge and sync can call it without
+ * setting up the whole menu tree. Each step guarded, so a failure never breaks the caller.
+ */
+object AdBreakSettings {
+    /**
+     * [byUser]: a switch the user just changed in the menu, or a test command. Only then may speech
+     * to text put its IVS hooks in, outside any ad; sync never passes it (see Stt.maybeHook).
+     */
+    fun changed(key: String, byUser: Boolean = false) {
+        if (key.startsWith("pbyp_")) runCatching { PbypPreview.reapply() }
+        if (key.startsWith("read_aloud")) runCatching { ReadAloud.refresh() }
+        if (key == Stt.KEY || key == CaptionHub.KEY || key == ReadAloud.KEY || key.startsWith("dev_stt_"))
+            runCatching { Stt.refresh(hookNow = byUser) }
+    }
+
+    /** After sync loaded other devices' values: any of them may have changed. */
+    fun changedAll() {
+        changed(PbypPreview.KEY)
+        changed(ReadAloud.KEY)
+    }
 }

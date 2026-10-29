@@ -15,7 +15,7 @@ import java.lang.ref.WeakReference
  * Obfuscation-immune: we never name a Twitch class. We hook the framework
  * android.app.Activity lifecycle (onResume / onConfigurationChanged) and, when the device
  * is in LANDSCAPE, walk the decor view to find the chat side-panel by RESOURCE ENTRY NAME
- * (package-independent — see EmoteAutocomplete for the same trick) and fade its BACKGROUND to the
+ * (package-independent; see EmoteAutocomplete for the same trick) and fade its BACKGROUND to the
  * user's chosen opacity. Only the background drawable is faded, never View.alpha, so chat text and
  * emotes stay fully opaque and readable over the see-through panel.
  * In PORTRAIT we restore full opacity so the normal layout is unchanged.
@@ -27,7 +27,7 @@ object ChatTransparency {
 
     /** Chat-panel container resource entry names, OUTERMOST first. In landscape theater the chat
      *  is nested chat_wrapper > chat_view_container > chat_view_delegate_root (all same bounds).
-     *  The dark panel BACKGROUND drawable lives on an outer container, NOT on delegate_root — so
+     *  The dark panel BACKGROUND drawable lives on an outer container, NOT on delegate_root, so
      *  dimming delegate_root alone faded only the text. We dim the OUTERMOST present container so
      *  the whole panel (background + text) composites once at the chosen alpha, and reset the
      *  inner ones to 1f to avoid compounding the alpha on nested views. */
@@ -57,6 +57,13 @@ object ChatTransparency {
             hookGuideline(lp)
             log("ChatTransparency installed (Activity onResume/onConfigurationChanged)")
         }.onFailure { log("ChatTransparency hook failed: $it") }
+        // A PbyP break starting or ending changes which width is allowed (see adActive): apply at once.
+        runCatching {
+            PbypWatch.addListener {
+                val act = lastActivity?.get()
+                if (act != null) handler.post { runCatching { apply(act) } }
+            }
+        }.onFailure { log("CW PbyP listener failed: $it") }
     }
 
     /** Re-apply to the last-known foreground activity (called when the slider changes). */
@@ -96,11 +103,17 @@ object ChatTransparency {
         val root = act.window?.decorView ?: return
 
         // Collect every matching container by name (PANEL_IDS is already ordered outermost-first).
+        // The same walk notes whether a display ad is up, for adActive.
         val matches = HashMap<String, View>()
+        var adUi = false
         walk(root) { v ->
             val entry = Res.entry(v)
-            if (entry != null && entry in PANEL_IDS) matches[entry] = v
+            if (entry != null) {
+                if (entry in PANEL_IDS) matches[entry] = v
+                else if (!adUi && entry in AD_UI && v.isShown && v.width > 0 && v.height > 0) adUi = true
+            }
         }
+        adUiShown = adUi
         if (matches.isEmpty()) return
 
         // One-shot: report which chat container holds the panel background drawable.
@@ -113,7 +126,7 @@ object ChatTransparency {
 
         // Fade ONLY the dark panel background, never the chat content.
         //
-        // Setting View.alpha would composite the whole subtree — background, text and emotes — at
+        // Setting View.alpha would composite the whole subtree (background, text and emotes) at
         // the chosen opacity, which washes out the messages. Instead every matched view is held at
         // alpha 1f and the opacity is pushed into the background DRAWABLE alpha, so the panel goes
         // see-through while text and emotes stay fully opaque on top of it.
@@ -144,13 +157,13 @@ object ChatTransparency {
     // With 0dp the solver IGNORES the stored width and derives it from those anchors, so the two
     // panes are complementary by construction and meet at the guideline. Writing a width switched
     // the panel to a fixed-width solve anchored at its START edge (the guideline), which is why it
-    // grew rightwards off the screen instead of moving left — chat text got clipped mid-word.
+    // grew rightwards off the screen instead of moving left, and chat text got clipped mid-word.
     //
     // The one real lever is the guideline percent. Moving it resizes the player pane, the chat
     // panel and the several other siblings pinned to the same guideline in a single layout pass.
     // guidePercent is the fraction LEFT of the guideline, so a chat width of pct maps to
     // 1 - pct/100. That also holds under RTL: the guideline mirrors, and the panel (anchored
-    // start_toEnd) then occupies the left band — still (1 - p) wide either way.
+    // start_toEnd) then occupies the left band, still (1 - p) wide either way.
     //
     // androidx is touched by REFLECTION ONLY, never named at compile time. The layout XML inflates
     // ConstraintLayout and Guideline by fully-qualified string, so R8 cannot rename them without
@@ -243,9 +256,13 @@ object ChatTransparency {
             // and between its normal and expanded widths). Whenever it is somewhere we did not put
             // it, that was Twitch: read which of its two widths it chose, then apply ours for it.
             val last = lastWritten[guideline]
-            if (last == null || kotlin.math.abs(current - last) > 0.005f)
+            if (last == null || kotlin.math.abs(current - last) > 0.005f) {
                 wideMode[guideline] = (1f - current) >= WIDE_FROM
-            val target = if (pct == null) original else targetFor(wideMode[guideline] == true, pct)
+                twitchAsked[guideline] = current
+            }
+            var target = if (pct == null) original else targetFor(wideMode[guideline] == true, pct)
+            // During an ad our width may only widen the ad pane, never narrow it.
+            if (pct != null && adActive()) target = adSafe(target, twitchAsked[guideline] ?: original)
             if (kotlin.math.abs(current - target) < 0.005f) { lastWritten[guideline] = target; return }
 
             val m = mSetGuidePercent ?: runCatching {
@@ -259,6 +276,56 @@ object ChatTransparency {
         }.onFailure { log("CW applyChatWidth: " + it) }
     }
 
+
+    // -----------------------------------------------------------------------------------
+    // Ads keep at least Twitch's own width.
+    //
+    // The guideline percent is the share of the screen LEFT of it, which is the player pane, so
+    // during an ad that is the ad's width. Twitch asks 0.7 on phones and 0.8 on tablets while chat
+    // or a PbyP break is shown; our default 30% chat writes 0.7, which on a tablet made the ad
+    // narrower than Twitch's own layout. While a PbyP break or any ad is on, the user's width is
+    // used only when it gives the ad at least as much room as Twitch asked for: max(ours, Twitch's).
+    // Once the ad is over, the next pass puts the user's width back.
+    // -----------------------------------------------------------------------------------
+
+    /** Twitch's own last position per guideline, whatever we wrote over it. */
+    private val twitchAsked = java.util.WeakHashMap<View, Float>()
+
+    /** Display ads that squeeze the video. Both are GONE in Twitch's layouts until one shows. */
+    private val AD_UI = setOf("stream_display_ads_container", "stream_display_ads_dsa_container")
+    @Volatile private var adUiShown = false
+    @Volatile private var adRuleLogged = 0
+
+    /**
+     * A PbyP break, a display ad, or an ad window AdVolume has open (stitched, client or audio).
+     * Also read by AdTime, so the caption features use the very same idea of "an ad is on".
+     */
+    internal fun adActive(): Boolean = PbypWatch.active || adUiShown || adVolumeOpen()
+
+    private fun adSafe(target: Float, asked: Float): Float {
+        if (asked <= 0.05f || asked >= 0.95f || target >= asked) return target
+        if (adRuleLogged < 6) { adRuleLogged++; log("CW ad on: keeping Twitch's ${"%.2f".format(asked)} instead of ${"%.2f".format(target)}") }
+        return asked
+    }
+
+    @Volatile private var advolTried = false
+    @Volatile private var advolOpen: java.lang.reflect.Method? = null
+
+    /**
+     * AdVolume's own "an ad window is open". It tracks every ad kind (IVS ad breaks and Twitch's
+     * own ad state) whatever the ad volume setting is, but has no public flag and is outside this
+     * change, so its private check is read by reflection. Missing, it simply counts as no ad, and
+     * PbyP breaks and display ads are still caught above.
+     */
+    private fun adVolumeOpen(): Boolean {
+        if (!advolTried) {
+            advolTried = true
+            advolOpen = runCatching { AdVolume::class.java.getDeclaredMethod("anyOpen").apply { isAccessible = true } }
+                .onFailure { log("CW AdVolume's ad window is not readable, PbyP and display ads only: $it") }.getOrNull()
+        }
+        val m = advolOpen ?: return false
+        return runCatching { m.invoke(AdVolume) as? Boolean }.getOrNull() == true
+    }
 
     /** The guideline position (fraction left of it) for the normal or expanded chat width. */
     private fun targetFor(wide: Boolean, narrowPct: Int): Float {
@@ -308,8 +375,10 @@ object ChatTransparency {
                 val values = fs.mapNotNull { f -> runCatching { f.getFloat(params) }.getOrNull() }
                 val asked = values.firstOrNull { last == null || kotlin.math.abs(it - last) >= 0.0005f } ?: return
                 if (asked <= 0.05f || asked >= 0.95f) return     // chat hidden: leave it
+                twitchAsked[v] = asked
                 val wide = (1f - asked) >= WIDE_FROM
-                val target = targetFor(wide, Settings.getInt(KEY_CHAT_WIDTH, CHAT_WIDTH_DEFAULT))
+                var target = targetFor(wide, Settings.getInt(KEY_CHAT_WIDTH, CHAT_WIDTH_DEFAULT))
+                if (adActive()) target = adSafe(target, asked)
                 for (f in fs) runCatching { f.setFloat(params, target) }
                 if (BuildConfig.DEBUG || logRemaps-- > 0) log("CW Twitch set ${"%.2f".format(asked)}, using ${"%.2f".format(target)}")
                 wideMode[v] = wide
@@ -324,9 +393,11 @@ object ChatTransparency {
                 if (v.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE) return
                 val asked = p.args.getOrNull(0) as? Float ?: return
                 if (asked <= 0.05f || asked >= 0.95f) return     // chat hidden or full: leave it
+                twitchAsked[v] = asked
                 val wide = (1f - asked) >= WIDE_FROM
                 wideMode[v] = wide
-                val target = targetFor(wide, Settings.getInt(KEY_CHAT_WIDTH, CHAT_WIDTH_DEFAULT))
+                var target = targetFor(wide, Settings.getInt(KEY_CHAT_WIDTH, CHAT_WIDTH_DEFAULT))
+                if (adActive()) target = adSafe(target, asked)
                 p.args[0] = target
                 lastWritten[v] = target
             }

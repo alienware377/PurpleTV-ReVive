@@ -47,6 +47,8 @@ Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bt
 | **Video filters** | A filters button in the player for lives and VODs, with over 40 filters: exposure, brightness, contrast, highlights, shadows, gamma, fade, dynamic exposure, gamma, contrast and black point (they follow the stream and fix washed-out or very dark scenes as they happen), clarity, texture, sharpen, soft focus, temperature, tint, hue, saturation, vibrance, monotone, gradient map, posterize, invert, noise, vignette, colour fringe, pixelate, an overlay layer, moving bokeh lights and 11 animated glitch effects (slice shift, RGB split, VHS tracking, block corruption, wave, shake, flicker, static, rolling scanlines, channel swap, colour bleed). Most can be limited to the shadows, midtones or highlights. Every filter has a plain-words explanation, and each section has its own Reset. Save and load **presets** (several looks built in), and switch any effect or whole section off without losing its setting. |
 | **Overlays** | Lay a texture, your own picture or a solid colour over the video with any of Photoshop's 27 blend modes and an opacity slider. Comes with 32 built-in textures: grunge, paper, film grain, light leaks, bokeh, manga screentones and speed lines, retro scanlines, rain and more. |
 | **Audio filters** | An Audio tab next to the video filters: volume boost, auto volume, compressor, limiter, voice clarity, rumble cut, and Bass and Treble or a full 16-band equaliser (30 Hz to 16k). Made for talk streams: even out the volume, tame loud moments and make voices clearer. Android 9 or newer. |
+| **Ad volume** | Turn ads down to 50%, 25% (the default), 15%, 10% or 5% of their loudness. The ad still plays in full, on screen, and still counts for the streamer. Works with the audio filters on or off. |
+| **Picture-by-Picture ad breaks** | When Twitch keeps the stream going in a small muted picture during an ad, show it bigger beside the ad, with captions under it: Twitch's own captions when the streamer sends them, otherwise optional speech-to-text made on your phone (two free downloads, nothing is sent anywhere). The captions can also be read aloud with an offline voice of your phone. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Sleep timer** | A crescent moon button in the player controls (purple while a timer runs). Pick 15 minutes to 2 hours, or any time in hours and minutes; when time is up it closes Twitch like PurpleTV did, or only pauses the stream if you prefer. |
 | **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
@@ -57,6 +59,7 @@ Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bt
 | **Keep chat on /clear** | When a moderator clears chat, the messages stay on your screen and a short note says chat was cleared. Timeouts and bans still work. |
 | **Mod logs** | In channels you moderate (or your own), a line in chat says who timed out, banned, unbanned or deleted a message from whom, with the reason. Only works where you are a moderator. |
 | **Chat appearance** | Font size, alternating row backgrounds, opacity, and the landscape chat width, with a separate width for the expanded chat (swipe from the video edge). |
+| **Chat menu in landscape** | The three-dots chat menu beside the chat box shows in landscape too, not only in portrait. On by default. |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
 | **Following page tidy-up** | Hide the Categories, Continue Watching or Offline Channels sections of the Following page. Hide Twitch Stories on Home. |
 | **Hide clutter** | Individually hide the chat header, leaderboards, message input, Bits button, Follow/Subscribe, the unfollow button, cast, the hype train banner, the create button, and the mature content label and warning. |
@@ -141,7 +144,7 @@ Built and tested for **Twitch 31.7.0** and **Twitch 31.1.2**, the versions named
 
 **There is no ad blocking, and there are no money-related mods of any kind.** That is a deliberate design decision, not a missing feature, and pull requests adding either will be declined.
 
-- **No ad blocking.** Ads are how Twitch and the streamers on it get paid.
+- **No ad blocking.** Ads are how Twitch and the streamers on it get paid. Ad volume only turns an ad's sound down: the ad still plays in full and counts for the streamer, and the live picture stays muted during it.
 - **No Bits, subscription, Turbo or payment workarounds.** Nothing here touches money, anywhere.
 - **No view-botting, auto-chatting, or faked engagement.**
 
@@ -176,7 +179,9 @@ Questions, ideas and show-and-tell go in [Discussions](https://github.com/alienw
 
 ## Credits
 
-Emote data is provided by the [7TV](https://7tv.app), [BetterTTV](https://betterttv.com) and [FrankerFaceZ](https://frankerfacez.com) public APIs. Not affiliated with, endorsed by, or connected to Twitch Interactive, Inc.
+Emote data is provided by the [7TV](https://7tv.app), [BetterTTV](https://betterttv.com) and [FrankerFaceZ](https://frankerfacez.com) public APIs.
+
+Speech-to-text captions use [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by the k2-fsa project (Apache License 2.0; its download also contains ONNX Runtime under MIT and espeak-ng under GPL-3.0) and the [Kroko ASR](https://huggingface.co/Banafo/Kroko-ASR) English model by Banafo (CC-BY-SA), converted for sherpa-onnx by csukuangfj. Both are separate downloads from the [captions-pack-1](https://github.com/alienware377/PurpleTV-ReVive/releases/tag/captions-pack-1) release, not part of this module. Not affiliated with, endorsed by, or connected to Twitch Interactive, Inc.
 
 ## License
 
