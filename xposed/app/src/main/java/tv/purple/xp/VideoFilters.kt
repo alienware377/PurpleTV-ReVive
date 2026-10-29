@@ -409,7 +409,7 @@ object VideoFilters {
             // Sit left of the sleep timer when that is showing too.
             bar.findViewWithTag<View>("ptv_sleep_timer")
                 ?.takeIf { it.visibility == View.VISIBLE && it.width > 0 }?.let { row.add(it) }
-            val ref = row.firstOrNull { it.height > 0 }
+            val ref = sizeRef(bar, row)
             if (ref == null) {
                 btn?.visibility = View.GONE
                 bar.findViewWithTag<View>(TIP_TAG)?.visibility = View.GONE

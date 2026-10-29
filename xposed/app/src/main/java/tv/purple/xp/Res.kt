@@ -69,3 +69,18 @@ fun matchSize(btn: android.view.View, ref: android.view.View) {
         btn.paddingRight != ref.paddingRight || btn.paddingBottom != ref.paddingBottom)
         btn.setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
 }
+
+private val ICON_REFS = arrayOf("settings_button", "share_button", "cast_button", "media_route_button")
+
+/**
+ * The Twitch button our player buttons copy their size from: a round icon button such as the gear.
+ * The wide "Clip" text button comes first in the row but has only thin padding around its word, so
+ * copying it made our icons fill the whole button and look much bigger than Twitch's.
+ */
+fun sizeRef(bar: android.view.ViewGroup, row: List<View>): View? {
+    for (n in ICON_REFS) {
+        val id = Res.id(bar.context, n)
+        if (id != 0) row.firstOrNull { it.id == id && it.height > 0 }?.let { return it }
+    }
+    return row.firstOrNull { it.height > 0 }
+}

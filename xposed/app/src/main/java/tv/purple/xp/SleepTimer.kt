@@ -65,7 +65,7 @@ object SleepTimer {
             // The row's controls: the reference for size and height is any shown one.
             val row = ROW.mapNotNull { n -> ids(n).takeIf { it != 0 }?.let { bar.findViewById<View>(it) } }
                 .filter { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }
-            val ref = row.firstOrNull { it.height > 0 }
+            val ref = sizeRef(bar, row)
             if (ref == null) { btn?.visibility = View.GONE; continue }
             if (btn == null) {
                 btn = make(bar.context, ref)

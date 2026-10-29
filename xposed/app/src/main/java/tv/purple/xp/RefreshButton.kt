@@ -117,7 +117,7 @@ object RefreshButton {
                 .filter { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }.toMutableList()
             for (t in arrayOf("ptv_sleep_timer", "ptv_filters_button"))
                 bar.findViewWithTag<View>(t)?.takeIf { it.visibility == View.VISIBLE && it.width > 0 }?.let { row.add(it) }
-            val ref = row.firstOrNull { it.height > 0 }
+            val ref = sizeRef(bar, row)
             if (ref == null || !live) { btn?.visibility = View.GONE; continue }
             if (btn == null) {
                 btn = ImageView(bar.context).apply {

@@ -99,7 +99,7 @@ object PlayerStats {
             val row = ROW.mapNotNull { n -> Res.id(ctx, n).takeIf { it != 0 }?.let { bar.findViewById<View>(it) } }
                 .filter { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }.toMutableList()
             for (t in OURS) bar.findViewWithTag<View>(t)?.takeIf { it.visibility == View.VISIBLE && it.width > 0 }?.let { row.add(it) }
-            val ref = row.firstOrNull { it.height > 0 }
+            val ref = sizeRef(bar, row)
             if (ref == null) { btn?.visibility = View.GONE; continue }
             if (btn == null) {
                 btn = ImageView(bar.context).apply {
