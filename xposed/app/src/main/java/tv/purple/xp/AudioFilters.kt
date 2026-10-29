@@ -87,6 +87,44 @@ object AudioFilters {
     /** One effect per audio session the app plays on. */
     private val effects = HashMap<Int, Any>()
 
+    /** dB taken off after the compressor, per audio session, while an ad plays there (AdVolume). */
+    private val adCut = HashMap<Int, Float>()
+
+    /**
+     * True when this session's effect runs Auto volume or the Compressor. Those would pull a quieter
+     * ad straight back up, so AdVolume turns such a session down here, after the compressor, and
+     * leaves the track's own gain alone.
+     */
+    fun evensOut(session: Int): Boolean {
+        if (!supported() || !Settings.get(KEY_ON, true)) return false
+        if (amount("level") == 0 && amount("comp") == 0) return false
+        return synchronized(effects) {
+            val dp = effects[session] as? DynamicsProcessing
+            dp != null && runCatching { dp.enabled && dp.hasControl() }.getOrDefault(false)
+        }
+    }
+
+    /**
+     * Take [db] (0 or less) off this session's sound after the compressor. 0 puts it back.
+     * Only the compressor band is sent again: a full apply is about 40 calls to the audio server,
+     * and IVS's track constructor and release wait on this same lock at the ad's edges.
+     */
+    fun setAdCut(session: Int, db: Float) {
+        if (!supported()) return
+        val cut = db.coerceAtMost(0f)
+        synchronized(effects) {
+            if ((adCut[session] ?: 0f) == cut) return
+            if (cut == 0f) adCut.remove(session) else adCut[session] = cut
+            (effects[session] as? DynamicsProcessing)?.let { dp ->
+                runCatching {
+                    val band = mbcBand()
+                    band.postGain = band.postGain + cut
+                    dp.setMbcBandAllChannelsTo(0, band)
+                }
+            }
+        }
+    }
+
     fun install() {
         if (!supported()) return
         XposedBridge.hookAllConstructors(AudioTrack::class.java, object : XC_MethodHook() {
@@ -111,12 +149,13 @@ object AudioFilters {
             val dp = create(session) ?: return
             effects[session] = dp
             log("AF effect on audio session $session")
-            apply(dp as DynamicsProcessing)
+            apply(dp as DynamicsProcessing, session)
         }
     }
 
     private fun detach(session: Int) {
         synchronized(effects) {
+            adCut.remove(session)
             (effects.remove(session) as? DynamicsProcessing)?.let { runCatching { it.release() } }
         }
     }
@@ -147,7 +186,7 @@ object AudioFilters {
     /** Push the current settings to every attached effect. Called when a slider moves. */
     fun refresh() {
         if (!supported()) return
-        synchronized(effects) { for (e in effects.values) runCatching { apply(e as DynamicsProcessing) } }
+        synchronized(effects) { for ((s, e) in effects) runCatching { apply(e as DynamicsProcessing, s) } }
     }
 
     // ---- settings to effect parameters ----
@@ -157,13 +196,11 @@ object AudioFilters {
         if (i == 15) 20000f else kotlin.math.sqrt(EQ_HZ[i].toFloat() * EQ_HZ[i + 1]).toFloat()
     }
 
-    private fun apply(dp: DynamicsProcessing) {
+    private fun apply(dp: DynamicsProcessing, session: Int) {
         val on = anyActive()
         dp.enabled = on
         if (!on) return
         val boost = amount("boost").coerceIn(0, 12).toFloat()
-        val lvl = amount("level").coerceIn(0, 100) / 100f
-        val cmp = amount("comp").coerceIn(0, 100) / 100f
         val lim = amount("limit").coerceIn(0, 100) / 100f
         val voice = amount("voice").coerceIn(0, 100) / 100f
         val low = amount("lowcut").coerceIn(0, 100) / 100f
@@ -189,21 +226,10 @@ object AudioFilters {
         for (i in CUTS.indices) eq.setBand(i, DynamicsProcessing.EqBand(true, CUTS[i], gains[i]))
         dp.setPreEqAllChannelsTo(eq)
 
-        // Compressor: auto volume is slow and gentle, the compressor fast and firmer; together the
-        // firmer settings win. Make-up gain brings the level back up after squeezing.
-        var threshold = 0f; var ratio = 1f; var attack = 10f; var release = 200f; var makeup = 0f
-        if (lvl > 0f || cmp > 0f) {
-            val tA = -20f - 15f * lvl; val rA = 1f + 5f * lvl
-            val tC = -12f - 18f * cmp; val rC = 1f + 7f * cmp
-            threshold = if (lvl > 0f && cmp > 0f) minOf(tA, tC) else if (lvl > 0f) tA else tC
-            ratio = maxOf(if (lvl > 0f) rA else 1f, if (cmp > 0f) rC else 1f)
-            attack = (lvl * 40f + cmp * 5f) / (lvl + cmp)
-            release = (lvl * 700f + cmp * 120f) / (lvl + cmp)
-            makeup = (-threshold) * (1f - 1f / ratio) * 0.5f
-        }
-        val band = DynamicsProcessing.MbcBand(true, 20000f, attack, release, ratio, threshold, 6f,
-            if (lvl > 0f) -55f else -90f,     // keep silence and hiss from being pulled up
-            if (lvl > 0f) 2f else 1f, 0f, makeup)
+        val band = mbcBand()
+        val makeup = band.postGain
+        // An ad's cut (AdVolume) goes after the compressor, where it can not be pulled back up.
+        band.postGain = makeup + (adCut[session] ?: 0f)
         val mbc = DynamicsProcessing.Mbc(true, true, 1)
         mbc.setBand(0, band)
         dp.setMbcAllChannelsTo(mbc)
@@ -216,5 +242,29 @@ object AudioFilters {
         }
         dp.setLimiterAllChannelsTo(DynamicsProcessing.Limiter(true, ceiling != null, 0, 1f, 60f, 10f, ceiling ?: 0f, 0f))
         dp.setInputGainAllChannelsTo(boost)
+    }
+
+    /**
+     * Auto volume and the Compressor as the one compressor band. Its post gain is the make-up gain
+     * alone: callers add an ad's cut on top. Shared by apply and setAdCut so both send the same band.
+     */
+    private fun mbcBand(): DynamicsProcessing.MbcBand {
+        val lvl = amount("level").coerceIn(0, 100) / 100f
+        val cmp = amount("comp").coerceIn(0, 100) / 100f
+        // Auto volume is slow and gentle, the compressor fast and firmer; together the firmer
+        // settings win. Make-up gain brings the level back up after squeezing.
+        var threshold = 0f; var ratio = 1f; var attack = 10f; var release = 200f; var makeup = 0f
+        if (lvl > 0f || cmp > 0f) {
+            val tA = -20f - 15f * lvl; val rA = 1f + 5f * lvl
+            val tC = -12f - 18f * cmp; val rC = 1f + 7f * cmp
+            threshold = if (lvl > 0f && cmp > 0f) minOf(tA, tC) else if (lvl > 0f) tA else tC
+            ratio = maxOf(if (lvl > 0f) rA else 1f, if (cmp > 0f) rC else 1f)
+            attack = (lvl * 40f + cmp * 5f) / (lvl + cmp)
+            release = (lvl * 700f + cmp * 120f) / (lvl + cmp)
+            makeup = (-threshold) * (1f - 1f / ratio) * 0.5f
+        }
+        return DynamicsProcessing.MbcBand(true, 20000f, attack, release, ratio, threshold, 6f,
+            if (lvl > 0f) -55f else -90f,     // keep silence and hiss from being pulled up
+            if (lvl > 0f) 2f else 1f, 0f, makeup)
     }
 }

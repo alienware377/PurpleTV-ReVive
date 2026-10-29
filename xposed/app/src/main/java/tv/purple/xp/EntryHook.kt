@@ -89,6 +89,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { ChatGuards.install(lpparam) }.onFailure { log("chat guards failed: $it") }
         runCatching { PlayerStats.install(lpparam) }.onFailure { log("player stats failed: $it") }
         runCatching { AudioFilters.install() }.onFailure { log("audio filters failed: $it") }
+        runCatching { AdVolume.install(lpparam) }.onFailure { log("ad volume failed: $it") }
         runCatching { RaidCard.install(lpparam) }.onFailure { log("raid card failed: $it") }
         // The Application itself, so it watches screens from the very first one.
         runCatching { InAppUpdate.install(app ?: ctx) }.onFailure { log("in-app update failed: $it") }

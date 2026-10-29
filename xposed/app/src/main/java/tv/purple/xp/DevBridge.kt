@@ -16,6 +16,19 @@ import android.os.Build
  *   adb shell am broadcast -p tv.twitch.android.app -a tv.purple.xp.DEV_SET --es key KEY --es s TEXT
  *   adb shell am broadcast -p tv.twitch.android.app -a tv.purple.xp.DEV_DUMP
  *
+ * Ad volume (AdVolume), set the level first with DEV_SET --es key ad_volume --ei i 25 (100, 50,
+ * 25 or 15), then read the "AV" lines in logcat:
+ *   ... -a tv.purple.xp.DEV_ADVOL --es op start [--ei s 15]   an ad window on the main player's
+ *        audio session for s seconds (default 30), restored by itself after that
+ *   ... -a tv.purple.xp.DEV_ADVOL --es op start --es via cue  the same through the DATERANGE parser
+ *        (a twitch-stitched-ad cue of s seconds; its watchdog adds 20 s)
+ *   ... -a tv.purple.xp.DEV_ADVOL --es op end                 restores everything now
+ *   ... -a tv.purple.xp.DEV_ADVOL --es op end --es via cue    the stream-source "live" cue instead
+ *   ... -a tv.purple.xp.DEV_ADVOL --es op state --es kind client   Twitch's own ad state, as its
+ *        presenter pushes it (client, audio, surestream or none)
+ *   ... -a tv.purple.xp.DEV_ADVOL --es op status              logs players, sessions and track gains
+ * None of them calls an IVS native method; status only reads Java fields.
+ *
  * Only something holding android.permission.DUMP can send these, which in practice means the adb
  * shell or the system. An ordinary app on the phone cannot reach it.
  *
@@ -38,6 +51,7 @@ object DevBridge {
     private const val ACTION_VIEW = "tv.purple.xp.DEV_VIEW"
     private const val ACTION_SYNC = "tv.purple.xp.DEV_SYNC"
     private const val ACTION_EMINFO = "tv.purple.xp.DEV_EMINFO"
+    private const val ACTION_ADVOL = "tv.purple.xp.DEV_ADVOL"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -65,6 +79,7 @@ object DevBridge {
                         ACTION_RAID -> RaidCard.simulate(i.getStringExtra("src").orEmpty(), i.getStringExtra("dst").orEmpty(), i.getIntExtra("n", 5))
                         ACTION_EMINFO -> for (n in i.getStringExtra("names").orEmpty().split(",").filter { it.isNotBlank() }) log("DEV eminfo $n: " + EmoteRepo.debugInfo(n) + " available=" + Favorites.isAvailable(n))
                         ACTION_SYNC -> SettingsSync.debugRead(app, i.getStringExtra("re"))
+                        ACTION_ADVOL -> AdVolume.dev(i)
                         ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
@@ -75,6 +90,7 @@ object DevBridge {
         val filter = IntentFilter().apply {
             addAction(ACTION_SET); addAction(ACTION_DUMP); addAction(ACTION_PROBE)
             addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE); addAction(ACTION_VIEW); addAction(ACTION_SYNC); addAction(ACTION_EMINFO)
+            addAction(ACTION_ADVOL)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -112,6 +128,7 @@ object DevBridge {
         runCatching { ChatAppearance.reapply() }
         runCatching { HomeTabs.reapply() }
         if (key.startsWith("af_")) runCatching { AudioFilters.refresh() }
+        if (key == AdVolume.KEY || key.startsWith("af_")) runCatching { AdVolume.refresh() }
         if (key == EmoteQuality.KEY || key == EmoteQuality.KEY_BTTV_WEBP || key == EmoteRepo.KEY_HOMIES)
             EmoteRepo.refetch()
     }

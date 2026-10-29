@@ -61,8 +61,20 @@ object PurpleMenu {
         val key: String,
         val options: List<String>,
         val def: Int = 0,
-        override val done: Boolean = false
-    ) : Item()
+        override val done: Boolean = false,
+        /** What each option stores, when that is not simply its place in the list. [def] is then
+         *  a stored value too. */
+        val values: List<Int>? = null
+    ) : Item() {
+        /** The option for what is stored now. */
+        fun current(): Int {
+            val v = Settings.getInt(key, def)
+            val vs = values ?: return v
+            return vs.indexOf(v).takeIf { it >= 0 } ?: vs.indexOf(def).coerceAtLeast(0)
+        }
+
+        fun store(which: Int) = Settings.setInt(key, values?.getOrNull(which) ?: which)
+    }
 
     class Slide(
         override val title: String,
@@ -285,6 +297,9 @@ object PurpleMenu {
         Toggle("Disable low latency",
             "Live streams play a few seconds further behind, but stutter and rebuffer less on a weak connection. Applies from the next stream you open.",
             PlayerStats.KEY_NO_LOW_LATENCY, done = true),
+        Drop("Ad volume",
+            "Turn ads down to 50%, 25% or 15% of their normal loudness. The ad still plays in full and still counts for the streamer",
+            AdVolume.KEY, AdVolume.OPTIONS, def = AdVolume.DEF, done = true, values = AdVolume.VALUES),
         Toggle("Turn off autoplay", "When a video or clip ends, don't play the next one by itself. The Up next card stays so you can still tap it",
             ChatGuards.KEY_NO_AUTOPLAY, done = true),
         Toggle("Show stats button",
@@ -531,7 +546,7 @@ object PurpleMenu {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             })
             is Drop -> valueView = TextView(ctx).apply {
-                text = item.options.getOrElse(Settings.getInt(item.key, item.def)) { "" }
+                text = item.options.getOrElse(item.current()) { "" }
                 setTextColor(if (item.done) PURPLE else TEXT_DIM)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             }.also { titleRow.addView(it) }
@@ -601,12 +616,14 @@ object PurpleMenu {
     }
 
     private fun pickOption(ctx: Context, item: Drop, valueView: TextView?) {
-        val cur = Settings.getInt(item.key, item.def)
+        val cur = item.current()
         android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(item.title)
             .setSingleChoiceItems(item.options.toTypedArray(), cur) { d, which ->
-                Settings.setInt(item.key, which)
+                item.store(which)
                 valueView?.text = item.options[which]
+                // An ad playing right now takes the new level at once.
+                if (item.key == AdVolume.KEY) AdVolume.refresh()
                 // Quality is baked into each CDN url at fetch time, so re-download at the new size.
                 if (item.key == EmoteQuality.KEY && which != cur) {
                     EmoteRepo.refetch()

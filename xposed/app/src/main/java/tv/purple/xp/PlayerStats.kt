@@ -78,6 +78,9 @@ object PlayerStats {
 
     @Volatile private var shown: WeakReference<Any>? = null
 
+    /** The IVS player drawing to the screen now, for AdVolume's test commands. */
+    fun shownPlayer(): Any? = shown?.get()
+
     // ---- the stats button and box ----
 
     /** From each layout pass: add, place or remove the button. */
