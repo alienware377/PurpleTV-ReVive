@@ -131,6 +131,7 @@ object RefreshButton {
                 bar.addView(btn, ViewGroup.LayoutParams(ref.height, ref.height))
                 added = true
             }
+            matchSize(btn, ref)
             val x = row.minOf { it.x } - ref.height
             if (btn.x != x) btn.x = x
             if (btn.y != ref.y) btn.y = ref.y

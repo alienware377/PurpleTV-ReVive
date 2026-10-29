@@ -72,6 +72,7 @@ object SleepTimer {
                 bar.addView(btn, ViewGroup.LayoutParams(ref.height, ref.height))
                 added = true
             }
+            matchSize(btn, ref)
             val left = row.minOf { it.x }
             val x = left - ref.height
             if (btn.x != x) btn.x = x

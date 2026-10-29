@@ -54,3 +54,18 @@ fun <K> weakKeys(m: java.util.WeakHashMap<K, *>): List<K> {
     while (it.hasNext()) it.next()?.let { out.add(it) }
     return out
 }
+
+/**
+ * Keep one of our player bar buttons the same size as Twitch's own [ref] button. Twitch can still
+ * be animating its bar when our button is first made, so a size copied only once could stick at
+ * the wrong value (a sleep timer button bigger than its neighbours) until the player was rebuilt.
+ */
+fun matchSize(btn: android.view.View, ref: android.view.View) {
+    val h = ref.height
+    if (h <= 0) return
+    val lp = btn.layoutParams ?: return
+    if (lp.width != h || lp.height != h) { lp.width = h; lp.height = h; btn.layoutParams = lp }
+    if (btn.paddingLeft != ref.paddingLeft || btn.paddingTop != ref.paddingTop ||
+        btn.paddingRight != ref.paddingRight || btn.paddingBottom != ref.paddingBottom)
+        btn.setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
+}
