@@ -74,6 +74,28 @@ object FilterIcons {
         }
     }
 
+    /** A crescent moon with a small star: the sleep timer button. Purple while a timer runs. */
+    class Moon : Icon() {
+        fun setActive(on: Boolean) {
+            val c = if (on) PURPLE else Color.WHITE
+            if (c != color) { color = c; invalidateSelf() }
+        }
+        override fun paint(c: Canvas, s: Float) {
+            // The full disc minus an offset disc leaves the crescent.
+            val moon = Path().apply { addCircle(s * 0.46f, s * 0.54f, s * 0.32f, Path.Direction.CW) }
+            val bite = Path().apply { addCircle(s * 0.64f, s * 0.40f, s * 0.27f, Path.Direction.CW) }
+            moon.op(bite, Path.Op.DIFFERENCE)
+            c.drawPath(moon, fill)
+            // A little four-point star up and to the right.
+            val cx = s * 0.80f; val cy = s * 0.20f; val r = s * 0.10f; val k = r * 0.32f
+            val star = Path().apply {
+                moveTo(cx, cy - r); lineTo(cx + k, cy - k); lineTo(cx + r, cy); lineTo(cx + k, cy + k)
+                lineTo(cx, cy + r); lineTo(cx - k, cy + k); lineTo(cx - r, cy); lineTo(cx - k, cy - k); close()
+            }
+            c.drawPath(star, fill)
+        }
+    }
+
     private fun sun(c: Canvas, s: Float, st: Paint, r0: Float = 0.17f) {
         val cx = s / 2f
         c.drawCircle(cx, cx, s * r0, st)

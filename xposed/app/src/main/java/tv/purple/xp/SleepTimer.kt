@@ -2,8 +2,6 @@ package tv.purple.xp
 
 import android.app.AlertDialog
 import android.content.Context
-import android.graphics.Color
-import android.graphics.PorterDuff
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
@@ -90,20 +88,17 @@ object SleepTimer {
 
     private fun make(ctx: Context, ref: View) = ImageView(ctx).apply {
         tag = TAG
-        setImageResource(android.R.drawable.ic_lock_idle_alarm)
+        setImageDrawable(FilterIcons.Moon())
         scaleType = ImageView.ScaleType.FIT_CENTER
         setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
         contentDescription = "Sleep timer"
         setOnClickListener { choose(it.context) }
     }
 
-    /** White when idle, Twitch purple while a timer is running. */
+    /** White when idle, the same purple as the other PurpleTV buttons while a timer is running. */
     private fun tint(v: ImageView) {
-        val c = if (dueAt > 0) 0xFFA970FF.toInt() else Color.WHITE
-        if (tinted[v] != c) { v.setColorFilter(c, PorterDuff.Mode.SRC_IN); tinted[v] = c }
+        (v.drawable as? FilterIcons.Moon)?.setActive(dueAt > 0)
     }
-
-    private val tinted = java.util.WeakHashMap<ImageView, Int>()
 
     private fun closes() = Settings.getInt(KEY_ACTION, 0) == 0
 

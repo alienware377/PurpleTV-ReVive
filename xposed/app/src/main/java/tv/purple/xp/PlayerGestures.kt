@@ -76,6 +76,8 @@ object PlayerGestures {
     }
 
     private var justClaimed = false
+    /** A few decisions are logged after each start, to see why a swipe did or did not count. */
+    private var logs = 8
 
     private fun enabledAny() =
         Settings.get(KEY_VOLUME, false) || Settings.get(KEY_BRIGHTNESS, false)
@@ -89,14 +91,14 @@ object PlayerGestures {
                 // DEV_PORTRAIT is a hidden switch for testing on a device locked to portrait.
                 if (a.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE &&
                     !Settings.get(DEV_PORTRAIT, false)) return false
-                player.set(playerRect(a) ?: return false)
-                if (!player.contains(ev.rawX.toInt(), ev.rawY.toInt())) return false
+                player.set(playerRect(a) ?: run { if (logs-- > 0) log("PG no player on screen"); return false })
+                if (!player.contains(ev.rawX.toInt(), ev.rawY.toInt())) { if (logs-- > 0) log("PG touch outside player $player"); return false }
                 // Keep clear of the system gesture strips at the very top and bottom.
                 val edge = (24 * a.resources.displayMetrics.density).toInt()
                 if (ev.rawY < player.top + edge || ev.rawY > player.bottom - edge) return false
                 // Twitch opens its quality, playback speed and other player menus as a sheet inside
                 // the player area. A swipe there is meant for the menu (scrolling it), not for us.
-                if (menuUnder(a, ev.rawX.toInt(), ev.rawY.toInt())) return false
+                if (menuUnder(a, ev.rawX.toInt(), ev.rawY.toInt())) { if (logs-- > 0) log("PG menu under the finger, no gesture"); return false }
                 tracking = true
                 downX = ev.rawX; downY = ev.rawY; lastY = ev.rawY
                 startLeft = ev.rawX < player.centerX()
@@ -116,6 +118,7 @@ object PlayerGestures {
                         else -> { tracking = false; return false }
                     }
                     justClaimed = true
+                    if (logs-- > 0) log("PG gesture $mode")
                     volCarry = 0f
                     lastY = ev.rawY
                     return true
@@ -137,20 +140,37 @@ object PlayerGestures {
     }
 
     private val hitRect = Rect()
+    /** The player view found for the current touch, so the menu check can start from it. */
+    private var playerView: WeakReference<View>? = null
 
     /**
      * True when the finger is on something over the player that has its own use for a swipe: an
-     * open player menu sheet ("bottom_sheet") or anything that scrolls. Follows the views under the
-     * finger from the top of the window down, the same way the touch itself would travel.
+     * open player menu sheet (Twitch's "bottom_sheet", which holds quality, playback speed and the
+     * other player menus) or anything inside the player that scrolls, like the chat over the video.
+     *
+     * The window is not searched from the top: the Home page stays laid out under the stream
+     * screen, and its scrolling lists would count as being under the finger.
      */
     private fun menuUnder(a: Activity, x: Int, y: Int): Boolean {
-        var v: View = a.window?.decorView ?: return false
+        val root = a.window?.decorView ?: return false
+        val sheetId = Res.id(a, "bottom_sheet")
+        if (sheetId != 0) {
+            val stack = ArrayDeque<View>(); stack.add(root)
+            while (stack.isNotEmpty()) {
+                val v = stack.removeLast()
+                if (!v.isShown) continue
+                // A hidden sheet sits below the screen, so only an open one is visible here.
+                if (v.id == sheetId && v is ViewGroup && v.childCount > 0 &&
+                    v.getGlobalVisibleRect(hitRect) && hitRect.contains(x, y)) return true
+                if (v is ViewGroup) for (i in 0 until v.childCount) stack.add(v.getChildAt(i))
+            }
+        }
+        // Inside the player only: follow the views under the finger, top one first.
+        var v: View = playerView?.get() ?: return false
         while (true) {
-            if (v !== a.window?.decorView && (v.canScrollVertically(1) || v.canScrollVertically(-1))) return true
-            if (v is ViewGroup && v.childCount > 0 && Res.entry(v) == "bottom_sheet") return true
+            if (v.canScrollVertically(1) || v.canScrollVertically(-1)) return true
             val g = v as? ViewGroup ?: return false
             var next: View? = null
-            // The child drawn last is on top.
             for (i in g.childCount - 1 downTo 0) {
                 val c = g.getChildAt(i) ?: continue
                 if (!c.isShown) continue
@@ -160,18 +180,32 @@ object PlayerGestures {
         }
     }
 
-    /** Screen rect of the visible player, or null when there is none on screen. */
+    /**
+     * Screen rect of the visible player, or null when there is none on screen.
+     *
+     * The biggest one wins: the Home page stays laid out under the stream screen with its own small
+     * preview players, and the first match in the tree was often one of those, so swipes on the
+     * real stream fell "outside the player" and did nothing.
+     */
     private fun playerRect(a: Activity): Rect? {
         val root = a.window?.decorView ?: return null
-        for (name in arrayOf("player_overlay_container", "player_pane", "player_container")) {
-            val id = a.resources.getIdentifier(name, "id", a.packageName)
-            if (id == 0) continue
-            val v = root.findViewById<View>(id) ?: continue
-            if (!v.isShown || v.width == 0 || v.height == 0) continue
-            val r = Rect()
-            if (v.getGlobalVisibleRect(r) && r.height() > 0) return r
+        val ids = arrayOf("player_overlay_container", "player_pane", "player_container")
+            .map { Res.id(a, it) }.filter { it != 0 }.toSet()
+        if (ids.isEmpty()) return null
+        var best: Rect? = null; var bestView: View? = null
+        val r = Rect()
+        val stack = ArrayDeque<View>(); stack.add(root)
+        while (stack.isNotEmpty()) {
+            val v = stack.removeLast()
+            if (!v.isShown) continue
+            if (v.id in ids && v.width > 0 && v.height > 0 && v.getGlobalVisibleRect(r) && r.height() > 0) {
+                val area = r.width().toLong() * r.height()
+                if (best == null || area > best.width().toLong() * best.height()) { best = Rect(r); bestView = v }
+            }
+            if (v is ViewGroup) for (i in 0 until v.childCount) stack.add(v.getChildAt(i))
         }
-        return null
+        playerView = bestView?.let { WeakReference(it) }
+        return best
     }
 
     private fun brightness(a: Activity, frac: Float) {
