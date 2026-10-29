@@ -87,17 +87,20 @@ object AudioFilters {
     /** One effect per audio session the app plays on. */
     private val effects = HashMap<Int, Any>()
 
-    /** dB taken off after the compressor, per audio session, while an ad plays there (AdVolume). */
+    /** dB taken off after the limiter, per audio session, while an ad plays there (AdVolume). */
     private val adCut = HashMap<Int, Float>()
 
+    /** The limiter ceiling from the last apply, so setAdCut can send the same limiter. */
+    @Volatile private var ceilingNow: Float? = null
+
     /**
-     * True when this session's effect runs Auto volume or the Compressor. Those would pull a quieter
-     * ad straight back up, so AdVolume turns such a session down here, after the compressor, and
-     * leaves the track's own gain alone.
+     * True when this session's effect is running. Auto volume, the Compressor and the Limiter would
+     * pull a quieter track partly back up (with the Limiter at full, a 26 dB cut came out as 12),
+     * so AdVolume turns such a session down here, after the limiter, and leaves the track's own gain
+     * alone.
      */
-    fun evensOut(session: Int): Boolean {
+    fun takesAdCut(session: Int): Boolean {
         if (!supported() || !Settings.get(KEY_ON, true)) return false
-        if (amount("level") == 0 && amount("comp") == 0) return false
         return synchronized(effects) {
             val dp = effects[session] as? DynamicsProcessing
             dp != null && runCatching { dp.enabled && dp.hasControl() }.getOrDefault(false)
@@ -105,8 +108,8 @@ object AudioFilters {
     }
 
     /**
-     * Take [db] (0 or less) off this session's sound after the compressor. 0 puts it back.
-     * Only the compressor band is sent again: a full apply is about 40 calls to the audio server,
+     * Take [db] (0 or less) off this session's sound after the limiter. 0 puts it back.
+     * Only the limiter is sent again: a full apply is about 40 calls to the audio server,
      * and IVS's track constructor and release wait on this same lock at the ad's edges.
      */
     fun setAdCut(session: Int, db: Float) {
@@ -116,11 +119,7 @@ object AudioFilters {
             if ((adCut[session] ?: 0f) == cut) return
             if (cut == 0f) adCut.remove(session) else adCut[session] = cut
             (effects[session] as? DynamicsProcessing)?.let { dp ->
-                runCatching {
-                    val band = mbcBand()
-                    band.postGain = band.postGain + cut
-                    dp.setMbcBandAllChannelsTo(0, band)
-                }
+                runCatching { dp.setLimiterAllChannelsTo(limiter(ceilingNow, cut)) }
             }
         }
     }
@@ -228,8 +227,6 @@ object AudioFilters {
 
         val band = mbcBand()
         val makeup = band.postGain
-        // An ad's cut (AdVolume) goes after the compressor, where it can not be pulled back up.
-        band.postGain = makeup + (adCut[session] ?: 0f)
         val mbc = DynamicsProcessing.Mbc(true, true, 1)
         mbc.setBand(0, band)
         dp.setMbcAllChannelsTo(mbc)
@@ -240,13 +237,22 @@ object AudioFilters {
             boost > 0f || makeup > 0f || gains.any { it > 0f } -> -0.5f
             else -> null
         }
-        dp.setLimiterAllChannelsTo(DynamicsProcessing.Limiter(true, ceiling != null, 0, 1f, 60f, 10f, ceiling ?: 0f, 0f))
+        ceilingNow = ceiling
+        dp.setLimiterAllChannelsTo(limiter(ceiling, adCut[session] ?: 0f))
         dp.setInputGainAllChannelsTo(boost)
     }
 
     /**
+     * The last stage: the chosen [ceiling], then an ad's [cut] (AdVolume) as the limiter's post gain,
+     * where nothing after it can pull the sound back up. During a cut with no ceiling chosen it
+     * still runs, at 0 dB, which only ever touches what would clip anyway.
+     */
+    private fun limiter(ceiling: Float?, cut: Float) =
+        DynamicsProcessing.Limiter(true, ceiling != null || cut < 0f, 0, 1f, 60f, 10f, ceiling ?: 0f, cut)
+
+    /**
      * Auto volume and the Compressor as the one compressor band. Its post gain is the make-up gain
-     * alone: callers add an ad's cut on top. Shared by apply and setAdCut so both send the same band.
+     * alone.
      */
     private fun mbcBand(): DynamicsProcessing.MbcBand {
         val lvl = amount("level").coerceIn(0, 100) / 100f

@@ -21,8 +21,9 @@ import java.util.TreeSet
 import java.util.WeakHashMap
 
 /**
- * "Ad volume": ads play at 50%, 25% or 15% of their normal loudness. The ad itself is untouched:
- * it plays in full, on screen, never muted, and counts for the streamer as usual.
+ * "Ad volume": ads play at 50%, 25%, 15%, 10% or 5% of their normal loudness (25% by default).
+ * The ad itself is untouched: it plays in full, on screen, never muted, and counts for the streamer
+ * as usual.
  *
  * Where the sound is turned down, and why there:
  *  - One level below Twitch, on the gain of Android's AudioTrack, where every in-app sound ends up
@@ -61,9 +62,10 @@ object AdVolume {
 
     const val KEY = "ad_volume"
     /** What each option stores: the percentage of the ad's normal loudness. 100 is Twitch's own. */
-    val VALUES = listOf(100, 50, 25, 15)
-    val OPTIONS = listOf("Normal", "50%", "25%", "15%")
-    const val DEF = 100
+    val VALUES = listOf(100, 50, 25, 15, 10, 5)
+    val OPTIONS = listOf("Normal", "50%", "25%", "15%", "10%", "5%")
+    /** Ads are mixed much louder than most streams, so 25% sits about level with the stream. */
+    const val DEF = 25
 
     /** About -30 dB: the floor for our gain, unless Twitch's own value is already lower. */
     private const val MIN_GAIN = 0.03f
@@ -163,14 +165,14 @@ object AdVolume {
     @Volatile private var fRev = Int.MIN_VALUE
     @Volatile private var fCached = 1f
 
-    /** The chosen factor, 0.15 to 1. Re-read only after a settings write. */
+    /** The chosen factor, 0.05 to 1. Re-read only after a settings write. */
     fun factor(): Float {
         if (!Settings.isReady()) return 1f
         val r = Settings.rev
         if (r != fRev) {
-            // Anything that is not one of the options means Normal, exactly as the menu shows it,
-            // so a stray value (an old index, a synced value from another build) never turns ads
-            // down while the row says Normal.
+            // Anything that is not one of the options means the default, exactly as the menu shows
+            // it, so a stray value (an old index, a synced value from another build) never sets a
+            // level the row does not show.
             val v = Settings.getInt(KEY, DEF)
             fCached = (if (v in VALUES) v else DEF) / 100f
             fRev = r
@@ -567,10 +569,10 @@ object AdVolume {
             }
             cands.removeAll(excl)
         }
-        // Auto volume and the Compressor would pull a quieter track straight back up, so on those
-        // sessions the cut goes into AudioFilters' effect after its compressor, and the track keeps
+        // Auto volume, the Compressor and the Limiter would pull a quieter track partly back up, so
+        // where AudioFilters' effect runs the cut goes in after its limiter, and the track keeps
         // Twitch's gain.
-        val af = cands.filterTo(HashSet()) { AudioFilters.evensOut(it) }
+        val af = cands.filterTo(HashSet()) { AudioFilters.takesAdCut(it) }
         val mine = cands.filter { it !in af }.toIntArray()
         val changed = HashSet<Int>()
         synchronized(L) {
