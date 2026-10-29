@@ -756,9 +756,18 @@ object EmoteRepo {
                 if (u.optString("size") == EmoteQuality.adamcy) { pick = url; break }
             }
             val chosen = pick.ifEmpty { fallback }
-            if (chosen.isNotEmpty()) out[name] = chosen
+            if (chosen.isNotEmpty()) out[name] = darkUrl(chosen)
         }
     }
+
+    /**
+     * Twitch's CDN keeps each emote for a light and a dark theme. Every other source gives the dark
+     * one, but adamcy gives light, so on a streamer's own channel their emotes had a second url:
+     * the moving picture decoded for the first was then dropped as another chat's, and favorites
+     * stayed still there.
+     */
+    private fun darkUrl(u: String) =
+        if (u.contains("static-cdn.jtvnw.net/emoticons/")) u.replace("/light/", "/dark/") else u
 
     /** A single autocomplete suggestion: emote name + optional preview drawable. */
     data class Sug(val name: String, val drawable: Drawable?, val pinned: Boolean = false)
@@ -805,7 +814,8 @@ object EmoteRepo {
      */
     /** Test aid: where an emote name is known from. */
     fun debugInfo(name: String) = "twitch=${twitch.containsKey(name)} global=${gTwitch.containsKey(name)} 3p=${map.containsKey(name)} " +
-        "channelOwned=${name in channelOwned} pic=${suggestDrawables.containsKey(name)} channel=$activeName twitchTotal=${twitch.size}"
+        "channelOwned=${name in channelOwned} pic=${suggestDrawables.containsKey(name)} channel=$activeName twitchTotal=${twitch.size} " +
+        "anim=${animBytes.containsKey(name)} built=${builtFrom[name]?.takeLast(40)} url=${urlOf(name)?.takeLast(40)}"
 
     fun wantPictures(names: Collection<String>, onReady: () -> Unit) {
         val res = Resources.getSystem()
@@ -988,10 +998,15 @@ object EmoteRepo {
                 // A channel emote that reuses a global name has its own picture: drop the
                 // global one so the channel's is fetched instead of the global staying put.
                 for ((n, u) in cMap) if (gMap[n] != u) { drawables.remove(n); suggestDrawables.remove(n) }
-                // Animated pictures decoded for a different url are another chat's.
+                // Animated pictures decoded for a different url are another chat's. The still copy
+                // goes with them, or the name would keep it and never be fetched again from the url
+                // that moves.
                 for (n in animBytes.keys) {
                     val from = builtFrom[n] ?: continue
-                    if (from != urlOf(n)) { animBytes.remove(n); animBounds.remove(n); builtFrom.remove(n) }
+                    if (from != urlOf(n)) {
+                        animBytes.remove(n); animBounds.remove(n); builtFrom.remove(n)
+                        if (!map.containsKey(n)) suggestDrawables.remove(n)
+                    }
                 }
                 // Inside the lock, so a list arriving late always finds the order it adds to.
                 chOrder = cMap.keys.toList(); chOrderFor = myId
