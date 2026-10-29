@@ -24,11 +24,16 @@ import android.widget.Toast
  * the rest of the player controls.
  *
  * Pausing goes through the media session, the same as a headset's pause button, which Twitch's
- * player already answers. Nothing in Twitch is called directly.
+ * player already answers. Nothing in Twitch is called directly. Like PurpleTV's own sleep timer it
+ * can also close the app when time is up (pausing first, so nothing starts playing again).
  */
 object SleepTimer {
 
     const val KEY = "show_timer_button"
+    /** On by default, like PurpleTV's: people looked for it and could not find it. */
+    const val DEF = true
+    /** What happens when the timer ends: 0 closes Twitch (as PurpleTV did), 1 only pauses. */
+    const val KEY_ACTION = "sleep_timer_action"
 
     private const val TAG = "ptv_sleep_timer"
     private val ROW = arrayOf("create_clip_text_button", "create_clip_button_compose_view", "switch_to_vertical_view",
@@ -45,7 +50,7 @@ object SleepTimer {
 
     /** Called on every ViewHider pass. Adds, places, or removes the button. */
     fun attach(root: View) {
-        val on = Settings.get(KEY, false)
+        val on = Settings.get(KEY, DEF)
         // Nothing to add and nothing to take away: skip the tree walk.
         if (!on && dueAt > 0) { handler.removeCallbacks(fire); dueAt = 0 }
         if (!on && !added) return
@@ -100,19 +105,38 @@ object SleepTimer {
 
     private val tinted = java.util.WeakHashMap<ImageView, Int>()
 
+    private fun closes() = Settings.getInt(KEY_ACTION, 0) == 0
+
     private fun choose(ctx: Context) {
         val left = if (dueAt > 0) ((dueAt - SystemClock.uptimeMillis()) / 60000L + 1) else 0L
         val items = ArrayList<String>()
         items.add(if (dueAt > 0) "Turn off ($left min left)" else "Off")
+        items.add("Choose hours and minutes")
         for (m in MINUTES) items.add(if (m % 60 == 0) "${m / 60} hour${if (m > 60) "s" else ""}"
             else if (m > 60) "${m / 60}.5 hours" else "$m minutes")
+        items.add(if (closes()) "When time is up: close Twitch (tap to only pause)" else "When time is up: pause the stream (tap to close Twitch)")
         AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle("Pause the stream after")
+            .setTitle(if (closes()) "Close Twitch after" else "Pause the stream after")
             .setItems(items.toTypedArray()) { d, which ->
-                if (which == 0) cancel(ctx) else start(ctx, MINUTES[which - 1] * 60_000L)
                 d.dismiss()
+                when {
+                    which == 0 -> cancel(ctx)
+                    which == 1 -> pickTime(ctx)
+                    which == items.size - 1 -> { Settings.setInt(KEY_ACTION, if (closes()) 1 else 0); choose(ctx) }
+                    else -> start(ctx, MINUTES[which - 2] * 60_000L)
+                }
             }
             .show()
+    }
+
+    /** A clock to pick any length, as hours and minutes (PurpleTV's own timer used one). */
+    private fun pickTime(ctx: Context) {
+        runCatching {
+            android.app.TimePickerDialog(ctx, android.R.style.Theme_Material_Dialog_Alert, { _, h, m ->
+                val ms = (h * 60L + m) * 60_000L
+                if (ms > 0) start(ctx, ms) else toast(ctx, "Pick at least one minute")
+            }, 0, 30, true).apply { setTitle("Hours and minutes from now") }.show()
+        }.onFailure { log("sleep timer picker: $it") }
     }
 
     /** Start (or restart) the timer. Public so the dev bridge can test with a short delay. */
@@ -122,7 +146,9 @@ object SleepTimer {
         dueAt = SystemClock.uptimeMillis() + ms
         handler.postAtTime(fire, dueAt)
         val min = ms / 60000L
-        toast(ctx, if (min > 0) "Sleep timer: pausing in $min min" else "Sleep timer: pausing in ${ms / 1000} s")
+        val what = if (closes()) "closing Twitch" else "pausing"
+        val span = if (min >= 60) "${min / 60} h ${min % 60} min" else if (min > 0) "$min min" else "${ms / 1000} s"
+        toast(ctx, "Sleep timer: $what in $span")
         log("sleep timer set for ${ms / 1000}s")
         ViewHider.reapply()
     }
@@ -143,7 +169,14 @@ object SleepTimer {
             am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE))
             log("sleep timer: paused")
         }.onFailure { log("sleep timer pause failed: $it") }
-        ViewHider.reapply()
+        if (!closes()) { ViewHider.reapply(); return }
+        // Close the app: every screen first, then the process a moment later, so background
+        // audio and picture-in-picture stop too. Paused above, so nothing resumes on its own.
+        handler.postDelayed({
+            runCatching { ViewHider.currentActivity()?.finishAffinity() }
+            log("sleep timer: closing Twitch")
+            handler.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 800)
+        }, 400)
     }
 
     private fun toast(ctx: Context, s: String) =

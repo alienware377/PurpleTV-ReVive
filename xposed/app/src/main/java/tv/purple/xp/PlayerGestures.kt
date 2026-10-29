@@ -94,6 +94,9 @@ object PlayerGestures {
                 // Keep clear of the system gesture strips at the very top and bottom.
                 val edge = (24 * a.resources.displayMetrics.density).toInt()
                 if (ev.rawY < player.top + edge || ev.rawY > player.bottom - edge) return false
+                // Twitch opens its quality, playback speed and other player menus as a sheet inside
+                // the player area. A swipe there is meant for the menu (scrolling it), not for us.
+                if (menuUnder(a, ev.rawX.toInt(), ev.rawY.toInt())) return false
                 tracking = true
                 downX = ev.rawX; downY = ev.rawY; lastY = ev.rawY
                 startLeft = ev.rawX < player.centerX()
@@ -130,6 +133,30 @@ object PlayerGestures {
                 return was
             }
             else -> return mode != Mode.NONE
+        }
+    }
+
+    private val hitRect = Rect()
+
+    /**
+     * True when the finger is on something over the player that has its own use for a swipe: an
+     * open player menu sheet ("bottom_sheet") or anything that scrolls. Follows the views under the
+     * finger from the top of the window down, the same way the touch itself would travel.
+     */
+    private fun menuUnder(a: Activity, x: Int, y: Int): Boolean {
+        var v: View = a.window?.decorView ?: return false
+        while (true) {
+            if (v !== a.window?.decorView && (v.canScrollVertically(1) || v.canScrollVertically(-1))) return true
+            if (v is ViewGroup && v.childCount > 0 && Res.entry(v) == "bottom_sheet") return true
+            val g = v as? ViewGroup ?: return false
+            var next: View? = null
+            // The child drawn last is on top.
+            for (i in g.childCount - 1 downTo 0) {
+                val c = g.getChildAt(i) ?: continue
+                if (!c.isShown) continue
+                if (c.getGlobalVisibleRect(hitRect) && hitRect.contains(x, y)) { next = c; break }
+            }
+            v = next ?: return false
         }
     }
 

@@ -334,8 +334,8 @@ object PurpleMenu {
             FollowingSections.KEY_RESUME, done = true),
         Toggle("Hide \"Offline Channels\" on Following", "Removes your offline channels from the Following page",
             FollowingSections.KEY_OFFLINE, done = true),
-        Toggle("Show timer button", "A sleep timer in the player controls that pauses the stream after a chosen time",
-            SleepTimer.KEY, done = true),
+        Toggle("Show timer button", "A sleep timer (clock button) in the player controls that closes Twitch, or only pauses the stream, after a chosen time",
+            SleepTimer.KEY, def = SleepTimer.DEF, done = true),
         Toggle("Hide \"Create\" (plus) button", "Removes the plus button from the navigation bar, in portrait and landscape",
             "hide_create_button", done = true)
     )
