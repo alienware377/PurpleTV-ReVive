@@ -14,7 +14,7 @@ import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 
 /**
- * Injects the "PurpleTV" row into Twitch's Settings screen (profile → settings).
+ * Injects the "PurpleTV" row into Twitch's Settings screen (profile -> settings).
  *
  * Anchor: the resource entry name `settings_wrapper`, the root LinearLayout of Twitch's
  * settings_activity layout. It is the only layout in the whole resource table using that name, so
@@ -24,7 +24,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  * Why a pinned row and not a list item: as of Twitch 28.x the top-level settings list is rendered
  * with Jetpack Compose, so its rows carry no resource ids and cannot be found by view walking or
  * extended via an adapter. `settings_wrapper` is still a classic View, so we insert our row into it
- * directly, immediately below the toolbar. Sub-screens (Preferences, Account, …) are still
+ * directly, immediately below the toolbar. Sub-screens (Preferences, Account, etc.) are still
  * RecyclerView-based, but pinning at the top level keeps a single code path.
  */
 object SettingsEntry {
@@ -70,9 +70,13 @@ object SettingsEntry {
         // settings_wrapper identifies the screen. Its immediate child is an id-less, full-height
         // LinearLayout holding [app_bar_layout, fragment_container]; inserting into the wrapper
         // itself puts the row either above the toolbar or below the match_parent content and off
-        // screen. So anchor on the app bar and insert into ITS parent, directly beneath it.
-        if (findByEntry(decor, "settings_wrapper") == null) return
-        val appBar = findByEntry(decor, "app_bar_layout") ?: return
+        // screen. So anchor on the app bar and insert into its parent, directly beneath it.
+        // findViewById by id, not a walk asking every view its name: this runs on every layout
+        // pass of every screen (the stream screen included, as chat moves), and is a no-op there.
+        val wrapperId = Res.id(act, "settings_wrapper")
+        if (wrapperId == 0 || decor.findViewById<View>(wrapperId) == null) return
+        val barId = Res.id(act, "app_bar_layout")
+        val appBar = (if (barId != 0) decor.findViewById<View>(barId) else null) ?: findByEntry(decor, "app_bar_layout") ?: return
         val host = appBar.parent as? ViewGroup ?: return
         if (!INJECTED.add(host)) return
         val ctx = host.context ?: return
@@ -100,7 +104,7 @@ object SettingsEntry {
             addView(sub)
         }
         val glyph = TextView(ctx).apply {
-            text = "◆"                       // ◆ — stands in for the mod's icon
+            text = "◆"                       // stands in for the mod's icon
             setTextColor(0xFF9146FF.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setPadding(0, 0, dp(ctx, 14f), 0)

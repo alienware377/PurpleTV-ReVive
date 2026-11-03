@@ -4,18 +4,18 @@ import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 
 /**
- * Shared read access to a live chat message's TOKEN list.
+ * Shared read access to a live chat message's token list.
  *
  * Extracted from [ChatHighlight] once a second feature ([Blacklist]) needed the same reads. Both
- * ask the same two questions of a message -- "does it mention me" and "what plain text does it
- * contain" -- and both must answer them without naming an obfuscated class.
+ * ask the same two questions of a message ("does it mention me" and "what plain text does it
+ * contain"), and both must answer them without naming an obfuscated class.
  *
  * The technique throughout is toString() matching. R8 renames classes and fields but leaves the
  * Kotlin-generated toString() output verbatim, so a data class still announces itself as
  * "LiveChatMessage(...)" or "TextToken(text=...)" no matter what its class ended up being called.
  *
- * IMPORTANT: the R8-kept `MessageToken$MentionToken` in the pub messages package is NOT what live
- * chat uses -- it is produced by a tokenizer that never fires on this path, so `instanceof` against
+ * The R8-kept `MessageToken$MentionToken` in the pub messages package is not what live chat
+ * uses. It is produced by a tokenizer that never fires on this path, so `instanceof` against
  * it matches nothing. The live tokens are an obfuscated hierarchy, identified here by label only.
  */
 internal object ChatTokens {
@@ -105,11 +105,21 @@ internal object ChatTokens {
     private val LABELLED_TEXT = Regex("text=([^,)]*)")
     private val LABELLED_URL = Regex("url=([^,)\\s]*)")
 
+    /** The names of Twitch's own emotes in a message (7TV/BTTV/FFZ ones are plain text to Twitch). */
+    fun emotesOf(msg: Any): List<String> {
+        val out = ArrayList<String>(2)
+        for (t in list(msg)) {
+            val s = runCatching { t?.toString() }.getOrNull() ?: continue
+            if (s.startsWith(EMOTE)) LABELLED_TEXT.find(s)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }?.let { out.add(it) }
+        }
+        return out
+    }
+
     /**
      * Everything in a message a filter could reasonably match: typed text, emote names and urls.
      *
      * Wider than [textOf] on purpose. The highlighter only tints, so matching an emote name there
-     * would be a surprise; the blacklist HIDES, and a user who blacklists an emote or a domain
+     * would be a surprise; the blacklist hides, and a user who blacklists an emote or a domain
      * means it.
      */
     fun matchableOf(msg: Any): List<String> {

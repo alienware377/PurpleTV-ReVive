@@ -48,6 +48,53 @@ object PickerBackspace {
         log("PB picker backspace installed")
     }
 
+    private fun wanted() = Settings.isReady() && Settings.getInt(KEY, MODE_WORD) != MODE_TWITCH
+
+    /** Windows already watched; weak, so a closed picker is let go. */
+    private val WATCHED = java.util.Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
+
+    /**
+     * The getter hook above can be skipped: the getter is tiny, and once ART compiles the picker
+     * code it may build it straight into its caller, so the button went missing again after a while.
+     * So the picker's own window is watched too (the sheet in 31.7.0, the stream screen in 31.1.2):
+     * after each layout pass, a hidden button is shown again. Only that window pays for it, once
+     * per layout, with one findViewById.
+     *
+     * It also logs once per window when the button is there but cut off, for example pushed out
+     * of a sheet of fixed height, which no visibility fix can help with.
+     */
+    private const val MAX_RESHOW = 50
+
+    fun watch(root: View) {
+        if (!WATCHED.add(root)) return
+        var reported = false
+        var reshown = 0
+        runCatching {
+            root.viewTreeObserver.addOnGlobalLayoutListener {
+                try {
+                    val id = Res.id(root.context, "delete_emote_button")
+                    if (id == 0) return@addOnGlobalLayoutListener
+                    val b = root.findViewById<View>(id) ?: return@addOnGlobalLayoutListener
+                    // Counted per window: if Twitch hides it again on every pass, this stops after a
+                    // while instead of fighting it forever (and logs only the first few times).
+                    if (b.visibility != View.VISIBLE && wanted() && reshown < MAX_RESHOW) {
+                        b.visibility = View.VISIBLE
+                        if (++reshown <= 3) log("PB delete button was hidden: shown again")
+                        else if (reshown == MAX_RESHOW) log("PB delete button keeps being hidden, left alone in this window")
+                    }
+                    if (!reported && b.isShown && b.height > 0) {
+                        val r = android.graphics.Rect()
+                        val seen = b.getGlobalVisibleRect(r)
+                        if (!seen || r.height() < b.height || r.width() < b.width) {
+                            reported = true
+                            log("PB delete button cut off: visible ${r.width()}x${r.height()} of ${b.width}x${b.height}")
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+    }
+
     /** The chat box, in the picker's own window or the stream screen's. */
     private fun inputFor(v: View): EditText? {
         val id = Res.id(v.context, "message_input")

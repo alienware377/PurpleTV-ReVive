@@ -15,7 +15,7 @@ import android.widget.TextView
  * Editor screens for the highlighter: the keyword list, and the @mention colour.
  *
  * Deliberately built from plain framework dialogs rather than [PurpleMenu]'s static row renderer,
- * because these screens are dynamic -- entries are added and removed at runtime, and the static
+ * because these screens are dynamic: entries are added and removed at runtime, and the static
  * tree has no way to express that.
  */
 object HighlightUi {

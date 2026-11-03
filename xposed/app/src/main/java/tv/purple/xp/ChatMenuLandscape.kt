@@ -54,6 +54,18 @@ object ChatMenuLandscape {
                 val a = p.args[0] ?: return
                 runCatching { stateField.get(a)?.let { hField.set(it, o) } }
                     .onFailure { log("CM could not put the orientation back: $it") }
+                // The lambda is one class for several cases. If a case built a new state from the
+                // borrowed one (a copy), that copy must not keep PORTRAIT either.
+                runCatching {
+                    val r = p.result
+                    val rs = when {
+                        r == null -> null
+                        r.javaClass === state -> r
+                        r.javaClass === vas -> stateField.get(r)
+                        else -> null
+                    }
+                    if (rs != null && rs.javaClass === state && hField.get(rs) === portrait) hField.set(rs, o)
+                }
             }
         })
         log("CM landscape chat menu installed")

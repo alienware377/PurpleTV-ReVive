@@ -17,11 +17,9 @@ import android.os.SystemClock
 import com.k2fsa.sherpa.onnx.EndpointConfig
 import com.k2fsa.sherpa.onnx.EndpointRule
 import com.k2fsa.sherpa.onnx.FeatureConfig
-import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
-import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.VersionInfo
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -52,11 +50,11 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * The two optional speech-to-text downloads, each fetched, checked and stored on its own:
+ * The optional speech-to-text downloads, each fetched, checked and stored on its own:
  *  - the engine: sherpa-onnx's native library (ONNX Runtime is inside it), arm64 only;
- *  - the model: the Kroko English streaming speech model.
- * Both are assets of the separate GitHub pre-release PackPins.TAG on PurpleTV-ReVive, pinned by
- * exact size and SHA-256 in PackPins.
+ *  - one speech model per stream language (SttModels); only the chosen language's is needed.
+ * The engine and the English model are assets of the separate GitHub pre-release PackPins.TAG on
+ * PurpleTV-ReVive, the other languages of SttModels.TAG2, all pinned by exact size and SHA-256.
  *
  * Why so strict: the engine is native code that runs inside Twitch's process, where a damaged or
  * swapped file could crash Twitch. So the zip is checked against its pin while it downloads, only
@@ -64,10 +62,11 @@ import kotlin.math.sin
  * checked against its own pin, a marker naming the zip's hash is written last, and the library is
  * checked once more right before it is loaded. Anything that does not match is deleted, never used.
  *
- * Where: getFilesDir()/ptv_stt/engine and /model, Twitch's private internal storage. External
- * storage is no good for this: other apps can change files there, and Android will not load code
- * from it. A download that stopped half way waits in ptv_stt/dl as a .part file and goes on from
- * where it stopped next time.
+ * Where: getFilesDir()/ptv_stt/engine, /model (English) and /model-xx (other languages), Twitch's
+ * private internal storage. External storage is no good for this: other apps can change files
+ * there, and Android will not load code from it. A download that stopped half way waits in
+ * ptv_stt/dl as a .part file and goes on from where it stopped next time. A model of a language
+ * picked before stays until "Delete downloaded captions files", so switching back costs nothing.
  *
  * Callbacks (progress and done) always arrive on the main thread.
  */
@@ -81,6 +80,20 @@ object SttPacks {
     /** Kept free on top of a pack's own size, so a download never fills the phone up. */
     private const val SPARE = 32L * 1024 * 1024
 
+    /**
+     * Packs that live under one folder of getFilesDir() and are deleted together: speech to text
+     * here, translation in TranslatePacks. Each group has its own stop counter, so deleting one
+     * group's packs never stops the other's downloads, and its own list of members, so only its
+     * own half done .part files are kept.
+     */
+    internal class Group(val root: String, val logTag: String, val thread: String) {
+        /** Bumped by a delete, so a running download of this group stops at its next read. */
+        @Volatile var cancelGen = 0
+        val members = java.util.concurrent.CopyOnWriteArrayList<Pack>()
+    }
+
+    internal val STT_GROUP = Group(ROOT, "STT", "ptv-stt-dl")
+
     internal class Pack(
         /** For messages: "engine" or "speech model". */
         val what: String,
@@ -88,9 +101,15 @@ object SttPacks {
         val asset: String,
         val sha: String,
         val bytes: Long,
-        val entries: Map<String, PackPins.FilePin>
+        val entries: Map<String, PackPins.FilePin>,
+        val group: Group = STT_GROUP,
+        /** The GitHub release tag that holds the asset. */
+        val tag: String = PackPins.TAG,
+        /** A full address instead of a release asset, for a pack fetched straight from its maker. */
+        val fullUrl: String? = null
     ) {
-        val url: String get() = URL_BASE + PackPins.TAG + "/" + asset
+        init { group.members.add(this) }
+        val url: String get() = fullUrl ?: (URL_BASE + tag + "/" + asset)
         val unpacked: Long = entries.values.sumOf { it.bytes }
         val busy = AtomicBoolean(false)
         @Volatile var progress = 0
@@ -104,13 +123,18 @@ object SttPacks {
 
     internal val ENGINE = Pack("engine", "engine", PackPins.ENGINE_ASSET, PackPins.ENGINE_SHA256,
         PackPins.ENGINE_BYTES, PackPins.ENGINE_ENTRIES)
-    internal val MODEL = Pack("speech model", "model", PackPins.MODEL_ASSET, PackPins.MODEL_SHA256,
-        PackPins.MODEL_BYTES, PackPins.MODEL_ENTRIES)
+    /** One pack per stream language, made up front so every one counts as a member of the group. */
+    internal val MODELS: Map<String, Pack> = SttModels.ALL.associate { m ->
+        m.lang to Pack("${m.label} speech model", m.dir, m.asset, m.sha256, m.bytes, m.entries, tag = m.tag)
+    }
+    /** The English model of captions-pack-1, the default. */
+    internal val MODEL: Pack = MODELS.getValue("en")
+
+    /** The pack of the stream language picked in settings. */
+    internal fun modelPack(m: SttModel = SttModels.chosen()): Pack = MODELS[m.lang] ?: MODEL
 
     /** Held while files are swapped in or deleted, and while they are checked and loaded. */
     internal val swapLock = Any()
-    /** Bumped by deleteAll, so a running download stops at its next read. */
-    @Volatile private var cancelGen = 0
     /**
      * Space promised to the downloads running now (each one's need without SPARE), under
      * [spaceLock]. Both packs may download at once, and each must count the other, or together
@@ -138,13 +162,14 @@ object SttPacks {
     }.getOrDefault(false)
 
     fun engineReady(ctx: Context): Boolean = ready(ctx, ENGINE)
-    fun modelReady(ctx: Context): Boolean = ready(ctx, MODEL)
+    /** The speech model of the chosen stream language is there. */
+    fun modelReady(ctx: Context): Boolean = ready(ctx, modelPack())
 
-    /** True while either pack is downloading. */
-    fun downloading(): Boolean = ENGINE.busy.get() || MODEL.busy.get()
+    /** True while the engine or any speech model is downloading. */
+    fun downloading(): Boolean = ENGINE.busy.get() || MODELS.values.any { it.busy.get() }
 
-    /** Credit lines for the settings page. The model's licence (CC-BY-SA) asks for its credit. */
-    fun credits(): String = PackPins.ENGINE_CREDIT + "\n" + PackPins.MODEL_CREDIT
+    /** Credit lines for the settings page. Each model's licence asks for its credit. */
+    fun credits(): String = PackPins.ENGINE_CREDIT + "\n" + SttModels.chosen().credit
 
     /** One line per pack plus the engine's state, for the settings page. */
     fun status(ctx: Context): String {
@@ -155,8 +180,9 @@ object SttPacks {
         }
         val lines = ArrayList<String>()
         lines.add(line(ctx, ENGINE, "Engine (sherpa-onnx ${PackPins.SHERPA_VERSION})"))
-        lines.add(line(ctx, MODEL, "Speech model (Kroko English)"))
-        if (ready(ctx, ENGINE) && ready(ctx, MODEL)) lines.add(when {
+        val mp = modelPack()
+        lines.add(line(ctx, mp, "Speech model (${SttModels.chosen().label})"))
+        if (ready(ctx, ENGINE) && ready(ctx, mp)) lines.add(when {
             Stt.listening() -> "Listening to the small live picture now"
             Stt.loaded() -> "Loaded, waiting for the small live picture"
             Stt.hookPending(ctx) -> "Downloaded. " + Stt.RESTART_HINT
@@ -173,13 +199,14 @@ object SttPacks {
 
     /**
      * One pack on its own, for its download row in the menu: its size and whether it is there,
-     * downloading (with how far) or missing. [model] picks the speech model, otherwise the engine.
+     * downloading (with how far) or missing. [model] picks the speech model of the chosen stream
+     * language, otherwise the engine.
      * Cheap enough to ask every second while the row is on screen: the disk is only read once
      * after a download or a delete, then the answer is kept.
      */
     fun packLine(ctx: Context, model: Boolean): String {
         if (!supported()) return "Not available on this phone: it needs a 64-bit ARM processor"
-        val p = if (model) MODEL else ENGINE
+        val p = if (model) modelPack() else ENGINE
         val pct = p.progress
         return when {
             // The last tenth is the check and unpack, after the bytes are all in.
@@ -193,23 +220,24 @@ object SttPacks {
     }
 
     /** True while this one pack is downloading. */
-    fun packBusy(model: Boolean): Boolean = (if (model) MODEL else ENGINE).busy.get()
+    fun packBusy(model: Boolean): Boolean = (if (model) modelPack() else ENGINE).busy.get()
 
     private fun mb(b: Long) = (b + 500_000) / 1_000_000
 
     // ---- where the files live ----
 
     internal fun root(ctx: Context) = File(ctx.filesDir, ROOT)
-    internal fun dir(ctx: Context, p: Pack) = File(root(ctx), p.dir)
+    internal fun root(ctx: Context, g: Group) = File(ctx.filesDir, g.root)
+    internal fun dir(ctx: Context, p: Pack) = File(root(ctx, p.group), p.dir)
     internal fun file(ctx: Context, p: Pack, entry: String) = File(dir(ctx, p), entry)
 
-    private fun ready(ctx: Context, p: Pack): Boolean {
+    internal fun ready(ctx: Context, p: Pack): Boolean {
         p.ready?.let { return it }
         val ok = runCatching { quickCheck(ctx, p) }.getOrDefault(false)
         p.ready = ok
         // A finished zip can be left behind when Twitch stopped right after the unpack. The pack
         // is in place, so it is not needed any more. Never while this pack is downloading.
-        if (ok && !p.busy.get()) runCatching { File(File(root(ctx), "dl"), p.asset + ".part").delete() }
+        if (ok && !p.busy.get()) runCatching { File(File(root(ctx, p.group), "dl"), p.asset + ".part").delete() }
         return ok
     }
 
@@ -271,36 +299,54 @@ object SttPacks {
     fun downloadEngine(ctx: Context, progress: (Int) -> Unit, done: (Boolean, String) -> Unit) =
         download(ctx, ENGINE, progress, done)
 
-    fun downloadModel(ctx: Context, progress: (Int) -> Unit, done: (Boolean, String) -> Unit) =
-        download(ctx, MODEL, progress, done)
+    /** The speech model of [m], the chosen stream language unless told otherwise. */
+    fun downloadModel(ctx: Context, progress: (Int) -> Unit, done: (Boolean, String) -> Unit,
+                      m: SttModel = SttModels.chosen()) =
+        download(ctx, modelPack(m), progress, done)
 
     /**
-     * Remove both packs. Downloads in flight stop, and the recognizer is released on its own
-     * thread before the files go. The speech-to-text setting itself is left as it is.
+     * Remove the engine and every speech model. Downloads in flight stop, and the recognizer is
+     * released on its own thread before the files go. The speech-to-text settings are left as they are.
      */
     fun deleteAll(ctx: Context) {
         val app = ctx.applicationContext ?: ctx
-        cancelGen++
+        STT_GROUP.cancelGen++
         // A read stuck on a stalled connection only sees the stop after its 60 s timeout; cutting
         // the call ends it at once. OkHttp's cancel is safe from any thread and does no network work.
-        for (p in listOf(ENGINE, MODEL)) runCatching { p.call?.cancel() }
+        val all = listOf(ENGINE) + MODELS.values
+        for (p in all) runCatching { p.call?.cancel() }
         Stt.afterUnload("packs deleted") {
             synchronized(swapLock) { runCatching { root(app).deleteRecursively() } }
-            for (p in listOf(ENGINE, MODEL)) { p.ready = false; p.hashed = false }
+            for (p in all) { p.ready = false; p.hashed = false }
             log("STT packs deleted")
         }
     }
 
     private class Fail(msg: String) : Exception(msg)
 
-    private fun download(ctx: Context, p: Pack, progress: (Int) -> Unit, done: (Boolean, String) -> Unit) {
+    private fun download(ctx: Context, p: Pack, progress: (Int) -> Unit, done: (Boolean, String) -> Unit) =
+        downloadPack(ctx, p, "Speech-to-text needs a phone with a 64-bit ARM processor", progress, done,
+            // The hooks never go in when a download ends (a stream is usually playing then), so
+            // when they are still missing the message says how to start it.
+            okExtra = { app -> if (runCatching { Stt.hookPending(app) }.getOrDefault(false)) ". " + Stt.RESTART_HINT else "" },
+            after = { Stt.refresh() })
+
+    /**
+     * Downloads, checks and unpacks one pack of any group on its own thread. [unsupported] is the
+     * message for a phone the native code can not run on, [okExtra] adds to the success message,
+     * and [after] runs on the download thread after a success. Callbacks come on the main thread.
+     */
+    internal fun downloadPack(ctx: Context, p: Pack, unsupported: String, progress: (Int) -> Unit,
+                              done: (Boolean, String) -> Unit, okExtra: (Context) -> String = { "" },
+                              after: () -> Unit = {}) {
         val app = ctx.applicationContext ?: ctx
         fun finish(ok: Boolean, msg: String) { main.post { runCatching { done(ok, msg) } } }
-        if (!supported()) { finish(false, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
+        if (!supported()) { finish(false, unsupported); return }
         if (!p.busy.compareAndSet(false, true)) { finish(false, "The ${p.what} is already downloading"); return }
         p.progress = 0
-        val gen = cancelGen
-        log("STT pack ${p.dir}: downloading ${p.asset}")
+        val g = p.group
+        val gen = g.cancelGen
+        log("${g.logTag} pack ${p.dir}: downloading ${p.asset}")
         Thread({
             var shown = -1
             val r = runCatching {
@@ -313,18 +359,15 @@ object SttPacks {
             p.ready = null
             val err = r.exceptionOrNull()
             // Delete cuts the connection, so the error is then about that, not the real cause.
-            val stopped = gen != cancelGen
+            val stopped = gen != g.cancelGen
             // Messages only, never the address or a stack: nothing private, and the log stays short.
-            if (err == null) log("STT pack ${p.dir}: sha ok, unpacked and checked")
-            else log("STT pack ${p.dir}: failed: ${if (stopped) "stopped" else if (err is Fail) err.message else err.javaClass.simpleName}")
-            // The hooks never go in when a download ends (a stream is usually playing then), so
-            // when they are still missing the message says how to start it.
-            val okText = { "The ${p.what} is downloaded and checked" +
-                (if (runCatching { Stt.hookPending(app) }.getOrDefault(false)) ". " + Stt.RESTART_HINT else "") }
+            if (err == null) log("${g.logTag} pack ${p.dir}: sha ok, unpacked and checked")
+            else log("${g.logTag} pack ${p.dir}: failed: ${if (stopped) "stopped" else if (err is Fail) err.message else err.javaClass.simpleName}")
+            val okText = { "The ${p.what} is downloaded and checked" + runCatching { okExtra(app) }.getOrDefault("") }
             finish(r.isSuccess, r.fold({ okText() },
                 { if (stopped) "The ${p.what} download was stopped" else failText(p, it) }))
-            if (r.isSuccess) Stt.refresh()
-        }, "ptv-stt-dl").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+            if (r.isSuccess) runCatching { after() }
+        }, g.thread).apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
     }
 
     private fun failText(p: Pack, t: Throwable): String = when (t) {
@@ -342,12 +385,12 @@ object SttPacks {
 
     /** Download thread: zip to .part (resuming), checked, then unpacked and swapped in. */
     private fun fetch(ctx: Context, p: Pack, gen: Int, pct: (Int) -> Unit) {
-        val root = root(ctx)
+        val root = root(ctx, p.group)
         val dl = File(root, "dl")
         dl.mkdirs()
-        // Only the current pins' two .part names are ever resumed. Anything else here (a part of
-        // an older pin, a stray file) would only take space for good.
-        val keep = setOf(ENGINE.asset + ".part", MODEL.asset + ".part")
+        // Only the current pins' .part names (one per pack of this group) are ever resumed.
+        // Anything else here (a part of an older pin, a stray file) would only take space for good.
+        val keep = p.group.members.map { it.asset + ".part" }.toSet()
         runCatching { dl.listFiles()?.forEach { if (it.name !in keep) it.deleteRecursively() } }
         val part = File(dl, p.asset + ".part")
         var have = if (part.isFile) part.length() else 0L
@@ -382,7 +425,7 @@ object SttPacks {
             val call = http.newCall(req)
             p.call = call
             // Delete may have come just before the call was stored, so it could not cut it.
-            if (gen != cancelGen) throw Fail("The ${p.what} download was stopped")
+            if (gen != p.group.cancelGen) throw Fail("The ${p.what} download was stopped")
             val again = call.execute().use { r ->
                 if (have > 0 && r.code == 416 && !restarted) {
                     // The server does not like the range: start over once.
@@ -399,7 +442,7 @@ object SttPacks {
                     body.byteStream().use { inp ->
                         val buf = ByteArray(64 * 1024)
                         while (true) {
-                            if (gen != cancelGen) { call.cancel(); throw Fail("The ${p.what} download was stopped") }
+                            if (gen != p.group.cancelGen) { call.cancel(); throw Fail("The ${p.what} download was stopped") }
                             // The network read stays outside disk(): its errors are the connection's.
                             val n = inp.read(buf)
                             if (n < 0) break
@@ -428,7 +471,7 @@ object SttPacks {
 
     /** Only allow-listed entries, each capped at its pinned size and checked, into a fresh folder. */
     private fun unpack(ctx: Context, p: Pack, zip: File, gen: Int, pct: (Int) -> Unit) {
-        val tmp = File(root(ctx), p.dir + ".tmp")
+        val tmp = File(root(ctx, p.group), p.dir + ".tmp")
         tmp.deleteRecursively()
         tmp.mkdirs()
         val base = tmp.canonicalPath + File.separator
@@ -451,7 +494,7 @@ object SttPacks {
                         FileOutputStream(out).use { o ->
                             val buf = ByteArray(64 * 1024)
                             while (true) {
-                                if (gen != cancelGen) throw Fail("The ${p.what} download was stopped")
+                                if (gen != p.group.cancelGen) throw Fail("The ${p.what} download was stopped")
                                 val k = inp.read(buf)
                                 if (k < 0) break
                                 n += k
@@ -472,6 +515,8 @@ object SttPacks {
             // Written last: a pack without it is never used.
             FileOutputStream(File(tmp, MARKER)).use { it.write((p.sha + "\n").toByteArray(Charsets.US_ASCII)); it.fd.sync() }
             synchronized(swapLock) {
+                // Deleted while unpacking: the delete wins, nothing is put back.
+                if (gen != p.group.cancelGen) throw Fail("The ${p.what} download was stopped")
                 val dst = dir(ctx, p)
                 dst.deleteRecursively()
                 if (!tmp.renameTo(dst)) throw Fail("Could not store the ${p.what}")
@@ -517,11 +562,18 @@ object SttPacks {
         return String(c)
     }
 
-    /** Test aid (DevBridge): hash both packs now. A pack that fails is deleted. */
-    fun verify(ctx: Context): String = listOf(ENGINE, MODEL).joinToString(", ") { p ->
-        p.hashed = false
-        val r = synchronized(swapLock) { runCatching { ensureHashed(ctx, p) }.getOrElse { "error ${it.javaClass.simpleName}" } }
-        "${p.dir}: " + (r ?: "ok")
+    /**
+     * Test aid (DevBridge): hash the engine, the chosen model and any other model on the phone now.
+     * A pack that fails is deleted.
+     */
+    fun verify(ctx: Context): String {
+        val chosen = modelPack()
+        val packs = listOf(ENGINE, chosen) + MODELS.values.filter { it !== chosen && ready(ctx, it) }
+        return packs.joinToString(", ") { p ->
+            p.hashed = false
+            val r = synchronized(swapLock) { runCatching { ensureHashed(ctx, p) }.getOrElse { "error ${it.javaClass.simpleName}" } }
+            "${p.dir}: " + (r ?: "ok")
+        }
     }
 
     /** Test aid (DevBridge): flip one byte in the middle of the engine library on disk. */
@@ -646,6 +698,8 @@ object Stt {
     @Volatile private var nativeOk = false
     @Volatile private var broken: String? = null
     @Volatile private var loadedNow = false
+    /** The language of the model loaded now (see SttModels). */
+    @Volatile private var loadedLang = ""
     @Volatile private var inBreak = false
     @Volatile private var memoryHold = false
     @Volatile private var thermalHold = false
@@ -653,6 +707,8 @@ object Stt {
     @Volatile private var devFeeding = false
     /** Test aid (DEV_STT feed_main): copy the main player's sound instead of the PbyP player's. */
     @Volatile private var devMain = false
+    /** The recognizer listens to the main stream for live captions (no break going on). */
+    @Volatile private var liveMode = false
     private var ticking = false
     private var watchers = false
     private var saidMissing = false
@@ -686,8 +742,9 @@ object Stt {
         if (!Settings.isReady()) return false
         val r = Settings.rev
         if (r != onRev) {
-            onCached = Settings.get(KEY, false) &&
-                (Settings.get(CaptionHub.KEY, true) || Settings.getInt(ReadAloud.KEY, 0) != 0)
+            onCached = (Settings.get(KEY, false) &&
+                (Settings.get(CaptionHub.KEY, true) || Settings.getInt(ReadAloud.KEY, 0) != 0)) ||
+                Settings.get(LiveCaptions.KEY, false)
             onRev = r
         }
         return onCached
@@ -746,6 +803,9 @@ object Stt {
     /** PbyP changed: look again on ptv-stt. Coalesced, because it may fire on every layout pass. */
     private val evalPosted = AtomicBoolean(false)
 
+    /** Live captions changed (switched, or the stream shown or left): look again. */
+    fun poke() = kick()
+
     private fun kick() {
         if (!installed) return
         if (!on() && !loadedNow && !devBreak && !devFeeding && !devMain) return
@@ -788,8 +848,13 @@ object Stt {
      * keeps the disk and a core busy: not what the ad and PbyP decoders need as a break starts. If
      * a break comes first, load() still does both then, as before.
      */
+    /** Stream languages whose model failed to load in this run. */
+    private val badLangs = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     private fun prepare() {
-        if (!hooked || broken != null || (nativeOk && SttPacks.MODEL.hashed) || !on()) return
+        // The chosen stream language's model, not always English's.
+        val mp = SttPacks.modelPack()
+        if (!hooked || broken != null || (nativeOk && mp.hashed) || !on()) return
         if (inBreak || AdTime.now()) return
         val ctx = Settings.ctx() ?: return
         if (!SttPacks.supported() || !SttPacks.engineReady(ctx) || !SttPacks.modelReady(ctx)) return
@@ -797,7 +862,7 @@ object Stt {
         if (!loadNative(ctx)) return
         // A break that started meanwhile: the model's check waits for load().
         if (AdTime.now()) return
-        val why = synchronized(SttPacks.swapLock) { SttPacks.ensureHashed(ctx, SttPacks.MODEL) }
+        val why = synchronized(SttPacks.swapLock) { SttPacks.ensureHashed(ctx, mp) }
         log("STT checked and loaded the engine outside a break in ${SystemClock.uptimeMillis() - t0} ms" +
             (why?.let { ", but $it" } ?: ""))
     }
@@ -948,7 +1013,11 @@ object Stt {
     /** Load, unload and the tap target, from the PbyP state and the settings. */
     private fun evaluate() {
         val want = on()
-        val breakNow = devBreak || devFeeding || devMain || PbypWatch.active || PbypWatch.visible
+        val pbyp = PbypWatch.active || PbypWatch.visible
+        // Live captions: the main stream's own sound, whenever no break needs the recognizer.
+        liveMode = !pbyp && !devBreak && !devFeeding && !devMain && LiveCaptions.sttWanted()
+        // A break needs the recognizer only for the ad break captions themselves.
+        val breakNow = devBreak || devFeeding || devMain || (pbyp && Settings.get(KEY, false)) || liveMode
         if (breakNow != inBreak) {
             inBreak = breakNow
             if (breakNow) {
@@ -984,6 +1053,9 @@ object Stt {
         if (broken != null) return
         // Hooks not in yet (they wait for a restart or the switch): nothing to hear, so no model either.
         if (!hooked && !devFeeding && !devBreak) return
+        // The stream language changed in settings: the next words need the other model. The line in
+        // progress is dropped with the old one, which is fine, it was in the wrong language anyway.
+        if (rec != null && loadedLang != SttModels.chosen().lang) unload("stream language changed")
         if (rec == null && !load()) return
         ensureTick()
     }
@@ -1005,14 +1077,17 @@ object Stt {
      * ordinary stream sound without waiting for an ad. Copying is read-only either way.
      */
     private fun pollTarget() {
-        val useMain = devMain
+        val useMain = devMain || liveMode
         // The stream's own captions win (CaptionHub drops our text then anyway), so nothing is
         // copied or decoded for them; the line in progress is finished by the tick.
-        val cc = !useMain && CaptionHub.ccRecent()
-        if (!inBreak || devFeeding || !hooked || tapOff || cc || (!useMain && !PbypWatch.visible)) {
+        val cc = if (liveMode) LiveCaptions.ccRecent() else !useMain && CaptionHub.ccRecent()
+        // Only live captions switched on: a break's captions are not wanted, so nothing is copied then.
+        val breakOff = !liveMode && !devMain && !Settings.get(KEY, false)
+        if (!inBreak || devFeeding || !hooked || tapOff || cc || breakOff || (!useMain && !PbypWatch.visible)) {
             setTarget(0, when {
                 devFeeding -> "test file"
                 cc -> "the stream has its own captions"
+                breakOff -> "ad break captions are off"
                 !useMain && !PbypWatch.visible -> "not shown"
                 else -> "off"
             })
@@ -1024,7 +1099,7 @@ object Stt {
             curPlayer = WeakReference(p)
             playerSince = now
             lastPoll = 0L
-            log("STT ${if (useMain) "main (test)" else "PbyP"} player ${tag(p)}")
+            log("STT ${if (liveMode) "main (live captions)" else if (useMain) "main (test)" else "PbyP"} player ${tag(p)}")
         }
         if (now - lastPoll < POLL_MS) return
         lastPoll = now
@@ -1066,23 +1141,19 @@ object Stt {
         }
         if (!loadNative(ctx)) return false
         val t0 = SystemClock.uptimeMillis()
+        // Read once: the setting may change while this loads, and the tick then loads again.
+        val m = SttModels.chosen()
+        if (m.lang in badLangs) return false
+        val pack = SttPacks.modelPack(m)
         var r: OnlineRecognizer? = null
         try {
             val why = synchronized(SttPacks.swapLock) {
-                SttPacks.ensureHashed(ctx, SttPacks.MODEL)?.let { return@synchronized it }
-                val d = SttPacks.dir(ctx, SttPacks.MODEL)
-                fun path(role: String) = File(d, PackPins.MODEL_FILES[role] ?: error("no $role in the model pins")).absolutePath
+                SttPacks.ensureHashed(ctx, pack)?.let { return@synchronized it }
                 val threads = Settings.getInt(KEY_THREADS, 1).coerceIn(1, 4)
                 val cfg = OnlineRecognizerConfig(
+                    // Every model in SttModels takes 16 kHz mono with 80 mel bins, sherpa-onnx's defaults.
                     featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
-                    modelConfig = OnlineModelConfig(
-                        transducer = OnlineTransducerModelConfig(
-                            encoder = path("encoder"), decoder = path("decoder"), joiner = path("joiner")),
-                        tokens = path("tokens"),
-                        numThreads = threads,
-                        provider = "cpu",
-                        modelType = PackPins.MODEL_TYPE
-                    ),
+                    modelConfig = SttModels.modelConfig(m, SttPacks.dir(ctx, pack), threads),
                     // Final text after 0.8 s of quiet following speech, 2 s of quiet at all, or
                     // 8 s of talking without a pause, so lines never grow forever over game noise.
                     endpointConfig = EndpointConfig(
@@ -1103,14 +1174,23 @@ object Stt {
         } catch (t: Throwable) {
             r?.let { release(it) }
             r = null
+            // A stream language's own model that will not load turns off that language only:
+            // English (and the other languages) keep working.
+            if (m.lang != "en") {
+                badLangs.add(m.lang)
+                log("STT the ${m.lang} speech model could not be loaded, that language is off until Twitch restarts ($t)")
+                AdTime.toast("The speech model for this stream language could not be loaded")
+                return false
+            }
             fail("the speech model could not be loaded", t)
             return false
         }
         loadedNow = true
+        loadedLang = m.lang
         res.reset(16000)
         curRate = 0; curCh = 0; fed = 0L; lastPartial = ""
         ring?.let { it.clear(); it.gapNext = true }
-        log("STT model loaded in ${SystemClock.uptimeMillis() - t0} ms, threads ${Settings.getInt(KEY_THREADS, 1).coerceIn(1, 4)}")
+        log("STT ${m.lang} model loaded in ${SystemClock.uptimeMillis() - t0} ms, threads ${Settings.getInt(KEY_THREADS, 1).coerceIn(1, 4)}")
         registerWatchers(ctx)
         return true
     }
@@ -1179,6 +1259,7 @@ object Stt {
         stream = null
         rec = null
         loadedNow = false
+        loadedLang = ""
         if (s != null) release(s)
         if (r != null) release(r)
         res.reset(16000)
@@ -1227,6 +1308,9 @@ object Stt {
         }.onFailure { log("STT thermal watch failed: $it") }
     }
 
+    /** One timer, so an older low-memory event can never lift a newer hold, and never mid-break. */
+    private val memoryRelease = Runnable { safely("memory hold") { if (liveMode) { memoryHold = false; evaluate() } } }
+
     private fun lowMemory(why: String) {
         bg.post {
             safely("memory") {
@@ -1234,6 +1318,8 @@ object Stt {
                 // Held until this break ends, so the model is not loaded straight back in.
                 memoryHold = inBreak
                 unload(why)
+                // Live captions have no break end to wait for: try again after a few minutes.
+                if (liveMode) { bg.removeCallbacks(memoryRelease); bg.postDelayed(memoryRelease, 5 * 60_000L) }
             }
         }
     }
@@ -1318,6 +1404,7 @@ object Stt {
     /** To CaptionHub on the main thread, where its state and views live. */
     private fun emit(text: String, fin: Boolean) {
         if (Settings.get(KEY_LOG, false)) log("STT ${if (fin) "final" else "partial"}: $text")
+        if (liveMode) { LiveCaptions.onSttText(text, fin); return }
         main.post { runCatching { CaptionHub.onSttText(text, fin) }.onFailure { log("STT caption hand-off failed: $it") } }
     }
 
@@ -1368,7 +1455,7 @@ object Stt {
      * do=pack_verify: hashes both packs now; a pack that fails is deleted.
      * do=pack_delete: deletes both packs.
      * do=pack_corrupt: flips one byte of the engine library on disk, to test pack_verify.
-     * do=feed_main: copies the MAIN player's sound (the stream on screen) into the recognizer, so
+     * do=feed_main: copies the main player's sound (the stream on screen) into the recognizer, so
      *   speech to text can be tried outside an ad. Needs stt_captions on and both packs; set
      *   dev_stt_log to see the text in logcat. Ends with do=stop.
      * do=stop: ends feed_main and any WAV feed; the model unloads 60 s later as after a break.
@@ -1412,7 +1499,7 @@ object Stt {
      * The main player for feed_main: the one drawing to the screen, never the PbyP player (it
      * takes a surface too while it is shown), else the one Twitch last loaded a stream into.
      */
-    private fun mainPlayer(): Any? {
+    internal fun mainPlayer(): Any? {
         val pbyp = PbypWatch.player()
         return PlayerStats.shownPlayer()?.takeIf { it !== pbyp }
             ?: RefreshButton.currentPlayer()?.takeIf { it !== pbyp }
@@ -1430,7 +1517,7 @@ object Stt {
     private fun devStatus() {
         val rg = ring
         log("STT status on=${on()} hooked=$hooked" + (hookError?.let { " hookError=$it" } ?: "") +
-            " deferred=$hookDeferred native=$nativeOk broken=$broken loaded=${rec != null} break=$inBreak" +
+            " deferred=$hookDeferred native=$nativeOk broken=$broken loaded=${rec != null} lang=$loadedLang/${SttModels.chosen().lang} break=$inBreak" +
             " active=${PbypWatch.active} visible=${PbypWatch.visible} target=$target" +
             " ring=${rg?.used() ?: "-"}/$SLOTS dropped=${rg?.dropped ?: 0} errors=$tapErrors tapOff=$tapOff" +
             " badFormat=$badFormat format=$curRate/$curCh speed=${rtf()} holds=$memoryHold/$thermalHold dev=$devBreak/$devFeeding/$devMain")

@@ -58,7 +58,16 @@ object RefreshButton {
             }
         }
         val n = XposedBridge.hookAllMethods(c, "load", hook).size + XposedBridge.hookAllMethods(c, "preload", hook).size
-        log("RB hooks: $n")
+        // A released player must never be called again: its native side is gone, and a crash
+        // there can not be caught. Its references go the moment Twitch releases it.
+        val r = XposedBridge.hookAllMethods(c, "release", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                val me = p.thisObject
+                if (player?.get() === me) { player = null; lastLoad = null }
+                PlayerStats.forget(me)
+            }
+        }).size
+        log("RB hooks: $n, release: $r")
     }
 
     /** The player Twitch is using now, for the stats box. */
@@ -67,7 +76,7 @@ object RefreshButton {
     private val HLS = Regex("/api/(?:v2/)?channel/hls/([^/]+)\\.m3u8")
 
     /** The live channel login, from the stream address (".../api/channel/hls/<login>.m3u8", or ".../api/v2/..."). */
-    private fun liveLogin(): String? {
+    fun liveLogin(): String? {
         val path = lastUri?.path ?: return null
         return HLS.find(path)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
     }

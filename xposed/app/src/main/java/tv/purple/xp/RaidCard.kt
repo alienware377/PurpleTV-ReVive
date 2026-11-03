@@ -13,7 +13,7 @@ import org.json.JSONObject
 import java.lang.ref.WeakReference
 
 /**
- * The raid card ("X is raiding with a party of N raiders") for viewers who arrive WITH the raid.
+ * The raid card ("X is raiding with a party of N raiders") for viewers who arrive with the raid.
  *
  * Twitch only shows that card from the live chat event sent the moment a raid lands. Raiders are
  * moved over a few seconds later on purpose, so their chat joins after the event has gone by and
@@ -177,10 +177,10 @@ object RaidCard {
         val l = cl ?: return false
         val subj = subject?.get() ?: run { log("RC no chat notice channel captured"); return false }
         building = true
-        val user = XposedHelpers.newInstance(XposedHelpers.findClass(USER_INFO, l), r.source, login, display, 0)
+        val user = userInfo(l, r.source, login, display)
         val system = if (r.count == 1) "1 raider from $display has joined!" else "${r.count} raiders from $display have joined!"
         val notice = XposedHelpers.newInstance(XposedHelpers.findClass(RAID_NOTICE, l), system, logo, user, r.count)
-        val target = TwitchVersion.channelIdArg(l, r.target) ?: return false
+        val target = TwitchVersion.channelIdArg(l, r.target) ?: run { building = false; return false }
         val event = XposedHelpers.newInstance(XposedHelpers.findClass(RAID_EVENT, l), target, notice)
         val wrapped = XposedHelpers.newInstance(XposedHelpers.findClass(CHAT_NOTICE, l), event)
         building = false
@@ -189,6 +189,20 @@ object RaidCard {
         XposedHelpers.callMethod(subj, TwitchVersion.onNext, wrapped)   // PublishSubject.onNext
         true
     }.getOrElse { building = false; log("RC raid card failed: $it"); false }
+
+    /**
+     * UserInfo(userId, userName, displayName, unused). The id may be a plain String or, since
+     * 31.7.0 made ids Twitch's Tuid type in event models, a Tuid or an Int: each is tried in turn.
+     */
+    private fun userInfo(l: ClassLoader, id: String, login: String, display: String): Any {
+        val c = XposedHelpers.findClass(USER_INFO, l)
+        val ids = listOfNotNull<Any>(id, TwitchVersion.channelIdArg(l, id), id.toIntOrNull())
+        var last: Throwable? = null
+        for (v in ids.distinct()) {
+            try { return XposedHelpers.newInstance(c, v, login, display, 0) } catch (t: Throwable) { last = t }
+        }
+        throw last ?: IllegalStateException("no UserInfo constructor")
+    }
 
     /** Whether a raid card is on screen in chat. */
     private fun shown(): Boolean {

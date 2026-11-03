@@ -16,7 +16,7 @@ import android.widget.SeekBar
 import android.widget.TextView
 
 /**
- * The PurpleTV settings menu (task: "PurpleTV menu button inside the profile page's settings").
+ * The PurpleTV settings menu, opened from its row in the profile page's settings.
  *
  * The whole tree is declared here as plain data and rendered with plain framework widgets, so it
  * carries no dependency on Twitch's own menu system. That matters: Twitch moved the top-level
@@ -204,7 +204,9 @@ object PurpleMenu {
         Toggle("DankChat badges", "Enable support for DankChat badges in the chat",
             BadgeRepo.KEY_DANK, def = true, done = true),
         Toggle("Chatsen badges", "Enable support for Chatsen badges in the chat",
-            BadgeRepo.KEY_CHATSEN, def = true, done = true)
+            BadgeRepo.KEY_CHATSEN, def = true, done = true),
+        Toggle("7TV badges", "Enable support for 7TV badges in the chat",
+            BadgeRepo.KEY_7TV, def = true, done = true)
     )
 
     private val THIRD_PARTY = listOf(
@@ -232,6 +234,9 @@ object PurpleMenu {
             Pins.KEY_HOLD, listOf("Pins it to the top of suggestions",
                 "Adds it to the favorites bar", "Both: 2 s pins, 5 s adds to favorites"),
             def = Pins.HOLD_DEFAULT, done = true),
+        Toggle("Emote stats",
+            "Tap an emote in chat to also see who used it most in this chat since you opened it. Twitch's own emote card stays as it is, with the list added under it",
+            EmoteStats.KEY, def = true, done = true),
         Toggle("Auto-claim channel points",
             "Claim bonus chests automatically, whether or not the chest is on screen",
             Settings.KEY_AUTO_POINTS, def = true, done = true),
@@ -342,6 +347,9 @@ object PurpleMenu {
         IntToggle("Bigger live preview during ad breaks",
             "When Twitch keeps the stream going in a small picture during an ad, show it bigger beside the ad, still muted. Classic stream screen only",
             PbypPreview.KEY, def = PbypPreview.DEF, done = true),
+        Toggle("Recap after ad breaks",
+            "When an ad break of 15 seconds or more ends, a short recap in chat: what the streamer said (when captions were on for the live picture) and what chat did",
+            BreakRecap.KEY, def = true, done = true),
         Toggle("Captions during ad breaks",
             "Show what the streamer says under that live picture. Twitch's own captions are used when the streamer sends them, " +
                 "otherwise speech-to-text below if you turn it on",
@@ -350,12 +358,13 @@ object PurpleMenu {
             "When the stream has no captions of its own, make them on this phone from the live picture's sound. " +
                 "Nothing is sent anywhere. Needs the two downloads below",
             Stt.KEY, def = false, done = true),
+        streamLanguage(),
         Action("Download captions engine", { packSummary(it, model = false) },
             { ctx, set -> downloadPack(ctx, model = false, set = set) }, live = true),
         Action("Download speech model", { packSummary(it, model = true) },
             { ctx, set -> downloadPack(ctx, model = true, set = set) }, live = true),
         Custom("Delete downloaded captions files",
-            "Removes the captions engine and the speech model from this phone. You can download them again any time",
+            "Removes the captions engine and every speech model from this phone. You can download them again any time",
             { confirmDeletePacks(it) }),
         IntToggle("Read captions aloud",
             "Read the captions out with an offline voice of this phone while the small live picture is shown during an ad. " +
@@ -367,6 +376,139 @@ object PurpleMenu {
         Note("Captions and read-aloud only work when Twitch shows the small live picture during an ad. " +
             "Ads that take over the whole player have no live sound to caption.")
     )
+
+    /**
+     * The language the streamer speaks, which picks the speech model. On both the ad break and the
+     * translation page, since live captions users look for it there; both rows share one setting.
+     */
+    private fun streamLanguage() = Drop("Stream language",
+        "The language the streamer speaks, so speech-to-text uses the speech model for it. Each language's model is its own download, under Player, During ad breaks",
+        SttModels.KEY, SttModels.labels(), def = SttModels.DEF, done = true)
+
+    private val TRANSLATE: List<Item> = listOf(
+        Header("Made on this phone, nothing is sent anywhere"),
+        Toggle("Translate chat",
+            "Chat lines in another language get a small translation under them. Needs the download below",
+            ChatTranslate.KEY, def = false, done = true),
+        Toggle("Live captions",
+            "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)",
+            LiveCaptions.KEY, def = false, done = true),
+        streamLanguage(),
+        Toggle("Translate live captions",
+            "Show live captions in the language below instead, once it is downloaded",
+            LiveCaptions.KEY_TR, def = true, done = true),
+        Drop("Translate into", "The language chat and live captions are translated into",
+            ChatTranslate.KEY_TO, Translator.languages().map { it.name }, def = ChatTranslate.DEF_TO, done = true),
+        Action("Download the chosen language", { Translator.packLine(it, ChatTranslate.target()) },
+            { ctx, set -> downloadTranslate(ctx, set) }, live = true),
+        Action("Languages chat is written in", { chatLangsLine(it) },
+            { ctx, set -> pickChatLangs(ctx, set) }, live = true),
+        Custom("Delete translation files",
+            "Removes the translation engine and every language from this phone. You can download them again any time",
+            { ctx ->
+                android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+                    .setTitle("Delete translation files?")
+                    .setMessage(Translator.sizeSummary(ctx))
+                    .setPositiveButton("Delete") { _, _ -> Translator.deleteAll(ctx); toast(ctx, "Translation files deleted") }
+                    .setNegativeButton("Cancel", null).show()
+            }),
+        Note("Chat in other languages is translated through English, so it needs the \"into English\" part too; the download takes care of that. " +
+            "That general part knows many languages but none of them really well. For the languages you see most in chat, " +
+            "\"Languages chat is written in\" adds a model made just for that language, which translates much better (offline pack only). " +
+            "Machine translation of chat slang can be rough. " + Translator.credits().replace("\n", " "))
+    )
+
+    /** The row line for the per chat language downloads: what is there, what is downloading, what chat had lately. */
+    private fun chatLangsLine(ctx: Context): String {
+        if (!TranslatePacks.supported()) return "Not available on this phone: it needs a 64-bit ARM processor"
+        val langs = OpusEngine.CHAT_LANGS
+        langs.mapNotNull { TranslatePacks.chatPack(it.code) }.firstOrNull { it.busy.get() }?.let { return "Downloading: ${it.progress}%" }
+        val have = langs.filter { TranslatePacks.chatLangReady(ctx, it.code) }.map { it.name }
+        val line = if (have.isEmpty())
+            "Optional: tick the languages people write in your chats for much better translation from them (about 70 MB each)"
+        else "Better translation from ${have.joinToString(", ")}. Tap to add or remove languages"
+        val missed = OpusEngine.missedLangs(ctx).map { Translator.name(it) }
+        return if (missed.isEmpty()) line else "$line. Seen in chat lately: ${missed.joinToString(", ")}"
+    }
+
+    /**
+     * A tick list of the chat languages that have their own into English model. Ticking downloads
+     * (after a confirm with the size, like every other download here), unticking deletes.
+     */
+    private fun pickChatLangs(ctx: Context, set: (String) -> Unit) {
+        if (!TranslatePacks.supported()) { toast(ctx, "Translation needs a phone with a 64-bit ARM processor"); return }
+        if (Translator.downloading()) { toast(ctx, "Translation files are already downloading"); return }
+        val langs = OpusEngine.CHAT_LANGS
+        val had = BooleanArray(langs.size) { TranslatePacks.chatLangReady(ctx, langs[it].code) }
+        // Languages chat had lately start ticked, as a suggestion; nothing happens until OK.
+        val missed = OpusEngine.missedLangs(ctx)
+        val ticked = BooleanArray(langs.size) { had[it] || langs[it].code in missed }
+        val labels = langs.mapIndexed { i, l ->
+            val p = TranslatePacks.chatPack(l.code)
+            when {
+                had[i] -> "${l.name} (downloaded)"
+                p != null -> "${l.name} (${(p.bytes + 500_000) / 1_000_000} MB)"
+                else -> l.name
+            }
+        }.toTypedArray()
+        val fresh = { set(chatLangsLine(ctx)) }
+        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Languages chat is written in")
+            .setMultiChoiceItems(labels, ticked) { _, which, on -> ticked[which] = on }
+            .setPositiveButton("OK") { _, _ ->
+                val add = langs.indices.filter { ticked[it] && !had[it] }.map { langs[it].code }
+                val remove = langs.indices.filter { !ticked[it] && had[it] }.map { langs[it].code }
+                if (remove.isNotEmpty()) {
+                    TranslatePacks.deleteChatLangs(ctx, remove)
+                    toast(ctx, "Removed: ${remove.joinToString(", ") { Translator.name(it) }}")
+                }
+                if (add.isNotEmpty()) confirmChatLangs(ctx, add, fresh)
+                fresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmChatLangs(ctx: Context, add: List<String>, fresh: () -> Unit) {
+        val names = add.joinToString(", ") { Translator.name(it) }
+        val mb = (TranslatePacks.chatLangBytes(ctx, add) + 500_000) / 1_000_000
+        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Download better translation from $names?")
+            .setMessage("$mb MB download. Chat lines in these languages are then translated into English with a model made " +
+                "just for that language, instead of the general one. From PurpleTV ReVive's GitHub releases (${TranslatePins.TAG_2}), " +
+                "checked before it is used. Use Wi-Fi if your mobile data is limited.\n\n" + Translator.credits())
+            .setPositiveButton("Download") { _, _ ->
+                TranslatePacks.downloadChatLangs(ctx, add, { fresh() }) { ok, msg ->
+                    // Lines translated before through the general model are translated again with the new one.
+                    if (ok) { Translator.clearCache(); ChatTranslate.clearCache() }
+                    AdTime.toast(msg); fresh()
+                }
+                fresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun downloadTranslate(ctx: Context, set: (String) -> Unit) {
+        val lang = ChatTranslate.target()
+        val name = Translator.name(lang)
+        if (!TranslatePacks.supported()) { toast(ctx, "Translation needs a phone with a 64-bit ARM processor"); return }
+        if (Translator.downloading()) { toast(ctx, "Translation files are already downloading"); return }
+        // Every part this language's download brings, not "can translate something": with only a
+        // chat language's own model there, the general into English model is still missing.
+        if (TranslatePacks.packsFor(lang).all { SttPacks.ready(ctx, it) }) { toast(ctx, "$name is already downloaded and checked"); return }
+        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Download $name?")
+            .setMessage(Translator.packLine(ctx, lang) + ". From PurpleTV ReVive's GitHub releases (${TranslatePins.TAG}), " +
+                "checked before it is used. Use Wi-Fi if your mobile data is limited.\n\n" + Translator.credits())
+            .setPositiveButton("Download") { _, _ ->
+                val fresh = { set(Translator.packLine(ctx, lang)) }
+                Translator.download(ctx, lang, { fresh() }) { _, msg -> AdTime.toast(msg); fresh() }
+                fresh()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     private val PLAYER = listOf(
         Toggle("Hide \"Mature content\"",
@@ -386,6 +528,9 @@ object PurpleMenu {
         Toggle("Show refresh button",
             "Enable the display of a refresh button, allowing you to manually refresh the stream",
             RefreshButton.KEY, def = true, done = true),
+        Toggle("Show clip and save button",
+            "A button in the live player that makes a Twitch clip of the last moments and saves it as a video in Movies/PurpleTV on your phone. The clip is a normal Twitch clip, so it also shows on the channel",
+            ClipSave.KEY, def = true, done = true),
         Toggle("Hide Unfollow button", "", "hide_unfollow_button", done = true),
         Toggle("Hide \"Follow/Subscribe\" button", "", "hide_fsb", done = true),
         Toggle("Hide \"Create clip button\"", "", "hide_player_create_clip_button", done = true),
@@ -453,14 +598,22 @@ object PurpleMenu {
         Link("sherpa-onnx", "The speech-to-text engine, by k2-fsa, Apache-2.0, with ONNX Runtime (MIT). " +
             "It includes espeak-ng (GPL-3.0)",
             "https://github.com/k2-fsa/sherpa-onnx"),
-        Link("Kroko ASR by Banafo, CC-BY-SA", "The English speech model for speech-to-text captions, " +
+        Link("Kroko ASR by Banafo, CC-BY-SA", "The English, Spanish, German and French speech models for speech-to-text captions, " +
             "converted for sherpa-onnx by csukuangfj",
             "https://huggingface.co/Banafo/Kroko-ASR"),
-        Link("CC BY-SA 4.0", "The licence of the Kroko speech model",
+        Link("CC BY-SA 4.0", "The licence of the Kroko speech models",
             PackPins.MODEL_LICENCE_URL),
-        Link("Captions downloads: licences and source", "The full licence texts of the engine and the speech model, " +
+        Link("Vosk by Alpha Cephei, Apache-2.0", "The Russian speech model (small streaming), converted for sherpa-onnx by csukuangfj",
+            "https://huggingface.co/alphacep/vosk-model-small-streaming-ru"),
+        Link("Korean streaming Zipformer by johnBamma, Apache-2.0", "The Korean speech model, converted for sherpa-onnx by k2-fsa",
+            "https://huggingface.co/johnBamma/icefall-asr-ksponspeech-pruned-transducer-stateless7-streaming-2024-06-12"),
+        Link("Chinese streaming Zipformer CTC by k2-fsa, Apache-2.0", "The Chinese speech model (small)",
+            "https://huggingface.co/csukuangfj/icefall-streaming-zipformer-small-ctc-zh-2025-04-01"),
+        Link("Captions downloads: licences and source", "The full licence texts of the engine and the English speech model, " +
             "and where their source is",
-            PackPins.RELEASE_PAGE)
+            PackPins.RELEASE_PAGE),
+        Link("More speech models: licences and source", "The licence texts and sources of the speech models for other stream languages",
+            SttModels.RELEASE_PAGE2)
     )
 
     private val UPDATES = listOf(
@@ -484,6 +637,7 @@ object PurpleMenu {
         MASTER,
         Sub("Third Party Services", items = THIRD_PARTY),
         Sub("Chat", items = CHAT),
+        Sub("Translation", items = TRANSLATE),
         Sub("Player", items = PLAYER),
         Sub("Gestures", items = GESTURES),
         Sub("View", items = VIEW),
@@ -509,7 +663,7 @@ object PurpleMenu {
 
     /**
      * While the master switch is off, none of the features are wired, so showing their rows would
-     * offer settings that do nothing. The screen collapses to the switch itself -- which is also
+     * offer settings that do nothing. The screen collapses to the switch itself, which is also
      * the only way back, since every other entry point into this menu belongs to a feature that is
      * currently not running.
      */
@@ -638,6 +792,8 @@ object PurpleMenu {
                     if (v) {
                         if (item.key == Pronouns.KEY) Pronouns.loadAsync() else BadgeRepo.refresh()
                     }
+                    // 7TV's badges come over a live socket, which switching off should also close.
+                    if (!v && item.key == BadgeRepo.KEY_7TV) SevenTvBadges.sync()
                     // The user's own switch: speech to text may put its hooks in now (see Stt.maybeHook).
                     AdBreakSettings.changed(item.key, byUser = true)
                     if (item.key == Stt.KEY && v) sttNeedsDownloads(ctx)
@@ -706,18 +862,28 @@ object PurpleMenu {
                     override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
                         val v = item.min + p * item.step
                         valueView?.text = v.toString()
-                        if (fromUser) {
-                            Settings.setInt(item.key, v)
-                            // Live-preview the one slider that has a visible effect behind the menu.
-                            if (item.key == Settings.KEY_CHAT_OPACITY ||
-                                item.key == ChatTransparency.KEY_CHAT_WIDTH
-                            ) ChatTransparency.reapply()
-                            if (item.key == ChatAppearance.KEY_FONT_SIZE) ChatAppearance.reapply()
-                            AdBreakSettings.changed(item.key)
-                        }
+                        if (!fromUser) return
+                        // The sliders with a visible effect behind the menu save on every step, so
+                        // it can be watched while dragging. The others save once the finger lifts:
+                        // each save also writes the sync times and schedules a sync.
+                        if (live || !tracking) save(v)
                     }
-                    override fun onStartTrackingTouch(sb: SeekBar) {}
-                    override fun onStopTrackingTouch(sb: SeekBar) {}
+                    private var tracking = false
+                    private val live = item.key == Settings.KEY_CHAT_OPACITY || item.key == ChatTransparency.KEY_CHAT_WIDTH ||
+                        item.key == ChatTransparency.KEY_CHAT_WIDTH_WIDE || item.key == ChatAppearance.KEY_FONT_SIZE
+                    private fun save(v: Int) {
+                        if (Settings.getInt(item.key, item.def) == v && !live) return
+                        Settings.setInt(item.key, v)
+                        if (item.key == Settings.KEY_CHAT_OPACITY || item.key == ChatTransparency.KEY_CHAT_WIDTH ||
+                            item.key == ChatTransparency.KEY_CHAT_WIDTH_WIDE) ChatTransparency.reapply()
+                        if (item.key == ChatAppearance.KEY_FONT_SIZE) ChatAppearance.reapply()
+                        AdBreakSettings.changed(item.key)
+                    }
+                    override fun onStartTrackingTouch(sb: SeekBar) { tracking = true }
+                    override fun onStopTrackingTouch(sb: SeekBar) {
+                        tracking = false
+                        save(item.min + sb.progress * item.step)
+                    }
                 })
             })
         }
@@ -795,9 +961,13 @@ object PurpleMenu {
 
     /** What a download row says: what the pack is, its sizes, and whether it is there or how far. */
     private fun packSummary(ctx: Context, model: Boolean): String =
-        (if (model) "Kroko ASR English, by Banafo (CC-BY-SA). "
+        (if (model) SttModels.chosen().let { "${it.label}, for the stream language above. ${shortCredit(it)}. " }
          else "sherpa-onnx ${PackPins.SHERPA_VERSION}, by k2-fsa (Apache-2.0), includes espeak-ng (GPL-3.0). ") +
             SttPacks.packLine(ctx, model)
+
+    /** The model's credit up to its first address, for a one line summary. */
+    private fun shortCredit(m: SttModel): String =
+        m.credit.substringBefore(" (").trim() + " (" + m.licence + ")"
 
     /**
      * Each pack is its own download, started only after the user agrees to its size. The files
@@ -805,22 +975,24 @@ object PurpleMenu {
      * their pinned SHA-256 before anything is used.
      */
     private fun downloadPack(ctx: Context, model: Boolean, set: (String) -> Unit) {
-        val what = if (model) "speech model" else "captions engine"
+        val m = SttModels.chosen()
+        val what = if (model) "${m.label} speech model" else "captions engine"
         if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
         if (SttPacks.packBusy(model)) { toast(ctx, "The $what is already downloading"); return }
         if (if (model) SttPacks.modelReady(ctx) else SttPacks.engineReady(ctx)) {
             toast(ctx, "The $what is already downloaded and checked"); return
         }
-        val bytes = if (model) PackPins.MODEL_BYTES else PackPins.ENGINE_BYTES
-        val unpacked = if (model) PackPins.MODEL_UNPACKED_BYTES else PackPins.ENGINE_UNPACKED_BYTES
+        val bytes = if (model) m.bytes else PackPins.ENGINE_BYTES
+        val unpacked = if (model) m.unpackedBytes else PackPins.ENGINE_UNPACKED_BYTES
+        val tag = if (model) m.tag else PackPins.TAG
         // Plain text in a dialog, so the addresses are written out. Licences and source: the release page.
-        val credit = if (model) "\n\nKroko ASR by Banafo, licensed CC-BY-SA (${PackPins.MODEL_LICENCE_URL}), " +
-                         "converted for sherpa-onnx by csukuangfj. Licence and source: ${PackPins.RELEASE_PAGE}"
+        val credit = if (model) "\n\n" + m.credit + ". Licence and source: " +
+                         (if (m.tag == PackPins.TAG) PackPins.RELEASE_PAGE else SttModels.RELEASE_PAGE2)
                      else "\n\nsherpa-onnx by k2-fsa (Apache-2.0) with ONNX Runtime (MIT); it includes espeak-ng (GPL-3.0). " +
                          "Licences and source: ${PackPins.RELEASE_PAGE}"
         android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Download the $what?")
-            .setMessage("About ${mb(bytes)} MB from PurpleTV ReVive's GitHub releases (${PackPins.TAG}). " +
+            .setMessage("About ${mb(bytes)} MB from PurpleTV ReVive's GitHub releases ($tag). " +
                 "It takes ${mb(unpacked)} MB on this phone and is checked before it is used. " +
                 "Use Wi-Fi if your mobile data is limited." + credit)
             .setPositiveButton("Download") { _, _ ->
@@ -828,7 +1000,7 @@ object PurpleMenu {
                 // The download ends on its own time, maybe in the middle of an ad: the toast then
                 // waits until the ad is over (the row's own summary already shows the result).
                 val done = { _: Boolean, msg: String -> AdTime.toast(msg); fresh() }
-                if (model) SttPacks.downloadModel(ctx, { fresh() }, done)
+                if (model) SttPacks.downloadModel(ctx, { fresh() }, done, m)
                 else SttPacks.downloadEngine(ctx, { fresh() }, done)
                 fresh()
             }
@@ -839,8 +1011,8 @@ object PurpleMenu {
     private fun confirmDeletePacks(ctx: Context) {
         android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Delete the captions files?")
-            .setMessage("The captions engine and the speech model are removed from this phone, and a download " +
-                "that is running stops. Speech-to-text works again once both are downloaded again.")
+            .setMessage("The captions engine and every speech model are removed from this phone, and a download " +
+                "that is running stops. Speech-to-text works again once the engine and the stream language's model are downloaded again.")
             .setPositiveButton("Delete") { _, _ ->
                 SttPacks.deleteAll(ctx)
                 toast(ctx, "Captions files deleted")
@@ -908,8 +1080,10 @@ object AdBreakSettings {
     fun changed(key: String, byUser: Boolean = false) {
         if (key.startsWith("pbyp_")) runCatching { PbypPreview.reapply() }
         if (key.startsWith("read_aloud")) runCatching { ReadAloud.refresh() }
-        if (key == Stt.KEY || key == CaptionHub.KEY || key == ReadAloud.KEY || key.startsWith("dev_stt_"))
+        if (key == Stt.KEY || key == CaptionHub.KEY || key == ReadAloud.KEY || key == SttModels.KEY || key.startsWith("dev_stt_"))
             runCatching { Stt.refresh(hookNow = byUser) }
+        // Read-aloud picks a voice for the stream language.
+        if (key == SttModels.KEY) runCatching { ReadAloud.refresh() }
     }
 
     /** After sync loaded other devices' values: any of them may have changed. */

@@ -5,7 +5,6 @@ import android.content.ClipData
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -281,7 +280,8 @@ object FavBar {
         val size = dp(ctx, 34f)
         val inner: View = if (d != null) ImageView(ctx).apply {
             setImageDrawable(d)
-            if (d is AnimatedImageDrawable) runCatching { d.start() }
+            // Runs while the bar is on screen.
+            AnimPause.onImage(this, d)
             layoutParams = FrameLayout.LayoutParams(size, size, Gravity.CENTER)
         } else TextView(ctx).apply {
             text = name; setTextColor(Color.WHITE); textSize = 13f; gravity = Gravity.CENTER
@@ -324,8 +324,7 @@ object FavBar {
                 setPadding(0, 0, dp(ctx, 6f), 0)
             })
             if (iconPic != null) {
-                if (iconPic is AnimatedImageDrawable) runCatching { iconPic.start() }
-                addView(ImageView(ctx).apply { setImageDrawable(iconPic) }, LinearLayout.LayoutParams(dp(ctx, 28f), dp(ctx, 28f)))
+                addView(ImageView(ctx).apply { setImageDrawable(iconPic); AnimPause.onImage(this, iconPic) }, LinearLayout.LayoutParams(dp(ctx, 28f), dp(ctx, 28f)))
             }
             // The name, unless an icon stands in for it in the compact row.
             val label = g.name.ifEmpty { if (iconPic == null) g.icon else "" }
@@ -437,7 +436,7 @@ object FavBar {
         for (n in Favorites.list().distinct()) {
             val d = if (Favorites.isAvailable(n)) pic(n) else null
             pickCell(n, if (d != null) ImageView(ctx).apply {
-                setImageDrawable(d); if (d is AnimatedImageDrawable) runCatching { d.start() }
+                setImageDrawable(d); AnimPause.onImage(this, d)
                 layoutParams = LinearLayout.LayoutParams(dp(ctx, 46f), dp(ctx, 46f))
             } else TextView(ctx).apply { text = n; setTextColor(TEXT); textSize = 13f })
         }

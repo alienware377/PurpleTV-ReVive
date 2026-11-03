@@ -8,16 +8,16 @@ import java.util.concurrent.TimeUnit
 /**
  * Pronoun tags from pronouns.alejo.io.
  *
- * Unlike badges there is no global manifest — pronouns are looked up per login — so the whole
- * design here is about making that cheap and keeping it OFF the render thread.
+ * Unlike badges there is no global manifest (pronouns are looked up per login), so the whole
+ * design here is about making that cheap and keeping it off the render thread.
  *
  * [forLogin] never blocks and never performs I/O. On a cache miss it returns null immediately and
- * queues a background fetch, so the tag appears on that user's NEXT message. That one-message lag
+ * queues a background fetch, so the tag appears on that user's next message. That one-message lag
  * is the price of not stalling chat layout, and it is worth paying.
  *
  * Endpoints re-verified live on 2026-07-27 (both API generations are up; v1 is used because only
  * it can express an alternate pronoun):
- *   GET api.pronouns.alejo.io/v1/pronouns       -> { "hehim": {name,subject,object,singular}, … }
+ *   GET api.pronouns.alejo.io/v1/pronouns       -> { "hehim": {name,subject,object,singular}, ... }
  *   GET api.pronouns.alejo.io/v1/users/<login>  -> { channel_id, channel_login, pronoun_id,
  *                                                    alt_pronoun_id }   (404/empty when unset)
  */
@@ -29,6 +29,9 @@ object Pronouns {
     private const val TTL_MISS = 30L * 60 * 1000        // but a user who just set theirs should
                                                         // show up within the same session
     private const val MAX_ENTRIES = 2000
+    private const val MAX_QUEUE = 200
+    /** A lookup that failed (not a 404) is asked again after this long. */
+    private const val RETRY_AFTER_FAIL = 2L * 60 * 1000
     private const val MIN_REQUEST_GAP_MS = 200L         // ~5 req/s
     private const val LABEL_RETRY_MS = 60_000L          // after a failed label list load
 
@@ -39,7 +42,7 @@ object Pronouns {
     private val labels = ConcurrentHashMap<String, String>()
     @Volatile private var labelsTriedAt = 0L
 
-    /** [id] is null for a NEGATIVE entry (user has no pronoun set) — cached so a chatty user
+    /** [id] is null for a negative entry (user has no pronoun set), cached so a chatty user
      *  without pronouns isn't re-queried on every line. [alt] is the alternate pronoun id, if any.
      *  Ids, not text, are cached so a label list that loads late still fixes these entries. */
     private class Entry(val id: String?, val alt: String?, val at: Long)
@@ -109,6 +112,10 @@ object Pronouns {
         // device, for one), so nothing started the worker yet. forLogin already checked enabled().
         if (!started) loadAsync()
         if (!inFlight.add(login)) return
+        // A busy chat brings new chatters faster than the 5 a second we may ask for. The oldest
+        // waiting ones are dropped (they are asked again on their next message), so the tags of
+        // people chatting now never wait minutes behind a backlog.
+        while (queue.size >= MAX_QUEUE) queue.poll()?.let { inFlight.remove(it) } ?: break
         queue.offer(login)
     }
 
@@ -118,7 +125,7 @@ object Pronouns {
         for (id in root.keys()) {
             val o = root.optJSONObject(id) ?: continue
             val subject = o.optString("subject"); if (subject.isEmpty()) continue
-            // v1 hands back the PARTS, not a label. "singular" ids ("any", "other") render as the
+            // v1 hands back the parts, not a label. "singular" ids ("any", "other") render as the
             // subject alone; everything else as "Subject/Object".
             labels[id] = if (o.optBoolean("singular")) subject
                          else subject + "/" + o.optString("object").ifEmpty { subject }
@@ -136,9 +143,10 @@ object Pronouns {
             if (login == null) continue
             runCatching { fetch(login) }
                 .onFailure {
-                    // Cache as a miss so one flaky lookup can't turn into a per-message retry storm.
-                    put(login, null, null)
-                    log("PRONOUN '$login' failed: $it")
+                    // A short miss so one flaky lookup can't turn into a per-message retry storm,
+                    // yet a network hiccup is not remembered as "no pronouns" for half an hour.
+                    put(login, null, null, System.currentTimeMillis() - TTL_MISS + RETRY_AFTER_FAIL)
+                    log("PRONOUN '$login' failed: ${it.javaClass.simpleName}")
                 }
             inFlight.remove(login)
             runCatching { Thread.sleep(MIN_REQUEST_GAP_MS) }
@@ -146,10 +154,14 @@ object Pronouns {
     }
 
     private fun fetch(login: String) {
-        val body = runCatching {
+        val body = try {
             EmoteRepo.httpGet("https://api.pronouns.alejo.io/v1/users/$login")
-        }.getOrNull()
-        if (body.isNullOrBlank()) { put(login, null, null); return }   // 404 == no pronoun set
+        } catch (e: Exception) {
+            // 404 == no pronoun set. Anything else is a failure, retried soon (see the loop).
+            if (e.message?.startsWith("HTTP 404") == true) { put(login, null, null); return }
+            throw e
+        }
+        if (body.isBlank()) { put(login, null, null); return }
         val o = runCatching { JSONObject(body) }.getOrNull()
         if (o == null) { put(login, null, null); return }
         val primary = o.optString("pronoun_id").takeIf { it.isNotEmpty() && it != "null" }
@@ -158,10 +170,12 @@ object Pronouns {
         put(login, primary, alt)
     }
 
-    private fun put(login: String, id: String?, alt: String?) {
-        // Chat churn is high but bounded; a crude clear beats unbounded growth and is invisible
-        // to the user (worst case a handful of logins are re-fetched).
-        if (cache.size > MAX_ENTRIES) cache.clear()
-        cache[login] = Entry(id, alt, System.currentTimeMillis())
+    private fun put(login: String, id: String?, alt: String?, at: Long = System.currentTimeMillis()) {
+        // Full: the oldest quarter goes, not everything, so the regulars keep their tags.
+        if (cache.size > MAX_ENTRIES) {
+            val old = cache.entries.sortedBy { it.value.at }.take(MAX_ENTRIES / 4).map { it.key }
+            for (k in old) cache.remove(k)
+        }
+        cache[login] = Entry(id, alt, at)
     }
 }

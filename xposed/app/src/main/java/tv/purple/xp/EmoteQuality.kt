@@ -5,10 +5,10 @@ package tv.purple.xp
  *
  * Every third-party CDN exposes the same emote at several resolutions, but each spells the size
  * differently, so the level is mapped per provider here rather than scattered through [EmoteRepo].
- * Lower quality means smaller downloads and less decode work — worth having on slow devices, since
+ * Lower quality means smaller downloads and less decode work, which helps on slow devices, since
  * a busy chat can decode dozens of animated emotes per second.
  *
- * The level only affects URLs built AFTER it changes, so [EmoteRepo.refetch] re-runs the loaders
+ * The level only affects URLs built after it changes, so [EmoteRepo.refetch] re-runs the loaders
  * when the user picks a new value.
  */
 object EmoteQuality {
@@ -27,7 +27,7 @@ object EmoteQuality {
     val bttv: String get() = BTTV[level()] + if (Settings.get(KEY_BTTV_WEBP, false)) ".webp" else ""
     /** static-cdn.jtvnw.net/emoticons/v2/<id>/default/dark/<size> */
     val twitch: String get() = TWITCH[level()]
-    /** FrankerFaceZ `urls` object keys. FFZ publishes 1/2/4 — there is no 3. */
+    /** FrankerFaceZ `urls` object keys. FFZ publishes 1/2/4, with no 3. */
     val ffz: String get() = FFZ[level()]
     /** emotes.adamcy.pl `size` field. Also 1x/2x/4x, no 3x. */
     val adamcy: String get() = ADAMCY[level()]

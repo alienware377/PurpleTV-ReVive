@@ -3,7 +3,7 @@ package tv.purple.xp
 /**
  * Emotes pinned to the top of the suggestion strip.
  *
- * A pin only changes ORDER: a pinned emote still shows only when what is typed matches it, and
+ * A pin only changes the order: a pinned emote still shows only when what is typed matches it, and
  * then it comes first. Stored as one comma separated string; emote names never contain a comma
  * or a space.
  */

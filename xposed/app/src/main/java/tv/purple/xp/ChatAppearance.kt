@@ -15,13 +15,13 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  * Chat appearance: message font size and alternating row backgrounds.
  *
  * Anchored on resource entry names, like the rest of the module:
- *   chat_message_item      — the message TextView of an ordinary chat line
- *   chat_message           — the message TextView of the One Chat overlay and the user-notice rows
- *   chat_message_container — the row ROOT, where the alternating background goes
+ *   chat_message_item      = the message TextView of an ordinary chat line
+ *   chat_message           = the message TextView of the One Chat overlay and the user-notice rows
+ *   chat_message_container = the row root, where the alternating background goes
  *
  * The first two were previously the wrong way round: `chat_message_item` was treated as the row
  * root and `chat_message` as the message view. Both names are real, which is what let the mistake
- * survive — but `chat_message` does not appear in the main chat list at all, so the font size
+ * survive, but `chat_message` does not appear in the main chat list at all, so the font size
  * silently never reached it, and the alternating tint was painted on the message TextView instead
  * of the row, leaving the row's 6dp vertical padding untinted.
  *
@@ -85,6 +85,8 @@ object ChatAppearance {
         }
     }
 
+    @Volatile private var everOn = false
+
     private fun apply(act: Activity) {
         // 0 = the user never picked a size (or a sync removed it): leave every view at the size
         // Twitch gave it, as the original mod did. Forcing a default instead shrank Twitch 31's
@@ -92,6 +94,11 @@ object ChatAppearance {
         val stored = Settings.getInt(KEY_FONT_SIZE, 0)
         val sizeSp = if (stored > 0) stored.coerceIn(8, 24).toFloat() else 0f
         val altBg = Settings.get(KEY_ALT_BG, false)
+        // Nothing picked and nothing ever changed in this run: the walk over the whole screen
+        // (it runs on every layout pass of every screen) has nothing to do. Once either was on,
+        // it keeps running, so switching them off again puts every row back.
+        if (sizeSp == 0f && !altBg && !everOn) return
+        if (sizeSp > 0f || altBg) everOn = true
         val root = act.window?.decorView ?: return
         // With the toggle off nothing reads the shading anchors, so drop them now instead of
         // leaving them to wait for the garbage collector.
@@ -105,7 +112,7 @@ object ChatAppearance {
             when (Res.entry(v)) {
                 // Ordinary chat lines carry chat_message_item; the One Chat overlay and the
                 // user-notice rows carry chat_message. Both are message TextViews, so both are
-                // sized -- matching only one of them is what left the slider inert.
+                // sized. Matching only one of them left the slider inert.
                 "chat_message_item" -> { nItem++; if (v is TextView) applyFontSize(v, sizeSp) }
                 "chat_message" -> { nMessage++; if (v is TextView) applyFontSize(v, sizeSp) }
                 "chat_message_container" -> {
@@ -131,7 +138,7 @@ object ChatAppearance {
     @Volatile private var lastMessage = -1
     @Volatile private var lastContainer = -1
 
-    /** Which of the three anchors the live tree actually carries. Reported on CHANGE, because the
+    /** Which of the three anchors the live tree actually carries. Reported on change, because the
      *  counts differ per screen and a one-shot would describe whichever screen happened to be up
      *  first. This is the check that showed the old mapping never matched the main chat list at
      *  all: in a live chat it reads chat_message=0 while the other two are in double figures. */
@@ -218,7 +225,7 @@ object ChatAppearance {
             TINTED[row] = true
         } else {
             // Rows are recycled, so clear to transparent rather than trying to restore a
-            // per-row original — Twitch draws message rows on the list background.
+            // per-row original: Twitch draws message rows on the list background.
             row.setBackgroundColor(Color.TRANSPARENT)
             TINTED[row] = false
         }

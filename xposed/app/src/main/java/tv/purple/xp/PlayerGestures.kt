@@ -73,6 +73,29 @@ object PlayerGestures {
                 param.result = true
             }
         })
+        // The brightness swipe is for watching in landscape. Back in portrait, or leaving the
+        // screen, the window goes back to the phone's own brightness.
+        val reset = object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                val a = param.thisObject as? Activity ?: return
+                if (param.method.name == "onConfigurationChanged" &&
+                    a.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) return
+                runCatching { resetBrightness(a) }
+            }
+        }
+        XposedBridge.hookAllMethods(Activity::class.java, "onConfigurationChanged", reset)
+        XposedBridge.hookAllMethods(Activity::class.java, "onPause", reset)
+    }
+
+    /** Windows whose brightness we changed; weak, so a closed activity is let go. */
+    private val dimmed = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Activity, Boolean>())
+
+    private fun resetBrightness(a: Activity) {
+        if (!dimmed.remove(a)) return
+        val w = a.window ?: return
+        val lp = w.attributes
+        lp.screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        w.attributes = lp
     }
 
     private var justClaimed = false
@@ -220,6 +243,7 @@ object PlayerGestures {
         }
         val next = (cur + frac).coerceIn(0.01f, 1f)
         lp.screenBrightness = next
+        dimmed.add(a)
         w.attributes = lp
         show(a, "Brightness ${(next * 100).toInt()}%")
     }

@@ -3,13 +3,13 @@ package tv.purple.xp
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 
 /**
- * Obfuscation-resolution layer (task #8).
+ * Obfuscation-resolution layer.
  *
  * R8 full-mode renames classes/methods every Twitch release, so the obfuscated
- * anchors below are pinned to a known-good version and MUST be re-fingerprinted
+ * anchors below are pinned to a known-good version and must be re-fingerprinted
  * when bumping. The readable `tv.twitch.android.shared.chat.pub.messages.data.*`
  * model classes are R8-kept and stable across releases, so those are referenced by
- * their real names and are the load-bearing part of the design.
+ * their real names, need no re-pinning, and are what the design mainly rests on.
  *
  * Verified chain on Twitch 31.1.2:
  *   kn5.a(String, List): List<MessageToken>     // tokenizer  -> inject here
@@ -19,7 +19,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  *           gv0.a:String  = the emote image URL
  */
 object Names {
-    // --- pinned obfuscated anchors for the LIVE chat render path (Twitch 31.1.2) ---
+    // --- pinned obfuscated anchors for the live chat render path (Twitch 31.1.2) ---
     // Live chain: v46.b -> e86.b -> the rendered line. Re-fingerprinted for 31.1.2 by finding the
     // only static method returning the line model that also takes the LiveChatMessage. The slot
     // letters below are carried over from 28.6.1, where the model had an identical field shape;

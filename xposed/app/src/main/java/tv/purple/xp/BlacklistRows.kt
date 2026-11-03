@@ -11,24 +11,24 @@ import android.widget.TextView
  * naming a term that is still in the list.
  *
  * Driven from the existing framework hook on TextView.setText (see [EmoteHooks]), which is both
- * obfuscation-immune and exactly the right moment: RecyclerView binds a row BEFORE measuring it,
+ * obfuscation-immune and exactly the right moment: RecyclerView binds a row before measuring it,
  * so a height written here is honoured in the same layout pass and the hidden message never gets
  * a frame on screen.
  *
  * Three things about this are deliberate and were each arrived at the hard way:
  *
- *  - ONE level up, never a walk. `chat_message_item` is the message TextView inside
- *    `chat_message_container` in the two layouts we cover, but it is also the ROOT of
+ *  - One level up, never a walk. `chat_message_item` is the message TextView inside
+ *    `chat_message_container` in the two layouts we cover, but it is also the root of
  *    system_message_item, deleted_mod_notice and auto_mod_caught_notice. On those a walk looking
  *    for a container would find none, climb past the RecyclerView and reach a fragment or activity
- *    root — the same mistake that once hid the whole Home tab and produced a 404 ghost page.
+ *    root, the same mistake that once hid the whole Home tab and produced a 404 ghost page.
  *
  *  - INVISIBLE, never GONE. A RecyclerView LayoutManager has no visibility check, so a GONE row is
- *    still measured at full height and still consumes it — `layoutParams.height = 0` is the entire
+ *    still measured at full height and still consumes it. `layoutParams.height = 0` is the entire
  *    mechanism, and the visibility is only there to stop the row drawing. GONE would also break the
  *    restore, because ViewRootImpl discards layout requests from a view that is GONE.
  *
- *  - The One Chat overlay is NOT handled. Its `one_chat_message_container` id is carried by a
+ *  - The One Chat overlay is not handled. Its `one_chat_message_container` id is carried by a
  *    fragment root in vertical theatre, so collapsing it would take the whole surface with it.
  *
  * Every write is gated on the state actually changing. Mutating a view during a layout pass
@@ -83,8 +83,8 @@ internal object BlacklistRows {
         resolved = true
         runCatching {
             val res = ctx.resources; val pkg = ctx.packageName
-            itemId = res.getIdentifier("chat_message_item", "id", pkg)
-            containerId = res.getIdentifier("chat_message_container", "id", pkg)
+            itemId = Res.id(ctx, "chat_message_item")
+            containerId = Res.id(ctx, "chat_message_container")
             log("BL ids item=$itemId container=$containerId")
         }.onFailure { log("BL id resolve failed: $it") }
     }
@@ -98,7 +98,7 @@ internal object BlacklistRows {
     fun onSetText(tv: TextView, cs: CharSequence): Boolean {
         if (!resolved) resolve(tv.context)
 
-        // One-shot: report where a marked line ACTUALLY lands. Self-limiting -- it only runs once
+        // One-shot: report where a marked line actually lands. Self-limiting: it only runs once
         // a match has been made and stops for good at the first sighting, so the cost never
         // reaches the general case of every TextView.setText in the app.
         if (!markSeen && Blacklist.marked > 0 && cs is Spanned &&
@@ -121,7 +121,7 @@ internal object BlacklistRows {
                 missLogged = true
                 val what = runCatching { row.resources.getResourceEntryName(row.id) }
                     .getOrDefault("(no id)")
-                log("BL parent is '$what', not chat_message_container — row skipped")
+                log("BL parent is '$what', not chat_message_container; row skipped")
             }
             return false
         }
@@ -158,7 +158,7 @@ internal object BlacklistRows {
             COLLAPSED.remove(row)
         }
         // Required on the restore path: RecyclerView caches measurements, and WRAP_CONTENT produces
-        // an UNSPECIFIED spec that its cache always considers up to date — without this the row
+        // an UNSPECIFIED spec that its cache always considers up to date. Without this the row
         // would keep its cached height of 0 forever. requestLayout sets the child's own
         // force-layout flag before propagating, which is the part that matters here.
         row.requestLayout()

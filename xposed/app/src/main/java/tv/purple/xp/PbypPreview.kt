@@ -321,6 +321,22 @@ object PbypPreview {
      */
     private fun hookVisibility() {
         val n = XposedBridge.hookAllMethods(View::class.java, "setVisibility", object : XC_MethodHook() {
+            /**
+             * The break ends: the live view goes home right now, inside Twitch's own call. Twitch
+             * may move or re-add its player view in the same main-thread message, and if the view
+             * were still in our frame then, Twitch's addView would throw ("already has a parent").
+             */
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                try {
+                    if (borrow == null) return
+                    val v = p.thisObject as? View ?: return
+                    val id = v.id
+                    if (id == View.NO_ID || id == 0 || id != idBox) return
+                    if ((p.args.getOrNull(0) as? Int) == View.VISIBLE) return
+                    if (Looper.myLooper() != Looper.getMainLooper()) return
+                    restore("box hidden")
+                } catch (_: Throwable) {}
+            }
             override fun afterHookedMethod(p: MethodHookParam) {
                 try {
                     val id = (p.thisObject as? View)?.id ?: return
@@ -541,7 +557,11 @@ object PbypPreview {
     private fun onGone(act: Activity) {
         if (placedAct?.get() === act) restore("closed")
         if (resumedAct?.get() === act) resumedAct = null
+        if (lastAct?.get() === act) lastAct = null
         glWired.remove(act)
+        // Nothing lays out once the window is gone, so look again: a break that was on when the
+        // last stream screen closed must end here, or the model, the voice and AdTime stay held.
+        requestSync()
     }
 
     private fun confKey(c: Configuration): Long =

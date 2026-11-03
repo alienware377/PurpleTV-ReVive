@@ -32,8 +32,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  * We hook the framework MultiAutoCompleteTextView.onAttachedToWindow so we catch the input
  * regardless of which obfuscated Twitch class owns it. On each text change we compute the
  * word around the cursor and, if length>=2 and enabled, pop a horizontal strip of emote
- * chips above the input. Tapping a chip replaces that word with "<name> " — for 7TV/BTTV/FFZ
- * that plain text IS sending; for Twitch emotes it completes the native token.
+ * chips above the input. Tapping a chip replaces that word with "<name> ". For 7TV/BTTV/FFZ
+ * that plain text is what gets sent; for Twitch emotes it completes the native token.
  */
 object EmoteAutocomplete {
 
@@ -61,9 +61,9 @@ object EmoteAutocomplete {
             log("AC $INPUT_CLASS not loadable"); return
         }
         // The chat input is a plain android.widget.MultiAutoCompleteTextView (confirmed via
-        // uiautomator). Hook its CONSTRUCTOR (declared on this class, so hookAllConstructors
-        // catches it) and defer the id check to a post() — the view's id isn't assigned until
-        // after inflation. We identify by RESOURCE ENTRY NAME ("message_input"), which is
+        // uiautomator). Hook its constructor (declared on this class, so hookAllConstructors
+        // catches it) and defer the id check to a post(), since the view's id isn't assigned
+        // until after inflation. We identify by resource entry name ("message_input"), which is
         // package-independent: the resource table package is still "tv.twitch.android.app"
         // even though the app package was renamed to "tv.purple.app", so getIdentifier with
         // the runtime package returns 0. getResourceEntryName(id) sidesteps that entirely.
@@ -114,12 +114,12 @@ object EmoteAutocomplete {
     }
 
     /**
-     * Fix bug #3 (portrait nav-bar cutoff). The chat Activity draws EDGE-TO-EDGE (window
+     * Portrait nav-bar cutoff. The chat Activity draws edge-to-edge (window
      * mFrame spans the full 2560 incl. the nav bar; FIT_INSETS_CONTROLLED) but the bottom
-     * content row (chat_message_input_view_container, bottom==2480) does NOT reserve the 80px
-     * system nav-bar inset, so the input row underlaps the nav bar (∨□○◁ overlap the input box).
+     * content row (chat_message_input_view_container, bottom==2480) does not reserve the 80px
+     * system nav-bar inset, so the input row underlaps the nav bar (its buttons overlap the input).
      * Canonical edge-to-edge fix: pad the Activity content root's bottom by the nav-bar inset so
-     * all content sits above the nav bar. Only adds bottom padding — video at the top is
+     * all content sits above the nav bar. Only adds bottom padding; video at the top is
      * untouched. Applied once per Activity.
      */
     private fun applyNavbarInset(input: EditText) {
@@ -129,8 +129,8 @@ object EmoteAutocomplete {
             val content = act.findViewById<View>(android.R.id.content) ?: return
             content.setOnApplyWindowInsetsListener { v, insets ->
                 // Portrait only: pad bottom by the nav-bar inset so the chat input clears the
-                // system nav bar (#3). In landscape we must NOT touch content padding/layout —
-                // doing so breaks the player's theater/fullscreen surface (turns it black, #4).
+                // system nav bar. In landscape we must not touch content padding/layout: doing
+                // so breaks the player's theater/fullscreen surface (turns it black).
                 val landscape = v.resources.configuration.orientation ==
                     android.content.res.Configuration.ORIENTATION_LANDSCAPE
                 // The navigation bar only. The system window inset also holds a docked keyboard's
@@ -155,7 +155,7 @@ object EmoteAutocomplete {
      *  emote picker can insert an emote into it (mirrors the native picker's own behaviour). */
     @Volatile private var lastInput: java.lang.ref.WeakReference<EditText>? = null
 
-    /** Insert "<name> " at the cursor of the current chat input (insert only — never sends). */
+    /** Insert "<name> " at the cursor of the current chat input (insert only, never sends). */
     fun insertEmote(name: String): Boolean {
         val input = lastInput?.get() ?: return false
         return runCatching {
@@ -182,8 +182,8 @@ object EmoteAutocomplete {
         var popup: PopupWindow? = null
 
         // Auto-dismiss the strip a few seconds after the last keystroke. The keyboard is
-        // unmeasurable on this host and pressing Back to hide the IME does NOT clear the
-        // EditText's focus, so onFocusChange alone can't catch "keyboard closed" — without this
+        // unmeasurable on this host and pressing Back to hide the IME does not clear the
+        // EditText's focus, so onFocusChange alone can't catch "keyboard closed". Without this
         // the strip would linger mid-screen as a stray bar. Each keystroke reschedules the
         // dismiss, so the strip stays put while actively typing and clears shortly after.
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -204,7 +204,7 @@ object EmoteAutocomplete {
             override fun afterTextChanged(e: Editable?) {
                 // Read the word on the next frame, not now. Twitch's emote picker inserts the
                 // text first and moves the cursor after, so reading it here saw the cursor still
-                // inside the PREVIOUS emote, and the strip kept showing that one.
+                // inside the previous emote, and the strip kept showing that one.
                 handler.removeCallbacks(refresh)
                 handler.post(refresh)
             }
@@ -241,7 +241,7 @@ object EmoteAutocomplete {
         }
 
         // Also dismiss immediately when the input loses focus (switching fields / leaving chat).
-        // Creates NO window, so it cannot reintroduce the old kb-tracker's black-player regression.
+        // Creates no window, so it cannot reintroduce the old kb-tracker's black-player regression.
         runCatching {
             input.setOnFocusChangeListener { _, hasFocus ->
                 if (!hasFocus) { handler.removeCallbacks(autoDismiss); runCatching { popup?.dismiss() } }
@@ -409,9 +409,9 @@ object EmoteAutocomplete {
             }
             wireHold(chip, sug.name, onPick, onChanged, onTouchStart)
             // Prefer a looping animated drawable for animated emotes; else the static one. An
-            // ImageView hosts the drawable directly (provides its own invalidation callback), so
-            // unlike chat spans we just start() it. Animated copies are cached per-name so we don't
-            // re-decode dozens on every keystroke (cache bounded to keep memory in check).
+            // ImageView hosts the drawable directly (provides its own invalidation callback), and
+            // AnimPause runs it while the strip is on screen. Animated copies are cached per-name so
+            // we don't re-decode dozens on every keystroke (cache bounded to keep memory in check).
             val chosen: android.graphics.drawable.Drawable? =
                 if (EmoteRepo.animBytes.containsKey(sug.name)) {
                     if (stripAnim.size > 200) stripAnim.clear()
@@ -424,7 +424,7 @@ object EmoteAutocomplete {
             (chosen ?: sug.drawable)?.let { d ->
                 chip.addView(ImageView(ctx).apply {
                     setImageDrawable(d)
-                    if (d is android.graphics.drawable.AnimatedImageDrawable) runCatching { d.start() }
+                    AnimPause.onImage(this, d)
                     layoutParams = LinearLayout.LayoutParams(imgPx, imgPx).apply {
                         rightMargin = dp(ctx, 4f)
                     }
@@ -485,7 +485,7 @@ object EmoteAutocomplete {
             isOutsideTouchable = false
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             isClippingEnabled = false
-            // Draw BEHIND the keyboard. The strip now sits on the input row, which a docked
+            // Draw behind the keyboard. The strip now sits on the input row, which a docked
             // keyboard never covers, so the only keyboard it can overlap is a floating one, and
             // that must stay on top: the strip was drawn over the floating keyboard's keys.
             inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
@@ -525,7 +525,7 @@ object EmoteAutocomplete {
     }
 
     /**
-     * Open the PurpleTV settings dialog by long-pressing the chat input while it's EMPTY.
+     * Open the PurpleTV settings dialog by long-pressing the chat input while it's empty.
      * (The emoticon_picker / Twitch gear icons are owned by Twitch and consume their own
      * long-press, so we anchor on our own input instead.) When the field has text we return
      * false so Twitch's normal text-selection long-press still works.

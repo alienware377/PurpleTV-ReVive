@@ -129,21 +129,29 @@ object AudioFilters {
         XposedBridge.hookAllConstructors(AudioTrack::class.java, object : XC_MethodHook() {
             override fun afterHookedMethod(p: MethodHookParam) {
                 val t = p.thisObject as? AudioTrack ?: return
-                runCatching { attach(t.audioSessionId) }.onFailure { log("AF attach failed: $it") }
+                runCatching { attach(t, t.audioSessionId) }.onFailure { log("AF attach failed: $it") }
             }
         })
         XposedBridge.hookAllMethods(AudioTrack::class.java, "release", object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 val t = p.thisObject as? AudioTrack ?: return
-                runCatching { detach(t.audioSessionId) }
+                runCatching { detach(t, t.audioSessionId) }
             }
         })
         log("AF audio filters installed")
     }
 
-    private fun attach(session: Int) {
+    /**
+     * The live tracks of each session. Several tracks can share one session (a new one is often
+     * built before the old one is released), so the effect goes only with the session's last track.
+     * Weak, so a track that is never released does not stay here for good.
+     */
+    private val tracks = HashMap<Int, MutableSet<AudioTrack>>()
+
+    private fun attach(t: AudioTrack, session: Int) {
         if (session <= 0) return
         synchronized(effects) {
+            tracks.getOrPut(session) { java.util.Collections.newSetFromMap(java.util.WeakHashMap()) }.add(t)
             if (effects.containsKey(session)) return
             val dp = create(session) ?: return
             effects[session] = dp
@@ -152,8 +160,14 @@ object AudioFilters {
         }
     }
 
-    private fun detach(session: Int) {
+    private fun detach(t: AudioTrack, session: Int) {
         synchronized(effects) {
+            val left = tracks[session]
+            if (left != null) {
+                left.remove(t)
+                if (left.isNotEmpty()) return
+                tracks.remove(session)
+            }
             adCut.remove(session)
             (effects.remove(session) as? DynamicsProcessing)?.let { runCatching { it.release() } }
         }
@@ -182,10 +196,20 @@ object AudioFilters {
         effects.values.any { runCatching { !(it as DynamicsProcessing).hasControl() }.getOrDefault(false) }
     }
 
-    /** Push the current settings to every attached effect. Called when a slider moves. */
+    private val bg: android.os.Handler by lazy { android.os.Handler(android.os.HandlerThread("ptv-af").apply { start() }.looper) }
+    private val refreshTask = Runnable {
+        synchronized(effects) { for ((s, e) in effects) runCatching { apply(e as DynamicsProcessing, s) } }
+    }
+
+    /**
+     * Push the current settings to every attached effect. Called when a slider moves, so it is
+     * gathered up (one push per 80 ms) and done off the main thread: each push is dozens of calls
+     * to the audio server, and the main thread must not wait on them while a slider is dragged.
+     */
     fun refresh() {
         if (!supported()) return
-        synchronized(effects) { for ((s, e) in effects) runCatching { apply(e as DynamicsProcessing, s) } }
+        bg.removeCallbacks(refreshTask)
+        bg.postDelayed(refreshTask, 80)
     }
 
     // ---- settings to effect parameters ----

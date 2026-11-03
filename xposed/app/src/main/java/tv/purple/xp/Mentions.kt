@@ -30,6 +30,10 @@ object Mentions {
             size > MEMORY
     }
 
+    /** A mention older than this (from the history loaded on joining) does not buzz. Three
+     *  minutes, so a phone clock a little ahead of Twitch's never silences new mentions. */
+    private const val OLD_S = 180L
+
     fun onLine(args: Array<Any?>?) {
         if (!Settings.get(KEY_ENABLED, false)) return
         val msg = ChatTokens.message(args) ?: return
@@ -39,6 +43,11 @@ object Mentions {
         synchronized(seen) {
             if (seen.put(id, true) != null) return
         }
+        // Joining a channel loads recent chat history: an old mention there is not news.
+        // Fields.message resolves the timestamp field, which ChatLineStyle only does itself when
+        // timestamps or /me styling are on.
+        val ts = runCatching { ChatLineStyle.Fields.message(args)?.let { ChatLineStyle.Fields.timestampSeconds(it) } }.getOrNull()
+        if (ts != null && ts > 0 && System.currentTimeMillis() / 1000 - ts > OLD_S) return
         buzz()
     }
 

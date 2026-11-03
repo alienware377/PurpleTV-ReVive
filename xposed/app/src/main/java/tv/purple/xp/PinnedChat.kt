@@ -40,6 +40,9 @@ object PinnedChat {
     private val timed = HashSet<String>()
     /** Containers hidden by the pin fallback, so they can be shown again. */
     private val hidden = WeakHashMap<View, Boolean>()
+    /** When each area was hidden by the pin fallback. */
+    private val hiddenAt = WeakHashMap<View, Long>()
+    private const val RECHECK_MS = 30_000L
     /** Containers hidden by the Drops fallback -> when. Kept apart from [hidden] so the pin pass
      *  does not show them again in the same pass (an endless hide/show layout loop). */
     private val dropsHidden = WeakHashMap<View, Long>()
@@ -71,8 +74,18 @@ object PinnedChat {
             if (!isPin) continue
             val container = ancestor(h, containerId) ?: continue
             // A pin inside an area we hid still counts as present, so the area is not flipped
-            // back and forth; any other pin only counts while it is on screen.
-            if (container in hidden) { pinsShown.add(container); continue }
+            // back and forth; any other pin only counts while it is on screen. Its tries are kept
+            // too (seen), so after the 30 s look below it is hidden again at once if still there.
+            if (container in hidden) seen.add(keyOf(h, id("highlight_subheader")))
+            if (container in hidden) {
+                // Polls and hype trains can share this area with the pin. After a while the area
+                // is looked at again, like the Drops fallback does, so they are not hidden for good.
+                val at = hiddenAt[container] ?: 0L
+                if (android.os.SystemClock.uptimeMillis() - at < RECHECK_MS) { pinsShown.add(container); continue }
+                container.visibility = View.VISIBLE
+                hidden.remove(container); hiddenAt.remove(container)
+                continue
+            }
             if (!onScreen(h)) continue
             pinsShown.add(container)
             val key = keyOf(h, id("highlight_subheader"))
@@ -171,7 +184,7 @@ object PinnedChat {
     }
 
     private fun hide(v: View) {
-        if (v.visibility != View.GONE) { v.visibility = View.GONE; hidden[v] = true }
+        if (v.visibility != View.GONE) { v.visibility = View.GONE; hidden[v] = true; hiddenAt[v] = android.os.SystemClock.uptimeMillis() }
     }
 
     /** Shows the areas the pin fallback hid. The Drops fallback keeps its own. */

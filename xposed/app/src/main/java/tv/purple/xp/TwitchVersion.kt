@@ -28,7 +28,7 @@ object TwitchVersion {
             val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
             code = if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode.toLong()
             name = pi.versionName ?: "?"
-        }
+        }.onFailure { log("Twitch version unreadable ($it), falling back to 31.1.2 names") }
         log("Twitch $name ($code): using ${if (atLeast317()) "31.7.0" else "31.1.2"} names")
     }
 
@@ -39,7 +39,8 @@ object TwitchVersion {
 
     /** Channel and user ids became Twitch's own Tuid type in 31.7.0's event models. */
     fun channelIdArg(cl: ClassLoader, id: String): Any? =
-        if (!atLeast317()) id
+        if (id.isBlank()) null
+        else if (!atLeast317()) id
         else id.toIntOrNull()?.let {
             runCatching { de.robv.android.xposed.XposedHelpers.newInstance(cl.loadClass("tv.twitch.android.models.Tuid"), id) }.getOrNull()
         }

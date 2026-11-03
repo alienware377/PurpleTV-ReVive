@@ -10,27 +10,26 @@ import de.robv.android.xposed.XposedHelpers
 import java.lang.reflect.Field
 
 /**
- * Third-party badges and pronoun tags on the chat line's USERNAME slot.
+ * Third-party badges and pronoun tags on the chat line's username slot.
  *
- * The hard part of this feature was never the badge APIs — it was getting the author's numeric
- * user id (badges key on it) and login (pronouns key on it) without pinning another obfuscated
- * name. It turns out we already had them: [Names.ASSEMBLER].[Names.ASSEMBLER_METHOD] is static and
- * one of its arguments IS the chat message, which carries a sender object holding both.
+ * Badges key on the author's numeric user id and pronouns on the login. Both are read without
+ * pinning another obfuscated name: [Names.ASSEMBLER].[Names.ASSEMBLER_METHOD] is static and
+ * one of its arguments is the chat message, which carries a sender object holding both.
  *
- * [Sender] resolves that chain STRUCTURALLY, with zero pinned field names, by exploiting the one
+ * [Sender] resolves that chain structurally, with zero pinned field names, by using the one
  * thing R8 does not rewrite: string constants. Both classes are Kotlin data classes, so their
- * generated toString() embeds the ORIGINAL field labels — "LiveChatMessage(messageId=…" and
- * "ChatMessageUser(userId=…, username=…" — verbatim in the dex no matter how the class, method and
+ * generated toString() embeds the original field labels ("LiveChatMessage(messageId=…" and
+ * "ChatMessageUser(userId=…, username=…") verbatim in the dex no matter how the class, method and
  * field names were mangled. We find the message argument and the sender field by matching those
  * labels once, cache the reflected Field, and read ids off toString() from then on.
  *
- * So this feature adds NO new obfuscation pin. It rides entirely on the ik5.b anchor that emote
+ * So this feature adds no new obfuscation pin. It rides entirely on the ik5.b anchor that emote
  * injection already carries, and degrades to a clean no-op if that anchor ever goes stale.
  */
 object ChatIdentity {
 
     /** Marks a username slot we've already processed, so a RecyclerView rebind can't double-inject.
-     *  Deliberately distinct from EmoteHooks' body marker — the two features write different
+     *  Deliberately distinct from EmoteHooks' body marker: the two features write different
      *  fields and must never see each other's marks. */
     private object NameMarker
 
@@ -90,7 +89,7 @@ object ChatIdentity {
         // The slot reads "username: ", so the tag belongs just before the colon. A /me action line
         // ends the slot with a single space instead (Twitch picks isAction ? " " : ": "), and the
         // body follows with no space of its own, so there the tag goes before that trailing space
-        // or it would run straight into the message text. (The action flag lives on the MESSAGE,
+        // or it would run straight into the message text. (The action flag lives on the message,
         // not on this line model; the line model's boolean is the layout direction. See
         // ChatLineStyle.)
         if (pronoun != null) {
@@ -124,7 +123,7 @@ object ChatIdentity {
      * One-shot diagnostic over the chat-line model's CharSequence slots.
      *
      * Slot 'b' sits between the timestamp and the username, which is structurally where Twitch's
-     * OWN badges must live — but that could not be proven from the dex (the value reaches the
+     * own badges must live, but that could not be proven from the dex (the value reaches the
      * constructor through a recycled scratch register). Everything above therefore writes to slot
      * 'c', which is proven, so a wrong guess about 'b' costs nothing. This log is how we confirm
      * it: the badge slot is the one carrying ImageSpans and almost no text.
@@ -158,14 +157,15 @@ object ChatIdentity {
         private const val MSG_PREFIX = "LiveChatMessage("
         private const val USER_PREFIX = "ChatMessageUser("
 
-        private val ID = Regex("userId=(\\d+)")
+        // Also when the id is wrapped (31.7.0 made ids Twitch's Tuid type): "userId=Tuid(id=123)".
+        private val ID = Regex("userId=(?:[A-Za-z]+\\([A-Za-z]+=)?(\\d+)")
         private val LOGIN = Regex("username=([^,)]*)")
 
         @Volatile private var argIndex = -1
         @Volatile private var msgClass: Class<*>? = null
         @Volatile private var senderField: Field? = null
-        /** Failed resolution attempts. A message CAN legitimately have no sender (system notices,
-         *  moderation events), so one miss proves nothing — but a stale anchor would otherwise
+        /** Failed resolution attempts. A message can legitimately have no sender (system notices,
+         *  moderation events), so one miss proves nothing, but a stale anchor would otherwise
          *  make us rescan every declared field on every chat line forever. Give up after enough
          *  consecutive failures that a real message must have come through by now. */
         private const val GIVE_UP_AFTER = 40
@@ -189,9 +189,9 @@ object ChatIdentity {
         @Volatile private var labelsLogged = false
 
         /**
-         * One-shot dump of the chat message's Kotlin data-class field LABELS.
+         * One-shot dump of the chat message's Kotlin data-class field labels.
          *
-         * Only the names are emitted, never the values -- the message toString carries the actual
+         * Only the names are emitted, never the values: the message toString carries the actual
          * chat text, and there is no reason to put a stranger's messages in logcat to learn what
          * fields exist. Used to find a real message timestamp: the rendered timestamp slot is
          * already formatted ("2:28 "), so seconds can't be recovered from it.
@@ -243,7 +243,7 @@ object ChatIdentity {
             if (++failures >= GIVE_UP_AFTER) {
                 gaveUp = true
                 log("SENDER unresolved on ${msg.javaClass.name} after $failures messages" +
-                    " — badges/pronouns off (anchor likely stale)")
+                    ", badges/pronouns off (anchor likely stale)")
             }
             return null
         }

@@ -84,7 +84,8 @@ object UpdateChecker {
             val newer = runCatching { fetchNewer() }
                 .onFailure { log("update check failed: $it") }
                 .getOrNull()
-            Settings.setString(KEY_LAST_CHECK, System.currentTimeMillis().toString())
+            // Only a check that reached GitHub counts: starting Twitch offline must not skip 6 hours.
+            if (newer != null) Settings.setString(KEY_LAST_CHECK, System.currentTimeMillis().toString())
             main.post {
                 if (newer == null) {
                     manual?.let { Toast.makeText(it, "Could not reach GitHub to check for updates", Toast.LENGTH_SHORT).show() }

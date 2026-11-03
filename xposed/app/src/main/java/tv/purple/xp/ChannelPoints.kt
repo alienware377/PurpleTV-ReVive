@@ -10,18 +10,18 @@ import java.util.Collections
 import java.util.WeakHashMap
 
 /**
- * Auto-claim Twitch channel-points bonus chests (task #7).
+ * Auto-claim Twitch channel-points bonus chests.
  *
- * Done the way standalone point-miners do it — at the GraphQL layer, NOT via the UI. The
+ * Done the way standalone point-miners do it: at the GraphQL layer, not via the UI. The
  * floating "Claim Bonus" chest is a custom view that only exists while the player is
- * foregrounded and is awkward to anchor; instead we poll the CURRENT channel's available
+ * foregrounded and is awkward to anchor; instead we poll the current channel's available
  * claim through Twitch's own gql.twitch.tv gateway and POST the ClaimCommunityPoints mutation
  * when one is ready. Works regardless of orientation / whether the chest is on screen.
  *
  * Uses the persisted-query hashes the official web/mobile client uses, so the gateway accepts
  * them and returns the canonical response shape. Auth: the host's own OAuth token (read locally
- * via [EmoteRepo.authToken], sent ONLY to gql.twitch.tv, never logged). Multi-user / public-
- * release safe — nothing is hardcoded per user. Toggle: [Settings.KEY_AUTO_POINTS].
+ * via [EmoteRepo.authToken], sent only to gql.twitch.tv, never logged). Multi-user / public-
+ * release safe: nothing is hardcoded per user. Toggle: [Settings.KEY_AUTO_POINTS].
  */
 object ChannelPoints {
 
@@ -139,10 +139,10 @@ object ChannelPoints {
         if (token.isBlank()) return
         val claimId = fetchAvailableClaim(token, login) ?: return
         if (claimId == lastClaimId) return  // already handled this exact bonus
-        log("CP bonus available on $login (claim=$claimId) — claiming")
+        log("CP bonus available on $login (claim=$claimId), claiming")
         if (claim(token, id, claimId)) {
             lastClaimId = claimId
-            log("CP ✓ claimed channel points on $login")
+            log("CP claimed channel points on $login")
         } else {
             log("CP claim failed on $login")
         }
@@ -170,7 +170,7 @@ object ChannelPoints {
             ?.optJSONObject("self")
             ?.optJSONObject("communityPoints")
         if (cp == null) {
-            log("CP context: communityPoints null for $login (data=${json.optJSONObject("data") != null}) — query shape mismatch?")
+            log("CP context: communityPoints null for $login (data=${json.optJSONObject("data") != null}), query shape mismatch?")
             return null
         }
         if (!probedOk) { probedOk = true; log("CP context OK for $login: balance=${cp.optInt("balance", -1)} (GQL path verified)") }

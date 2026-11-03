@@ -221,7 +221,12 @@ object InAppUpdate {
                 text = "Install now"; setTextColor(Color.WHITE); textSize = 14f; typeface = Typeface.DEFAULT_BOLD
                 background = GradientDrawable().apply { setColor(0xFF9146FF.toInt()); cornerRadius = dp(a, 8f).toFloat() }
                 setPadding(dp(a, 18f), dp(a, 10f), dp(a, 18f), dp(a, 10f))
-                setOnClickListener { d.dismiss(); installNow(a, f) }
+                setOnClickListener {
+                    d.dismiss()
+                    // If the installer is cancelled, the popup waits like "Remind me later" did.
+                    Settings.setString(KEY_REMIND_AT, (System.currentTimeMillis() + REMIND_MS).toString())
+                    installNow(a, f)
+                }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(a, 6f) })
             addView(row)
         }

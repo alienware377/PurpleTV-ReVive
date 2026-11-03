@@ -21,6 +21,7 @@ object LateEmotes {
     private class Line(val model: WeakReference<Any>, val at: Long)
 
     private const val MAX = 150
+    private const val MAX_LOADING = 600
     private const val KEEP_MS = 45_000L
     private const val TICK_MS = 1500L
 
@@ -32,7 +33,10 @@ object LateEmotes {
     fun add(model: Any) {
         synchronized(lines) {
             lines.addLast(Line(WeakReference(model), SystemClock.uptimeMillis()))
-            while (lines.size > MAX) lines.removeFirst()
+            // While a channel's lists load, a busy chat (each line assembled more than once) fills
+            // 150 in seconds, and the first lines would stay plain text: more room then.
+            val cap = if (EmoteRepo.channelPending() || EmoteRepo.listsLate()) MAX_LOADING else MAX
+            while (lines.size > cap) lines.removeFirst()
         }
         if (!scheduled) { scheduled = true; main.postDelayed(::tick, TICK_MS) }
     }

@@ -264,12 +264,26 @@ object VideoFilters {
         return out
     }
 
+    /** What each shader's inputs were last filled for: settings revision, size, and dynamic light. */
+    private val filledFor = java.util.WeakHashMap<RuntimeShader, String>()
+
     private fun buildShader(tv: TextureView): RuntimeShader {
         val active = activeKeys()
         val id = active.sorted().joinToString(",")
         val s = shaders[id] ?: RuntimeShader(FilterShader.agsl(active)).also { shaders[id] = it }
         val w = tv.width.takeIf { it > 0 } ?: 1920
         val h = tv.height.takeIf { it > 0 } ?: 1080
+        // The grain tick runs 24 times a second. When neither the settings nor the size changed
+        // and no dynamic light is on, only the clock and the grain seed move: those two are set,
+        // and the rest (every setting, the overlay and colour shaders) stays as it was filled.
+        val dyn = active.any { k -> FilterDefs.FILTERS.firstOrNull { it.key == k }?.group == FilterDefs.Group.DYNAMIC }
+        val sig = "${Settings.rev}|$w|$h"
+        if (!dyn && filledFor[s] == sig) {
+            s.setFloatUniform("uTime", now())
+            s.setFloatUniform("uSeed", seed)
+            return s
+        }
+        filledFor[s] = sig
         for ((k, v) in uniforms(w, h)) {
             if (k.startsWith("f_") && k.substring(2) !in active) continue
             when (v.size) {

@@ -1,7 +1,6 @@
 package tv.purple.xp
 
 import android.content.Context
-import android.graphics.drawable.Animatable
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -26,7 +25,7 @@ import java.util.WeakHashMap
  * emotes first, then the global ones. Empty sections are left out.
  *
  * The picker grid ("emote_palette") is a RecyclerView fed by Twitch's generic sectioned adapter.
- * Our sections are REAL instances of Twitch's own picker section class, so the headers, sticky
+ * Our sections are real instances of Twitch's own picker section class, so the headers, sticky
  * headers, spacing and column count are Twitch's own. Each emote cell is a small Proxy implementing
  * Twitch's item interface. Everything obfuscated is found at runtime by its shape, starting from
  * RecyclerView.setAdapter (a name R8 keeps); if a future Twitch changes a shape, discovery fails
@@ -71,6 +70,7 @@ object PickerSections {
                 val rv = p.thisObject as? ViewGroup ?: return
                 val adapter = p.args.getOrNull(0) ?: return
                 if (entry(rv) != "emote_palette") return
+                purge()
                 STATES.getOrPut(adapter) { State(WeakReference(rv)) }
                 tryAttach(rv, adapter, 0)
             }
@@ -79,8 +79,23 @@ object PickerSections {
         log("PS picker sections hook installed")
     }
 
+    /**
+     * Drops pickers whose screen is gone. The state's sections hold that screen's context, which
+     * reaches the adapter (the weak key) again, so a WeakHashMap alone would keep every visited
+     * stream screen in memory.
+     */
+    private fun purge() {
+        for (a in weakKeys(STATES)) {
+            val rv = STATES[a]?.rv?.get()
+            var c = rv?.context
+            while (c is android.content.ContextWrapper && c !is android.app.Activity) c = c.baseContext
+            if (rv == null || (c as? android.app.Activity)?.isDestroyed == true) STATES.remove(a)
+        }
+    }
+
     /** Re-check every live picker, e.g. after emotes load or a setting changes. */
     fun refreshAll() {
+        purge()
         for (a in weakKeys(STATES)) runCatching { ensureTail(a) }.onFailure { log("PS refresh: $it") }
     }
 
@@ -143,7 +158,7 @@ object PickerSections {
     }
 
     private fun installHooks(s: Shapes) {
-        // Keep our sections LAST: drop them before Twitch appends, and put them back once it is done.
+        // Keep our sections last: drop them before Twitch appends, and put them back once it is done.
         XposedBridge.hookMethod(s.addSection, object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 if (guard) return
@@ -182,7 +197,9 @@ object PickerSections {
         val v = EmoteRepo.pickerVersion() + if (Settings.get(KEY, true)) 0 else 7919
         // Reuse the built sections between refills, so a refill does not rebuild every emote cell on the main thread.
         val wanted = if (v == st.builtVersion) st.built else build(s, st, rv, list).also { st.built = it }
-        st.builtVersion = v
+        // An empty build is not final: Twitch may still be filling its own sections (the donor
+        // header or the first emote cell were not there yet), so it is tried again next time.
+        if (wanted.isNotEmpty() || !Settings.get(KEY, true)) st.builtVersion = v
         val n = wanted.size
         val tailOk = n > 0 && list.size >= n && (0 until n).all { list[list.size - n + it] === wanted[it] }
         if (tailOk || (n == 0 && st.current.isEmpty())) return
@@ -197,7 +214,7 @@ object PickerSections {
     private fun build(s: Shapes, st: State, rv: ViewGroup, twitch: List<Any?>): List<Any> {
         if (!Settings.get(KEY, true)) return emptyList()
         if (holderCtorFor(s, rv, twitch) == null) return emptyList()
-        // Borrow a NON-channel Twitch header model, so the bottom "All" tab keeps working.
+        // Borrow a non-channel Twitch header model, so the bottom "All" tab keeps working.
         val donor = twitch.lastOrNull {
             it != null && s.headerClass.isInstance(it) && TITLES[it] == null && s.headerIsChannel.invoke(it) == false
         } ?: return emptyList()
@@ -239,7 +256,6 @@ object PickerSections {
             val parent = st.rv.get() ?: (throwaway.parent as? ViewGroup)
             val cell = LayoutInflater.from(throwaway.context)
                 .inflate(res(throwaway, "emote_picker_emote_item", "layout"), parent, false)
-            cell.addOnAttachStateChangeListener(AnimToggle)
             holderCtor!!.newInstance(cell)
         }
 
@@ -258,10 +274,11 @@ object PickerSections {
     private fun bindCell(s: Shapes, holder: Any, name: String) {
         val root = s.itemViewField.get(holder) as View
         val icon = find(root, "emote_icon") as? ImageView ?: return
-        (icon.drawable as? Animatable)?.stop()
         val d = EmoteRepo.pickerDrawable(name)
         icon.setImageDrawable(d)
-        if (d is Animatable && icon.isAttachedToWindow) d.start()
+        // Stops the picture this cell showed before, and runs the new one while the cell is on
+        // screen (a cell scrolled away, or a closed picker, is detached and paused).
+        AnimPause.onImage(icon, d)
         if (d == null) EmoteRepo.wantPictures(listOf(name)) { root.post { refreshVisible(root.parent as? ViewGroup, name) } }
         root.tag = name
         icon.contentDescription = name
@@ -285,13 +302,8 @@ object PickerSections {
             if (c.tag != name) continue
             val icon = find(c, "emote_icon") as? ImageView ?: continue
             val d = EmoteRepo.pickerDrawable(name) ?: continue
-            icon.setImageDrawable(d); if (d is Animatable) d.start()
+            icon.setImageDrawable(d); AnimPause.onImage(icon, d)
         }
-    }
-
-    private object AnimToggle : View.OnAttachStateChangeListener {
-        override fun onViewAttachedToWindow(v: View) { ((find(v, "emote_icon") as? ImageView)?.drawable as? Animatable)?.start() }
-        override fun onViewDetachedFromWindow(v: View) { ((find(v, "emote_icon") as? ImageView)?.drawable as? Animatable)?.stop() }
     }
 
     // ---- helpers ----

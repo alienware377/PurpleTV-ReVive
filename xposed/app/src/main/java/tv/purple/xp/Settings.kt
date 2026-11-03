@@ -5,7 +5,7 @@ import android.content.Context
 /**
  * Standalone PurpleTV settings, backed by the module's own SharedPreferences
  * ("ptv_settings", MODE_PRIVATE) inside the host app's data dir. No dependency on
- * Twitch's obfuscated settings screen — fully self-contained.
+ * Twitch's obfuscated settings screen.
  *
  * Keys (all default-on):
  *   emote_autocomplete   master toggle for the no-colon suggestion strip
@@ -37,7 +37,7 @@ object Settings {
     const val KEY_CHAT_OPACITY = "chat_opacity_landscape"
     const val CHAT_OPACITY_DEFAULT = 100
 
-    /** Favorited Twitch/sub emote NAMES, persisted as a separator-joined ordered list. */
+    /** Favorited Twitch/sub emote names, persisted as a separator-joined ordered list. */
     const val KEY_FAVORITES = "fav_twitch_emotes"
 
     /** Display label per key, for the settings dialog (declaration order preserved). */
@@ -65,12 +65,14 @@ object Settings {
 
     /**
      * Bumped whenever anything is written. Readers on hot paths cache their value and re-read only
-     * when this changes -- [get] and friends hit SharedPreferences every call, which is fine for a
+     * when this changes: [get] and friends hit SharedPreferences every call, which is fine for a
      * settings screen and much too expensive for a hook that runs on every TextView write in the
      * app.
      */
-    @Volatile var rev: Int = 0
-        private set
+    /** Bumped after every write, from any thread; readers re-read when it moves. Atomic, so two
+     *  writes at once can never count as one and leave a reader on a stale value. */
+    private val revCounter = java.util.concurrent.atomic.AtomicInteger(0)
+    val rev: Int get() = revCounter.get()
 
     fun get(key: String, def: Boolean = true): Boolean {
         val c = appCtx ?: return def
@@ -85,7 +87,7 @@ object Settings {
             c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putBoolean(key, value).apply()
         }
-        rev++
+        revCounter.incrementAndGet()
         SettingsSync.changed(key)
     }
 
@@ -102,7 +104,7 @@ object Settings {
             c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putInt(key, value).apply()
         }
-        rev++
+        revCounter.incrementAndGet()
         SettingsSync.changed(key)
     }
 
@@ -119,7 +121,7 @@ object Settings {
             c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putString(key, value).apply()
         }
-        rev++
+        revCounter.incrementAndGet()
         SettingsSync.changed(key)
     }
 
@@ -156,7 +158,7 @@ object Settings {
             // apply(), not commit(): presets call this from a dialog tap on the main thread, and
             // commit() would write the whole file to disk there. apply() updates the in-memory
             // values at once, and every reader (sync included) reads those, never the file.
-            if (changed.isNotEmpty()) { e.apply(); rev++ }
+            if (changed.isNotEmpty()) { e.apply(); revCounter.incrementAndGet() }
             changed
         }.getOrDefault(emptySet())
     }

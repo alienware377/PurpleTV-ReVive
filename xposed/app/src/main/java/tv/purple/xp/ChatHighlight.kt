@@ -10,7 +10,7 @@ import de.robv.android.xposed.XposedHelpers
 /**
  * Keyword highlighting and @mention colouring.
  *
- * Both work off the chat message's TOKEN list rather than the rendered text (see [ChatTokens]),
+ * Both work off the chat message's token list rather than the rendered text (see [ChatTokens]),
  * which is what makes mention detection exact: a mention token carries an isLocalUser flag, so
  * "did this message mention me" needs no knowledge of the logged-in account and no substring
  * matching against a username that might also appear as ordinary text.
@@ -84,7 +84,7 @@ object ChatHighlight {
         val msg = ChatTokens.message(args) ?: return
         val color = matchColor(msg, args, mentionOn, words) ?: return
 
-        // Paint from the BODY slot: it is the one slot present on every line and it spans the
+        // Paint from the body slot: it is the one slot present on every line and it spans the
         // wrapped remainder, so the bar covers the whole message.
         val body = XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence ?: return
         if (body is Spanned && body.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return
@@ -124,15 +124,35 @@ object ChatHighlight {
         val insensitive = words.filter { it.type == Type.INSENSITIVE }
         if (sensitive.isEmpty() && insensitive.isEmpty()) return null
 
-        for (text in ChatTokens.textOf(msg)) {
-            for (w in text.split(' ', '\t', '\n')) {
-                if (w.isBlank()) continue
-                sensitive.firstOrNull { it.word == w }?.let { return it.color }
-                val lw = w.lowercase()
-                insensitive.firstOrNull { it.word.lowercase() == lw }?.let { return it.color }
+        val texts = ChatTokens.textOf(msg)
+        for (text in texts) {
+            for (raw in text.split(' ', '\t', '\n')) {
+                if (raw.isBlank()) continue
+                // "word!" and "(word)" match "word" too: the punctuation around a word is not part of it.
+                val bare = raw.trim { !it.isLetterOrDigit() && it != '_' }
+                for (w in if (bare.isNotEmpty() && bare != raw) listOf(raw, bare) else listOf(raw)) {
+                    sensitive.firstOrNull { it.word == w }?.let { return it.color }
+                    val lw = w.lowercase()
+                    insensitive.firstOrNull { it.word.lowercase() == lw }?.let { return it.color }
+                }
             }
         }
+        // Keywords of more than one word ("good game") are looked for in the whole text.
+        val multi = words.filter { it.type != Type.USERNAME && it.word.trim().contains(' ') }
+        if (multi.isNotEmpty()) {
+            val all = texts.joinToString(" ")
+            for (k in multi) if (phrase(k).containsMatchIn(all)) return k.color
+        }
         return null
+    }
+
+    private val phrases = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
+    /** The keyword as a whole phrase: not inside a longer word, any spacing between its words. */
+    private fun phrase(k: Keyword): Regex = phrases.getOrPut("${k.type}|${k.word}") {
+        val body = k.word.trim().split(Regex("\\s+")).joinToString("\\s+") { Regex.escape(it) }
+        val opts = if (k.type == Type.SENSITIVE) emptySet() else setOf(RegexOption.IGNORE_CASE)
+        Regex("(?<![\\p{L}\\p{N}_])$body(?![\\p{L}\\p{N}_])", opts)
     }
 
     /** Full-width row tint. Paints behind each covered line across the whole TextView width. */

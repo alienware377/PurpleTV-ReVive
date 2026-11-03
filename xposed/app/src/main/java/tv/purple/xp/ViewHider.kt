@@ -12,14 +12,14 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  * Generic "hide a piece of Twitch's UI" engine.
  *
  * Every hide-style toggle in the settings menu reduces to the same operation: find views by
- * resource ENTRY name and set them GONE. Rather than write that hook once per feature, all the
+ * resource entry name and set them GONE. Rather than write that hook once per feature, all the
  * rules live in [RULES] and a single layout pass applies them.
  *
  * Entry names are obfuscation-immune (R8 renames classes, not resource entries), so this keeps
  * working across Twitch updates. Views are restored to VISIBLE when their toggle is turned off,
  * so nothing needs an app restart.
  *
- * Note we only ever touch visibility — never remove views from their parent — because Twitch's
+ * Only visibility is ever changed. Views are never removed from their parent, because Twitch's
  * own presenters keep references to them and would crash on a detached view.
  */
 object ViewHider {
@@ -84,18 +84,18 @@ object ViewHider {
         // replaces the bottom bar in landscape on tablets.
         Rule("hide_create_button", listOf("viewer_bottom_nav_create_placeholder",
             "custom_create_bottom_nav_button", "create_button", "following_nav_rail_create_button")),
-        // NOTE: "hide_discover_tab" is deliberately NOT a view rule -- see hideBrowseItem().
-        // "hide_discover_feed" USED to live here and was actively dangerous. Its three targets:
-        //   discovery_feed_home_root       root view of the ENTIRE Home fragment -- hiding it
+        // "hide_discover_tab" is deliberately not a view rule; see hideBrowseItem().
+        // "hide_discover_feed" used to live here and was actively dangerous. Its three targets:
+        //   discovery_feed_home_root       root view of the entire Home fragment: hiding it
         //                                  kills Home outright, Following tab included
-        //   discovery_feed_pager_container root view of the pager fragment that IS the "Live" and
+        //   discovery_feed_pager_container root view of the pager fragment that is the "Live" and
         //                                  "Clips" tabs, and parent of the error page, so hiding
         //                                  it measures the feed at 0x0 and tips it into the
         //                                  "Boo! Ghost sighting" state rather than just blanking
         //   discovery_feed_navigation      never carried by any view; a navigation-graph id only
-        // Both real targets are FRAGMENT ROOTS, which the fragment manager sets back to VISIBLE on
+        // Both real targets are fragment roots, which the fragment manager sets back to VISIBLE on
         // every rebind, so the rule also fought the framework on every layout pass. Removing the
-        // feed is now handled by hiding the individual TAB views instead -- see HomeTabs.
+        // feed is now handled by hiding the individual tab views instead (see HomeTabs).
     )
 
     /** Every entry name any rule cares about, so the tree walk collects in one pass. */
@@ -132,9 +132,9 @@ object ViewHider {
     }
 
     private fun schedule(act: Activity) {
-        // Later passes included deliberately: some of Twitch's chrome (notably the bottom bar)
-        // only settles well after the first second, and a rule applied inside 900ms can measure a
-        // layout that has not finished changing.
+        // Later passes included deliberately: some of Twitch's chrome (the bottom bar in
+        // particular) only settles well after the first second, and a rule applied inside 900ms
+        // can measure a layout that has not finished changing.
         for (delay in longArrayOf(0L, 300L, 900L, 2000L, 4000L, 8000L)) {
             handler.postDelayed({ runCatching { apply(act) }.onFailure { log("VH apply: $it") } }, delay)
         }
@@ -151,14 +151,14 @@ object ViewHider {
     /**
      * Hide the bottom bar's "Browse" entry.
      *
-     * Done through the MENU, not by hiding its view. A bottom navigation bar rebuilds its item
+     * Done through the menu, not by hiding its view. A bottom navigation bar rebuilds its item
      * views whenever the selection changes, so a view set to GONE comes back as a freshly inflated
-     * VISIBLE one and only disappears again on the next layout pass -- which is exactly the
+     * VISIBLE one and only disappears again on the next layout pass, which is exactly the
      * half-second flash of the button (or of the gap it left) when another tab is tapped.
      * The menu is the model behind those views, so an item hidden there simply never gets
      * inflated and survives every rebuild.
      *
-     * Obfuscation-immune: the item id is resolved from its resource ENTRY name, and the menu is
+     * Obfuscation-immune: the item id is resolved from its resource entry name, and the menu is
      * reached through a public getMenu() that any menu-hosting view exposes. Views that have no
      * such method, or whose menu lacks the item, are skipped.
      */
@@ -181,7 +181,7 @@ object ViewHider {
         if (!hide && !browseTouched) return
         if (hide) browseTouched = true
         val itemId = runCatching {
-            act.resources.getIdentifier("viewer_bottom_nav_explore", "id", act.packageName)
+            Res.id(act, "viewer_bottom_nav_explore")
         }.getOrDefault(0)
         if (itemId == 0) return
         val root = act.window?.decorView ?: return
@@ -205,13 +205,13 @@ object ViewHider {
     /**
      * Sit the floating "+" on its own nav cell.
      *
-     * Hiding Browse leaves four evenly spaced cells, but the create button is not one of them — it
-     * is a separate view pinned to the centre of the BAR. With five cells the centre happened to be
+     * Hiding Browse leaves four evenly spaced cells, but the create button is not one of them: it
+     * is a separate view pinned to the centre of the bar. With five cells the centre happened to be
      * its cell too; with four it is not, so it drifts ~196px right of the cell and opens a gap next
      * to Home.
      *
-     * Corrected with a right MARGIN rather than translationX. Three earlier attempts used
-     * translationX and none of them ever took effect on device — the geometry was right and both
+     * Corrected with a right margin rather than translationX. Three earlier attempts used
+     * translationX and none of them ever took effect on device: the geometry was right and both
      * views were reachable, but something on Twitch's side resets it. A margin is consumed by the
      * parent's own layout instead of being a draw-time transform, so it survives.
      *
@@ -268,9 +268,9 @@ object ViewHider {
     /**
      * Report the bottom bar's real geometry.
      *
-     * Logged on CHANGE rather than once, because the bar re-shares its cells well after the first
-     * layout pass: a one-shot latch reports the pre-change state and then lies about it forever,
-     * which is the exact mistake that made three earlier attempts at this look like they worked.
+     * Logged on change rather than once, because the bar re-shares its cells well after the first
+     * layout pass: a one-shot latch reports the pre-change state and then stays wrong, which is
+     * how three earlier attempts at the create-button fix came to look like they worked.
      *
      * Coordinates are in the window, since the floating create button is not a child of the item
      * row and its left/right are relative to a different parent.
@@ -306,7 +306,7 @@ object ViewHider {
     private fun applyStopSign(root: View) {
         val ctx = root.context
         fun byName(n: String): View? {
-            val id = ctx.resources.getIdentifier(n, "id", ctx.packageName)
+            val id = Res.id(ctx, n)
             return if (id == 0) null else root.findViewById(id)
         }
         for (suffix in arrayOf("", "_horizontal")) {
@@ -363,15 +363,16 @@ object ViewHider {
         timed("browse") { runCatching { hideBrowseItem(act, Settings.get(KEY_BROWSE, false)) } }
         timed("create") { runCatching { recentreCreateButton(root) } }
 
-        // Report whenever the enabled set CHANGES rather than once ever. A one-shot log fired on
+        // Report whenever the enabled set changes rather than once ever. A one-shot log fired on
         // the first layout pass and then went stale, which made it report "(none)" while a rule
-        // was in fact switched on -- a diagnostic that lies is worse than none at all.
+        // was in fact switched on.
         timed("hype") { runCatching { applyHypeTrain(root, Settings.get(KEY_HYPE, false)) } }
         timed("unfollow") { runCatching { applyUnfollow(root, Settings.get(KEY_UNFOLLOW, false)) } }
         timed("mature") { runCatching { if (Settings.get(KEY_MATURE, false)) applyStopSign(root) } }
         timed("sleep") { runCatching { SleepTimer.attach(root) }.onFailure { log("sleep timer: $it") } }
         timed("filters") { runCatching { VideoFilters.attach(root) }.onFailure { log("video filters: $it") } }
         timed("refresh") { runCatching { RefreshButton.attach(root) }.onFailure { log("refresh button: $it") } }
+        timed("clip") { runCatching { ClipSave.attach(root) }.onFailure { log("clip button: $it") } }
         timed("pinned") { runCatching { PinnedChat.apply(root) }.onFailure { log("pinned chat: $it") } }
         timed("seek") { runCatching { VodSeek.attach(root) }.onFailure { log("vod seek: $it") } }
         timed("following") { runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") } }
@@ -399,7 +400,7 @@ object ViewHider {
         } }
         if (found.isEmpty()) return
 
-        // An entry is hidden if ANY enabled rule naming it applies in the current orientation.
+        // An entry is hidden if any enabled rule naming it applies in the current orientation.
         val shouldHide = HashSet<String>()
         for (rule in active) {
             if (rule.landscape && !landscape) continue
@@ -413,7 +414,7 @@ object ViewHider {
                 if (hide) {
                     if (v.visibility != View.GONE) {
                         v.visibility = View.GONE
-                        // Rules match by entry name ANYWHERE in the tree, with no notion of which
+                        // Rules match by entry name anywhere in the tree, with no notion of which
                         // screen they are on, so a rule written for the home feed can silently
                         // hit a dialog or a channel page. Log each distinct hide so a screen that
                         // breaks can be traced back to the exact rule that touched it.
@@ -427,8 +428,8 @@ object ViewHider {
                     }
                     hidAny = true
                 } else if (HIDDEN.remove(v) != null) {
-                    // Restore ONLY views we hid ourselves. Twitch keeps plenty of these GONE on
-                    // purpose — follow vs unfollow are mutually exclusive, discovery-feed
+                    // Restore only views we hid ourselves. Twitch keeps plenty of these GONE on
+                    // purpose: follow vs unfollow are mutually exclusive, discovery-feed
                     // containers are hidden off their tab, clip panels stay collapsed until
                     // opened. Blanket-setting every match to VISIBLE force-showed all of that and
                     // corrupted screens the rules were never meant to touch.
@@ -458,7 +459,7 @@ object ViewHider {
         if (!on && UNFOLLOW_HIDDEN.isEmpty()) return
         val label = unfollowLabel ?: runCatching {
             val res = root.resources
-            val id = res.getIdentifier("unfollow_talkback", "string", root.context.packageName)
+            val id = Res.id(root.context, "unfollow_talkback", "string")
             if (id == 0) null else res.getString(id)
         }.getOrNull()?.also { unfollowLabel = it }
         walk(root) { v ->

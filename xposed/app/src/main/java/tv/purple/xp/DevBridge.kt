@@ -45,7 +45,7 @@ import android.os.Build
  *   ... -a tv.purple.xp.DEV_CAPTION --es op clear | status
  * Speech to text (Stt, "STT" lines; "do" works in place of "op"):
  *   ... -a tv.purple.xp.DEV_STT --es op status
- *   ... -a tv.purple.xp.DEV_STT --es op feed_main  feeds the MAIN player's sound (the stream on
+ *   ... -a tv.purple.xp.DEV_STT --es op feed_main  feeds the main player's sound (the stream on
  *        screen) to the recognizer, to test it outside an ad. Needs stt_captions on and both
  *        downloads; DEV_SET --es key dev_stt_log --ez b true logs the text it hears
  *   ... -a tv.purple.xp.DEV_STT --es op stop       ends feed_main (and a WAV feed)
@@ -55,6 +55,16 @@ import android.os.Build
  *   ... -a tv.purple.xp.DEV_TTS --es op say --es text "hello" [--ez force true]   force says it
  *        now, like the menu's Test voice; without it, only during a shown break
  *   ... -a tv.purple.xp.DEV_TTS --es op stop | engines | probe | status | shutdown
+ * Animated emotes (AnimPause, "anim pause:" lines, also logged by itself at most once a minute):
+ *   ... -a tv.purple.xp.DEV_ANIM   how many tracked animated pictures run and how many are paused
+ * Clip and save (ClipSave, "CS" lines):
+ *   ... -a tv.purple.xp.DEV_CLIP                      makes a clip of the live stream and saves it
+ *   ... -a tv.purple.xp.DEV_CLIP --es slug SLUG      saves an existing clip only
+ * Translation (Translator, "DEV tr" lines):
+ *   ... -a tv.purple.xp.DEV_TR --es op chat --es langs es,de   downloads what translates those chat
+ *        languages into English
+ *   ... -a tv.purple.xp.DEV_TR --es op into --es lang es       downloads what translates into it
+ *   ... -a tv.purple.xp.DEV_TR --es op tr --es text "hola" --es from es --es to en
  *
  * Only something holding android.permission.DUMP can send these, which in practice means the adb
  * shell or the system. An ordinary app on the phone cannot reach it.
@@ -83,6 +93,10 @@ object DevBridge {
     private const val ACTION_CAPTION = "tv.purple.xp.DEV_CAPTION"
     private const val ACTION_STT = "tv.purple.xp.DEV_STT"
     private const val ACTION_TTS = "tv.purple.xp.DEV_TTS"
+    private const val ACTION_CLIP = "tv.purple.xp.DEV_CLIP"
+    private const val ACTION_STATS = "tv.purple.xp.DEV_ESTATS"
+    private const val ACTION_ANIM = "tv.purple.xp.DEV_ANIM"
+    private const val ACTION_TR = "tv.purple.xp.DEV_TR"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -115,6 +129,10 @@ object DevBridge {
                         ACTION_CAPTION -> CaptionHub.dev(i)
                         ACTION_STT -> Stt.dev(i)
                         ACTION_TTS -> ReadAloud.dev(i)
+                        ACTION_CLIP -> i.getStringExtra("slug")?.let { ClipSave.devSave(app, it) } ?: ClipSave.start(app)
+                        ACTION_STATS -> i.getStringExtra("name")?.let { n -> log("DEV estats $n: " + EmoteStats.top(n)) }
+                        ACTION_ANIM -> log(AnimPause.report())
+                        ACTION_TR -> translateTest(app, i)
                         ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
@@ -127,6 +145,8 @@ object DevBridge {
             addAction(ACTION_ORIENT); addAction(ACTION_FIND); addAction(ACTION_TIMER); addAction(ACTION_AT); addAction(ACTION_RAID); addAction(ACTION_FREQ); addAction(ACTION_MODLOG); addAction(ACTION_EMOTE); addAction(ACTION_UPDATE); addAction(ACTION_VIEW); addAction(ACTION_SYNC); addAction(ACTION_EMINFO)
             addAction(ACTION_ADVOL)
             addAction(ACTION_PBYP); addAction(ACTION_CAPTION); addAction(ACTION_STT); addAction(ACTION_TTS)
+            addAction(ACTION_CLIP); addAction(ACTION_STATS)
+            addAction(ACTION_ANIM); addAction(ACTION_TR)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {
@@ -223,6 +243,22 @@ object DevBridge {
      * visible, whether it is actually shown, and its size. Read from inside the app, because the
      * accessibility dump waits for the screen to go idle and was giving stale answers.
      */
+    private fun translateTest(ctx: Context, i: Intent) {
+        var last = -1
+        val progress = { p: Int -> if (p / 25 != last / 25) { last = p; log("DEV tr progress $p%") } }
+        val done = { ok: Boolean, msg: String -> log("DEV tr download ok=$ok $msg") }
+        when (i.getStringExtra("op")) {
+            "chat" -> TranslatePacks.downloadChatLangs(ctx, i.getStringExtra("langs").orEmpty().split(",").filter { it.isNotBlank() }, progress, done)
+            "into" -> Translator.download(ctx, i.getStringExtra("lang").orEmpty(), progress, done)
+            "tr" -> Thread({
+                val t0 = System.currentTimeMillis()
+                val out = runCatching { Translator.translate(i.getStringExtra("text").orEmpty(), i.getStringExtra("from"), i.getStringExtra("to") ?: "en") }
+                log("DEV tr result in ${System.currentTimeMillis() - t0} ms: ${out.getOrElse { "failed: $it" }}")
+            }, "ptv-tr-test").start()
+            else -> log("DEV tr: op is chat, into or tr")
+        }
+    }
+
     private fun probe(entry: String) {
         val act = top?.get() ?: ViewHider.currentActivity()
             ?: run { log("DEV probe: no activity"); return }

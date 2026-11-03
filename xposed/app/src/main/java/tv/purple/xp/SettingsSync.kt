@@ -427,10 +427,14 @@ object SettingsSync {
                 toast(a, if (ok) "Sync file created. On your other devices, choose \"Use existing file\" and pick $name."
                     else "Could not write to $name")
             }
-        } else sync(a, quiet = false, take = true)
+        } else sync(a, quiet = false, take = true) { ok ->
+            // A file that could not be used (not a PurpleTV sync file, or no access) is not kept,
+            // or every later sync would fail with only a line in the log.
+            if (!ok) { stop(a, quiet = true); toast(a, "$name could not be used for sync. Pick the PurpleTV sync file again, or create a new one.") }
+        }
     }
 
-    private fun stop(ctx: Context) {
+    private fun stop(ctx: Context, quiet: Boolean = false) {
         uri()?.let { u ->
             runCatching {
                 ctx.contentResolver.releasePersistableUriPermission(u,
@@ -438,6 +442,6 @@ object SettingsSync {
             }
         }
         for (k in listOf(KEY_URI, KEY_NAME, KEY_AT)) Settings.setString(k, "")
-        toast(ctx, "Stopped syncing. Your settings stay as they are.")
+        if (!quiet) toast(ctx, "Stopped syncing. Your settings stay as they are.")
     }
 }

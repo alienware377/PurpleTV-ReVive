@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
 private typealias ListLoad = (MutableMap<String, String>, MutableMap<String, String>, MutableMap<String, String>) -> Unit
 
 /**
- * 7TV / BTTV / FFZ emote source (task #9 fetch half — trivial HTTP, obfuscation-immune).
+ * 7TV / BTTV / FFZ emote source (plain HTTP, obfuscation-immune).
  *
  * Holds a name -> full-image-URL map. Hooks read [map]; we populate global emotes on
  * startup and (later) channel emotes once a channel id is known. Names are matched
@@ -43,21 +43,21 @@ object EmoteRepo {
     /** This channel's own third-party emote names (the rest are global). */
     @Volatile var chNames: Set<String> = emptySet()
 
-    /** Names contributed by the 7TV GLOBAL set. Tracked separately so "7TV global emotes" can be
+    /** Names contributed by the 7TV global set. Tracked separately so "7TV global emotes" can be
      *  switched off while channel 7TV emotes stay on. */
     val stvGlobal: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     const val KEY_STV_GLOBAL = "stv_global_emotes"
     const val KEY_HOMIES = "homies_emotes"
 
-    /** Parsed Homies list. One small file holds the globals AND every channel's set. */
+    /** Parsed Homies list. One small file holds the globals and every channel's set. */
     @Volatile private var homies: JSONObject? = null
 
     /**
      * Whether [name] should render at all, given the per-source toggles.
      *
-     * Used by BOTH the autocomplete strip and the chat injector, so switching a source off
-     * removes those emotes from chat too — previously the toggles only filtered suggestions
+     * Used by both the autocomplete strip and the chat injector, so switching a source off
+     * removes those emotes from chat too. Previously the toggles only filtered suggestions
      * while chat kept rendering them.
      */
     fun enabled(name: String): Boolean = when (srcOf[name]) {
@@ -73,15 +73,15 @@ object EmoteRepo {
      *  ImageSpans render instantly without needing the host TextView for invalidation. */
     val drawables = ConcurrentHashMap<String, Drawable>()
 
-    /** Twitch native emotes harvested from the app's emotes.db. Kept SEPARATE from [map]
+    /** Twitch native emotes harvested from the app's emotes.db. Kept separate from [map]
      *  so we never draw our own ImageSpan over a span Twitch already renders natively.
-     *  Used ONLY to feed the autocomplete suggestion strip. name -> CDN url. */
+     *  Used only to feed the autocomplete suggestion strip. name -> CDN url. */
     val twitch = ConcurrentHashMap<String, String>()
 
-    /** Twitch emotes known to belong to a CHANNEL (sub, follower, bits tier), as opposed to
+    /** Twitch emotes known to belong to a channel (sub, follower, bits tier), as opposed to
      *  globals, hype train, Prime, Turbo and the like. Only orders the suggestion strip. */
     private val channelOwned: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    /** Twitch emotes known NOT to be channel emotes, so a later channel source cannot relabel them. */
+    /** Twitch emotes known not to be channel emotes, so a later channel source cannot relabel them. */
     private val notChannel: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val CHANNEL_TYPES = setOf("SUBSCRIPTIONS", "FOLLOWER", "BITS_BADGE_TIERS")
 
@@ -89,11 +89,11 @@ object EmoteRepo {
      *  Twitch harvest. Separate map so injection never picks these up. */
     val suggestDrawables = ConcurrentHashMap<String, Drawable>()
 
-    /** Raw image bytes for emotes detected as ANIMATED (animated WebP / GIF). Keyed by name.
-     *  A single AnimatedImageDrawable is STATEFUL (one callback, one frame cursor) so it can't be
-     *  shared across chat lines — instead we keep the source bytes and decode a FRESH animated
-     *  drawable per injected span ([makeAnimated]). The [drawables]/[suggestDrawables] maps still
-     *  hold a static first-frame BitmapDrawable for these names as a fallback + size anchor. */
+    /** Raw image bytes for emotes detected as animated (animated WebP / GIF). Keyed by name.
+     *  Chat lines share one decoded picture per emote ([chatAnimated]); the picker, favorites bar,
+     *  suggestions and preview decode their own ([makeAnimated]), since they size it differently.
+     *  The [drawables]/[suggestDrawables] maps still hold a static first-frame BitmapDrawable for
+     *  these names as a fallback + size anchor. */
     val animBytes = ConcurrentHashMap<String, ByteArray>()
     /** name -> [width,height] px at our row height, for sizing freshly-decoded animated drawables. */
     private val animBounds = ConcurrentHashMap<String, IntArray>()
@@ -108,11 +108,13 @@ object EmoteRepo {
     /** This channel's emote names in provider order, and which channel they belong to. */
     @Volatile private var chOrder: List<String> = emptyList()
     @Volatile private var chOrderFor: String? = null
-    @Volatile private var pickerVer = 0
+    /** Atomic: three loader threads bump it, and a lost bump would leave a late list out of the picker. */
+    private val pickerVerA = java.util.concurrent.atomic.AtomicInteger(0)
+    private val pickerVer: Int get() = pickerVerA.get()
     private val pickerListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
 
     fun addPickerListener(l: () -> Unit) { pickerListeners.add(l) }
-    private fun bumpPicker() { pickerVer++; for (l in pickerListeners) runCatching { l() } }
+    private fun bumpPicker() { pickerVerA.incrementAndGet(); for (l in pickerListeners) runCatching { l() } }
 
     /** Changes whenever the lists or the source toggles change. */
     fun pickerVersion(): Int = pickerVer * 31 + listOf(Settings.KEY_SRC_SEVENTV, Settings.KEY_SRC_BTTV,
@@ -158,8 +160,8 @@ object EmoteRepo {
      *  quality change reloads the emotes, so per-channel favorites and pins stay on that channel. */
     fun currentChannel(): String? = activeChannel ?: reloadingFor
 
-    // --- global snapshots (authoritative GLOBAL-only emote set) ---
-    // The public maps above are the LIVE combined view (globals + the CURRENT channel) that the
+    // --- global snapshots (authoritative global-only emote set) ---
+    // The public maps above are the live combined view (globals + the current channel) that the
     // inject hook (EmoteHooks reads [drawables]) and [suggest] read. When the user switches
     // channels we rebuild the live maps from these snapshots in loadChannelAsync's publish, so the
     // previous channel's 7TV/BTTV/FFZ/Twitch emotes can never leak into a channel that doesn't
@@ -263,7 +265,7 @@ object EmoteRepo {
     private fun isGone(t: Throwable) =
         t.message?.let { it.startsWith("HTTP 404") || it.startsWith("HTTP 410") } == true
 
-    /** Names whose download has actually STARTED. A task that is merely queued is not in here,
+    /** Names whose download has actually started. A task that is merely queued is not in here,
      *  which is what lets the fast lane overtake it. */
     private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -369,6 +371,7 @@ object EmoteRepo {
                     gMap.clear(); gSrc.clear(); gUploader.clear()
                     drawables.clear(); gDraw.clear(); gSuggestDraw.clear()
                     animBytes.clear(); animBounds.clear(); builtFrom.clear(); suggestDrawables.clear()
+                    chatAnim.evictAll()
                     // Twitch emote urls have the size in them too, and their loaders only run once.
                     resizeTwitch(gTwitch); resizeTwitch(twitch)
                     homies = null
@@ -496,7 +499,7 @@ object EmoteRepo {
     /**
      * Harvest the user's Twitch native emotes from the app's Room DB `emotes.db`,
      * table `frequent_emotes(token TEXT = name, id TEXT = emote id, ...)`. Best-effort,
-     * read-only. These feed ONLY the suggestion strip (never injected — Twitch draws them
+     * read-only. These feed only the suggestion strip (never injected, since Twitch draws them
      * natively). Twitch CDN: https://static-cdn.jtvnw.net/emoticons/v2/<id>/default/dark/2.0
      */
     fun harvestTwitchAsync(ctx: Context) {
@@ -512,8 +515,8 @@ object EmoteRepo {
 
     private fun harvestTwitch(ctx: Context) {
         val dbFile = ctx.getDatabasePath("emotes.db") ?: return
-        // List sibling db files so we can find where the FULL owned/available emote set lives
-        // (frequent_emotes only holds recently used emotes — empty for many users).
+        // List sibling db files so we can find where the full owned/available emote set lives
+        // (frequent_emotes only holds recently used emotes, and is empty for many users).
         runCatching {
             dbFile.parentFile?.listFiles()?.forEach {
                 if (it.name.endsWith(".db")) log("db file: ${it.name} (${it.length()} bytes)")
@@ -577,9 +580,9 @@ object EmoteRepo {
     }
 
     /**
-     * Fetch the user-agnostic GLOBAL Twitch emote set from emotes.adamcy.pl (public, no auth).
-     * Provider 0 == Twitch. These feed ONLY the suggestion strip (never injected — Twitch draws
-     * its own emotes natively). Sends nothing user-specific. name -> CDN url (2x).
+     * Fetch the user-agnostic global Twitch emote set from emotes.adamcy.pl (public, no auth).
+     * Provider 0 == Twitch. These feed only the suggestion strip (never injected, since Twitch
+     * draws its own emotes natively). Sends nothing user-specific. name -> CDN url (2x).
      */
     @Volatile private var twitchGlobalLoaded = false
     fun loadTwitchGlobalAsync() {
@@ -600,16 +603,16 @@ object EmoteRepo {
         }, "ptv-twitch-global").start()
     }
 
-    // --- personal emote set via Twitch's own GQL (task #9: cross-channel subs/follower/bits) ---
-    // adamcy gives a channel's PUBLIC emote set but cannot know which channels the USER is
+    // --- personal emote set via Twitch's own GQL (cross-channel subs/follower/bits) ---
+    // adamcy gives a channel's public emote set but cannot know which channels the user is
     // subscribed to. To suggest the user's *personal* available emotes (every sub across every
     // channel, follower emotes, bits, Turbo) we read the app's own OAuth token from its
     // SharedPreferences (key authToken_v2, written by the host) and issue the same UserEmotes
-    // GQL request the app itself makes on launch. The token is read locally and sent ONLY to
-    // gql.twitch.tv — the exact endpoint the host already uses — and is never logged.
+    // GQL request the app itself makes on launch. The token is read locally and sent only to
+    // gql.twitch.tv (the exact endpoint the host already uses) and is never logged.
     //
     // Multi-user / public-release safe: the token belongs to whatever account is logged in on
-    // THIS device; nothing is hardcoded. Re-read on every fetch so a re-login / refresh is picked
+    // this device; nothing is hardcoded. Re-read on every fetch so a re-login / refresh is picked
     // up. No-ops silently when logged out (empty token).
     private const val GQL_URL = "https://gql.twitch.tv/gql"
     private const val GQL_CLIENT_ID = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp"
@@ -622,7 +625,7 @@ object EmoteRepo {
     @Volatile private var personalLoaded = false
 
     /** Fetch the logged-in user's full personal Twitch emote set and merge into the suggestion
-     *  set (suggestion-only — Twitch renders these natively). User-wide, so it lives in the
+     *  set (suggestion-only, since Twitch renders these natively). User-wide, so it lives in the
      *  global Twitch snapshot and survives channel switches. Gated at suggest() by KEY_SRC_TWITCH. */
     fun loadPersonalEmotesAsync(ctx: Context) {
         if (personalLoaded) return
@@ -667,7 +670,7 @@ object EmoteRepo {
 
     /** POST a raw GQL operation body to Twitch's gateway with the host Client-ID + the user's
      *  OAuth token, reusing the shared HTTP client. Returns the response JSON string, or null on
-     *  failure. The token is sent ONLY to gql.twitch.tv (the endpoint the host already uses) and
+     *  failure. The token is sent only to gql.twitch.tv (the endpoint the host already uses) and
      *  is never logged. */
     fun gqlPost(token: String, jsonBody: String): String? = runCatching {
         val req = Request.Builder()
@@ -682,8 +685,21 @@ object EmoteRepo {
         }
     }.getOrElse { log("gqlPost failed: $it"); null }
 
+    /** POST to Twitch's public Helix API as the signed-in user, for the few calls GQL has no
+     *  stable form for (creating a clip). Same rules as [gqlPost]: the token goes only to Twitch
+     *  and is never logged. Returns the HTTP code and body, or null on a network failure. */
+    fun helixPost(token: String, pathAndQuery: String): Pair<Int, String?>? = runCatching {
+        val req = Request.Builder()
+            .url("https://api.twitch.tv/helix/$pathAndQuery")
+            .header("Client-Id", GQL_CLIENT_ID)
+            .header("Authorization", "Bearer $token")
+            .post(ByteArray(0).toRequestBody(null))
+            .build()
+        http.newCall(req).execute().use { r -> r.code to r.body?.string() }
+    }.getOrElse { log("helixPost failed: ${it.javaClass.simpleName}"); null }
+
     /** Read the host's OAuth token (SharedPreferences key authToken_v2) by scanning the app's own
-     *  shared_prefs dir — no hardcoded file name, obfuscation-immune. Returns "" if absent. */
+     *  shared_prefs dir: no hardcoded file name, obfuscation-immune. Returns "" if absent. */
     private fun readAuthToken(ctx: Context): String {
         val dir = File(ctx.applicationInfo.dataDir, "shared_prefs")
         val files = dir.listFiles { f -> f.name.endsWith(".xml") } ?: return ""
@@ -729,7 +745,7 @@ object EmoteRepo {
         }
     }
 
-    /** Fetch a channel's Twitch (provider 0) emote set from adamcy by LOGIN name into [out]. */
+    /** Fetch a channel's Twitch (provider 0) emote set from adamcy by login name into [out]. */
     private fun loadTwitchChannel(login: String, out: MutableMap<String, String>) {
         if (login.isBlank()) return
         runCatching {
@@ -774,7 +790,7 @@ object EmoteRepo {
 
     /**
      * Unified emote name suggestions across 7TV/BTTV/FFZ ([map]) and Twitch ([twitch]).
-     * Case-insensitive; startsWith ranks before contains; deduped by name. No colon needed —
+     * Case-insensitive; startsWith ranks before contains; deduped by name. No colon needed:
      * the caller passes the raw word the user is typing.
      */
     fun suggest(prefix: String, limit: Int = 30): List<Sug> {
@@ -783,7 +799,7 @@ object EmoteRepo {
         val onTwitch = Settings.get(Settings.KEY_SRC_TWITCH)
         // Groups, in order: pinned, then 7TV/BTTV/FFZ/Homies, then channel (sub) emotes, then
         // every other Twitch emote (globals, hype train, Prime...). Within a group, names that
-        // START with what was typed come first, then names that merely contain it; each part
+        // start with what was typed come first, then names that merely contain it; each part
         // alphabetical, ignoring case.
         val pins = Pins.all()
         val keyed = HashMap<String, Int>()   // name -> group
@@ -836,12 +852,19 @@ object EmoteRepo {
         }
     }
 
+    private const val PREFETCH_MAX = 300
+
     private fun prefetchSuggestDrawables(guard: String? = null) {
         for ((name, d) in drawables) suggestDrawables.putIfAbsent(name, d)
         val res = Resources.getSystem()
+        // Up to this many up front. An account with thousands of Twitch emotes would otherwise
+        // keep thousands of pictures (each a graphics buffer) for the whole run; the rest are
+        // fetched when a suggestion needs them (wantPictures).
+        var budget = PREFETCH_MAX - suggestDrawables.size
         for ((name, url) in twitch) {
             if (guard != null && activeChannel != guard) return
             if (suggestDrawables.containsKey(name)) continue
+            if (budget-- <= 0) break
             if (!inflight.add("sug:$name")) continue
             sugPool.execute {
                 try {
@@ -925,21 +948,21 @@ object EmoteRepo {
     }
 
     /**
-     * Load a channel's 7TV/BTTV/FFZ + Twitch emote sets and make them the ONLY channel emotes
+     * Load a channel's 7TV/BTTV/FFZ + Twitch emote sets and make them the only channel emotes
      * merged on top of the globals. Anchor: ChannelChatConnectionKey.channelId.
      *
-     * CRITICAL (state-leak fix): emotes are built into LOCAL maps off the live ones, then
-     * published ATOMICALLY (live = globals + this channel) only if this is still the active
-     * channel. This prevents a previous channel's emotes from leaking into a channel that
-     * doesn't have them — including the race where the OLD channel's slow image prefetch / Twitch
-     * fetch finishes AFTER the user already switched. The chat-connect ctor fires in a ~13× burst
+     * Emotes are built into local maps off the live ones, then published atomically
+     * (live = globals + this channel) only if this is still the active channel. This prevents a
+     * previous channel's emotes from leaking into a channel that doesn't have them, including the
+     * race where the old channel's slow image prefetch / Twitch fetch finishes after the user
+     * already switched. The chat-connect ctor fires in a ~13x burst
      * per channel; we dedup on [activeChannel] so only the first of a burst proceeds. That also
      * skips opening the same channel again, so a list that failed is asked again on a timer
      * instead ([finishChannel]).
      */
     fun loadChannelAsync(channelId: String, channelName: String?) {
         if (channelId.isBlank()) return
-        if (channelId == activeChannel) return // same channel (ctor burst / no switch) — ignore
+        if (channelId == activeChannel) return // same channel (ctor burst / no switch): ignore
         activeChannel = channelId
         activeName = channelName
         reloadingFor = null
@@ -957,7 +980,7 @@ object EmoteRepo {
             if (!channelName.isNullOrBlank())
                 lists += ChList("Twitch", isTwitch = true) { m, _, _ -> loadTwitchChannel(channelName, m) }
             for (l in lists) chPool.execute { l.run() }
-            // Build this channel's set in LOCAL maps: no writes to the live maps yet. Merged in
+            // Build this channel's set in local maps: no writes to the live maps yet. Merged in
             // the fixed order above, so a name two lists share resolves as it always did.
             val cMap = LinkedHashMap<String, String>()   // keeps each provider's own order for the picker
             val cSrc = HashMap<String, String>()
@@ -993,6 +1016,7 @@ object EmoteRepo {
                 // list never goes into chat lines, so it does not hold them.
                 lateGen.set(if (late.any { !it.isTwitch }) myGen else 0)
                 publishedFor = myId
+                chatAnim.evictAll()
                 drawables.clear(); drawables.putAll(gDraw)
                 suggestDrawables.clear(); suggestDrawables.putAll(gSuggestDraw)
                 // A channel emote that reuses a global name has its own picture: drop the
@@ -1168,7 +1192,7 @@ object EmoteRepo {
     /**
      * Decode emote [bytes] into a ready-to-draw Drawable scaled to our row height. Animated
      * sources (animated WebP / GIF) are detected here: their bytes + size come back with it (so
-     * [makeAnimated] can mint fresh independently-animating copies) next to a STATIC first-frame
+     * [makeAnimated] can mint fresh independently-animating copies) next to a static first-frame
      * BitmapDrawable as the stored fallback. The caller stores them ([keepAnim]) only once it
      * knows the url is still the one in use. Static sources return a plain BitmapDrawable. Uses
      * ImageDecoder on API 28+ (animation requires it); below that, or on any failure, falls back
@@ -1203,17 +1227,40 @@ object EmoteRepo {
     }
 
     /**
-     * Mint a FRESH, independently-animating drawable for [name] if it is an animated emote,
-     * else null (caller falls back to the static cached drawable). Each call decodes a new
-     * AnimatedImageDrawable from the cached source bytes so every chat line / preview gets its
-     * own frame cursor + callback. Infinite-looping. Bounds set to the emote's row size.
+     * The animated picture for [name] in chat lines, one per emote and url, shared by every line
+     * that shows it. A fresh decoder per line meant fifty decoders (each with its frame buffers)
+     * for an emote spammed fifty times. Sharing is safe since AnimPause gives chat span pictures
+     * one callback that redraws every row showing them, and runs a picture while any is seen.
+     * Chat only: the picker, the favorites bar and the suggestions size their pictures
+     * differently, so they keep their own copies from [makeAnimated].
      */
-    fun makeAnimated(name: String): Drawable? {
+    fun chatAnimated(name: String): Drawable? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        val url = urlOf(name) ?: return null
+        val key = name + "\u0000" + url
+        chatAnim.get(key)?.let { return it }
+        // Kept only when the bytes decoded were the ones for this url: a channel publish landing
+        // in between must not file the new picture under the old address for every later line.
+        return makeAnimated(name, url)?.also { chatAnim.put(key, it) }
+    }
+
+    private val chatAnim = object : android.util.LruCache<String, Drawable>(160) {}
+
+    /** Lets go of the shared chat pictures (a new channel, or the emote quality changed). */
+    fun dropChatAnim() = chatAnim.evictAll()
+
+    /**
+     * A new animated drawable for [name] if it is an animated emote, else null (the caller falls
+     * back to the static cached drawable). Infinite-looping, bounds at the emote's row size.
+     * With [expect], null when the bytes are known to come from another url.
+     */
+    fun makeAnimated(name: String, expect: String? = null): Drawable? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         val bytes = animBytes[name] ?: return null
         // Decoded for another channel's emote of the same name: not this chat's picture.
         val from = builtFrom[name]
         if (from != null && from != urlOf(name)) return null
+        if (expect != null && from != null && from != expect) return null
         val b = animBounds[name]
         return runCatching {
             val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
@@ -1229,11 +1276,11 @@ object EmoteRepo {
     }
 
     /**
-     * Build a LARGE preview drawable for [name] at NATIVE resolution (for the tap-to-zoom popup).
+     * Build a large preview drawable for [name] at native resolution (for the tap-to-zoom popup).
      * Animated emotes return a fresh infinite-looping AnimatedImageDrawable (caller starts it);
      * static emotes a plain BitmapDrawable. Source bytes come from the animated cache if present,
      * else the static cache's already-downloaded image isn't kept, so we re-download from the URL
-     * ([map] for 7TV/BTTV/FFZ, else [twitch]). Runs on a worker thread (network) — never the UI
+     * ([map] for 7TV/BTTV/FFZ, else [twitch]). Runs on a worker thread (network), never the UI
      * thread. Bounds are set to the drawable's intrinsic size. Returns null on failure.
      */
     fun loadPreviewDrawable(name: String): Drawable? {
@@ -1285,10 +1332,24 @@ object EmoteRepo {
                 "stored ${c.size() / 1024}KB)" else " (no cache)"))
     }
 
-    /** Shared HTTP for sibling repos (BadgeRepo, Pronouns) so the module keeps ONE OkHttpClient
-     *  — a second client would mean a second connection pool and dispatcher thread set. */
+    /** Shared HTTP for sibling repos (BadgeRepo, Pronouns) so the module keeps one OkHttpClient:
+     *  a second client would mean a second connection pool and dispatcher thread set. */
     fun httpGet(url: String): String = get(url)
     fun httpBytes(url: String): ByteArray = getBytes(url)
+
+    /** POST a JSON [body] to [url] and return the HTTP status. Off the main thread only. */
+    fun httpPostJson(url: String, body: String): Int {
+        val req = Request.Builder().url(url)
+            .post(body.toRequestBody("application/json".toMediaType())).build()
+        return http.newCall(req).execute().use { it.code }
+    }
+
+    /** Open a websocket on the shared connection pool (7TV badges). Without a cache, which a
+     *  socket has no use for, and without a read timeout: the server may stay quiet for most of a
+     *  minute between heartbeats, and the caller watches those heartbeats itself. */
+    fun webSocket(url: String, listener: okhttp3.WebSocketListener): okhttp3.WebSocket =
+        http.newBuilder().cache(null).readTimeout(0, TimeUnit.SECONDS).build()
+            .newWebSocket(Request.Builder().url(url).build(), listener)
 
     /** Stream [url] into [out] (for app updates), reporting (bytes so far, total). Uses the shared
      *  connection pool but no cache, so a 140 MB file never lands in the emote picture cache. */

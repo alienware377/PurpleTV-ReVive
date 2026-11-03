@@ -78,6 +78,9 @@ object PlayerStats {
 
     @Volatile private var shown: WeakReference<Any>? = null
 
+    /** Twitch released [p]: never ask it for numbers again. */
+    fun forget(p: Any?) { if (p != null && shown?.get() === p) shown = null }
+
     /** The IVS player drawing to the screen now, for AdVolume's test commands. */
     fun shownPlayer(): Any? = shown?.get()
 

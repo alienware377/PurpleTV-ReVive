@@ -94,6 +94,9 @@ object ModLogs {
         XposedHelpers.callMethod(subj, TwitchVersion.onNext, XposedHelpers.newInstance(XposedHelpers.findClass(CHAT_NOTICE, l), event))
     }.onFailure { log("ML show: $it") }
 
+    /** A system-style line in the open chat, for other features (the ad break recap). Any thread. */
+    fun notice(text: String) { main.post { push(text) } }
+
     /** Hidden test: show a sample line in the open chat. */
     fun test(text: String) { main.post { push("⚖ $text") } }
 }

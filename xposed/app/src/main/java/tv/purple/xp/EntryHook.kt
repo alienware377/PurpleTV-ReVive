@@ -24,9 +24,33 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
 
     override fun handleLoadPackage(lpparam: LoadPackageParam) {
         if (lpparam.packageName !in TWITCH_PKGS) return
+        // Only Twitch's main process: a second process would run every feature again on its own
+        // copy of the settings, and its writes could overwrite what the app itself just saved.
+        val proc = lpparam.processName
+        if (proc != null && proc != lpparam.packageName) {
+            // Firebase may register for pushes from any process, so that one fix goes in
+            // everywhere, once the app has a context to read the switches with: the kill switch,
+            // PurpleTV's master switch and the push fix's own setting all count here too.
+            runCatching {
+                XposedHelpers.findAndHookMethod(Application::class.java, "attach", Context::class.java, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val ctx = param.args[0] as? Context ?: return
+                        val killed = runCatching {
+                            android.provider.Settings.Global.getInt(ctx.contentResolver, "purplexp_disable", 0) == 1
+                        }.getOrDefault(false)
+                        if (killed) return
+                        runCatching { Settings.init(ctx) }
+                        if (!Settings.get(Settings.KEY_ENABLED, true)) return
+                        runCatching { PushFix.install() }
+                        log("process $proc: push fix only")
+                    }
+                })
+            }
+            return
+        }
         log("loaded into ${lpparam.packageName}, classloader=${lpparam.classLoader}")
 
-        // Phase 0 proof: confirm injection by hooking Application.attach/onCreate.
+        // Confirm injection by hooking Application.attach/onCreate.
         XposedHelpers.findAndHookMethod(
             Application::class.java, "attach", Context::class.java,
             object : XC_MethodHook() {
@@ -53,7 +77,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         if (disabled) { log("DISABLED via purplexp_disable=1, no features wired"); return }
         runCatching { TwitchVersion.init(ctx) }
         runCatching { Settings.init(ctx) }.onFailure { log("settings init failed: $it") }
-        runCatching { DevBridge.install(ctx) }.onFailure { log("dev bridge failed: $it") }
+        runCatching { DevBridge.install(app ?: ctx) }.onFailure { log("dev bridge failed: $it") }
 
         // Master switch. Off means the app must behave like stock Twitch, so nothing below is
         // wired, but the settings entry still is, otherwise the only way back would be to
@@ -86,6 +110,9 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { PickerBackspace.install(lpparam) }.onFailure { log("picker backspace failed: $it") }
         runCatching { ChatMenuLandscape.install(lpparam) }.onFailure { log("chat menu in landscape failed: $it") }
         runCatching { ClassicTheatre.install(lpparam) }.onFailure { log("classic theatre failed: $it") }
+        runCatching { LiveCaptions.install() }.onFailure { log("live captions failed: $it") }
+        runCatching { BreakRecap.install() }.onFailure { log("break recap failed: $it") }
+        runCatching { EmoteStats.install() }.onFailure { log("emote stats failed: $it") }
         runCatching { ModLogs.install(lpparam) }.onFailure { log("mod logs failed: $it") }
         runCatching { ChatGuards.install(lpparam) }.onFailure { log("chat guards failed: $it") }
         runCatching { PlayerStats.install(lpparam) }.onFailure { log("player stats failed: $it") }

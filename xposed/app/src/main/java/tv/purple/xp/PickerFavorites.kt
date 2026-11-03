@@ -22,10 +22,10 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import java.lang.ref.WeakReference
 
 /**
- * Favorites section inside Twitch's NATIVE emote picker (per request: "a favorites section in
- * the emotes picker for only twitch and sub emotes that persists between chats").
+ * Favorites section inside Twitch's native emote picker, for Twitch and sub emotes only, kept
+ * between chats.
  *
- * Obfuscation-immune anchors (resource ENTRY names survive R8; the resource table package is
+ * Obfuscation-immune anchors (resource entry names survive R8; the resource table package is
  * still "tv.twitch.android.app" even after the app package rename, so getResourceEntryName is
  * used rather than getIdentifier):
  *   - emote_palette  = the picker's android.widget.GridView of emote cells
@@ -33,15 +33,14 @@ import java.lang.ref.WeakReference
  *
  * We hook the framework GridView constructor (GridView is rare in this app, so this is cheap),
  * and when the inflated GridView turns out to be "emote_palette" we add a pinned horizontal
- * favorites strip at the TOP of the "emote_picker" container and pad the grid down so nothing is
- * hidden behind it. Tapping a favorite inserts it into the chat input (insert only, never sends —
+ * favorites strip at the top of the "emote_picker" container and pad the grid down so nothing is
+ * hidden behind it. Tapping a favorite inserts it into the chat input (insert only, never sends,
  * same as the native picker). Long-pressing a favorite removes it. Favorites come from
  * [Favorites] (Twitch/sub only) and persist across channels via SharedPreferences.
  */
 object PickerFavorites {
 
-    /** The "Favorite emotes" toggle. It was in the menu and marked working but nothing read it,
-     *  so the strip appeared regardless. */
+    /** The "Favorite emotes" toggle. */
     const val KEY_ENABLED = "picker_favorites"
 
     private fun enabled() = Settings.get(KEY_ENABLED, true)
@@ -58,13 +57,13 @@ object PickerFavorites {
     @Volatile private var listenerWired = false
 
     fun install(lp: LoadPackageParam) {
-        // The emote_palette / emote_picker views are NOT real android.widget.GridView instances
-        // at runtime — uiautomator only reports "android.widget.GridView" because the custom view
+        // The emote_palette / emote_picker views are not real android.widget.GridView instances
+        // at runtime: uiautomator only reports "android.widget.GridView" because the custom view
         // reports it as its accessibility class name. Hooking framework GridView (ctor/onMeasure/
         // onAttachedToWindow) therefore never fires. Instead we anchor class-agnostically: a single
         // ViewTreeObserver.OnGlobalLayoutListener on the chat-input window root (registered from
         // EmoteAutocomplete.attach via attachRoot) scans for the "emote_picker" container by
-        // resource ENTRY name whenever the layout changes (which includes the picker expanding),
+        // resource entry name whenever the layout changes (which includes the picker expanding),
         // and injects the favorites strip the first time it appears.
         if (!listenerWired) {
             listenerWired = true
@@ -93,6 +92,8 @@ object PickerFavorites {
     fun attachRoot(input: View) {
         val root = runCatching { input.rootView }.getOrNull() ?: return
         if (!ROOTED.add(root)) return
+        // The delete button lives in this window in 31.1.2's picker.
+        PickerBackspace.watch(root)
         runCatching {
             root.viewTreeObserver.addOnGlobalLayoutListener {
                 runCatching {
@@ -133,7 +134,7 @@ object PickerFavorites {
         val ctx = container.context ?: return
         val (strip, host) = FavBar.buildStrip(ctx)
 
-        // Pin the strip to the TOP of the picker; push the grid down so it isn't hidden behind it.
+        // Pin the strip to the top of the picker; push the grid down so it isn't hidden behind it.
         container.addView(strip, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP
         ))
@@ -163,14 +164,14 @@ object PickerFavorites {
 
     // ---------------------------------------------------------------- newer picker (dialog)
     //
-    // From Twitch 31.x the emote picker is a Jetpack Compose bottom sheet in its OWN dialog
+    // From Twitch 31.x the emote picker is a Jetpack Compose bottom sheet in its own dialog
     // window, so the activity-root layout listener above can never see it, and the emote_picker /
     // emote_palette view ids no longer exist at runtime at all. Confirmed on device: the sheet's
     // whole subtree is a single androidx.compose.ui.platform.ComposeView.
     //
-    // What IS still a real view with a real id is the Material sheet container itself,
-    // design_bottom_sheet. We reach it by hooking android.app.Dialog.show(), which is framework
-    // and so cannot be obfuscated.
+    // What is still a real view with a real id is the Material sheet container itself,
+    // design_bottom_sheet. We catch it when it is added to its window (ViewGroup.addView), which
+    // is framework code and so cannot be obfuscated.
 
     @Volatile private var dialogHooked = false
 
@@ -178,10 +179,6 @@ object PickerFavorites {
         if (dialogHooked) return
         dialogHooked = true
         runCatching {
-            // Anchored on ViewGroup.addView rather than Dialog.show: the picker sheet never came
-            // through Dialog.show on device, and addView is the moment the sheet container is
-            // actually put into its window. Cost is one int compare per addView, which is rare
-            // enough not to matter, and the id is resolved once.
             // Note when the chat input's emote button is tapped. The Compose picker draws its
             // tab labels without any real views, so the sheet cannot be recognised by its
             // contents; "a bottom sheet that opens right after the emote button was tapped" can.
@@ -193,11 +190,11 @@ object PickerFavorites {
                     if (id == emoteButtonId(v)) pickerTappedAt = android.os.SystemClock.uptimeMillis()
                 }
             })
-            // Long-press an emote in the picker to favorite it. Promised by the strip's hint and
-            // the README from the start but never actually wired. Each picker cell is a real
-            // ImageView with the emote_icon id whose description is the emote's name, so this
-            // needs nothing obfuscated. Only Twitch and sub emotes can be favorites; anything
-            // else is passed through untouched so Twitch's own long-press still works there.
+            // Long-press an emote in the picker to favorite it, as the strip's hint and the
+            // README describe. Each picker cell is a real ImageView with the emote_icon id whose
+            // description is the emote's name, so this needs nothing obfuscated. Only Twitch and
+            // sub emotes can be favorites; anything else is passed through untouched so Twitch's
+            // own long-press still works there.
             XposedBridge.hookAllMethods(View::class.java, "performLongClick", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     if (!enabled()) return
@@ -211,6 +208,10 @@ object PickerFavorites {
                     param.result = true
                 }
             })
+            // Anchored on ViewGroup.addView rather than Dialog.show: the picker sheet never came
+            // through Dialog.show on device, and addView is the moment the sheet container is
+            // actually put into its window. Cost is one int compare per addView, which is rare
+            // enough not to matter, and the id is resolved once.
             XposedBridge.hookAllMethods(ViewGroup::class.java, "addView", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val child = param.args.getOrNull(0) as? View ?: return
@@ -239,7 +240,7 @@ object PickerFavorites {
     private fun emoteIconId(v: View): Int {
         if (emoteIconIdCache >= 0) return emoteIconIdCache
         emoteIconIdCache = runCatching {
-            v.resources.getIdentifier("emote_icon", "id", v.context.packageName)
+            Res.id(v.context, "emote_icon")
         }.getOrDefault(0)
         return emoteIconIdCache
     }
@@ -247,7 +248,7 @@ object PickerFavorites {
     private fun emoteButtonId(v: View): Int {
         if (emoteBtnIdCache >= 0) return emoteBtnIdCache
         emoteBtnIdCache = runCatching {
-            v.resources.getIdentifier("emoticon_picker", "id", v.context.packageName)
+            Res.id(v.context, "emoticon_picker")
         }.getOrDefault(0)
         return emoteBtnIdCache
     }
@@ -258,12 +259,14 @@ object PickerFavorites {
     private fun sheetId(v: View): Int {
         if (sheetIdCache >= 0) return sheetIdCache
         sheetIdCache = runCatching {
-            v.resources.getIdentifier("design_bottom_sheet", "id", v.context.packageName)
+            Res.id(v.context, "design_bottom_sheet")
         }.getOrDefault(0)
         return sheetIdCache
     }
 
     private fun tryInjectSheet(sheet: ViewGroup) {
+        // In 31.7.0 the picker, and its delete button, live in this sheet's own window.
+        PickerBackspace.watch(sheet.rootView)
         if (INJECTED.contains(sheet)) { curRow?.get()?.let { FavBar.render(it) }; return }
         val tapped = android.os.SystemClock.uptimeMillis() - pickerTappedAt < TAP_WINDOW_MS
         if (!tapped && !isEmotePickerSheet(sheet)) return
@@ -282,7 +285,7 @@ object PickerFavorites {
         val pkg = sheet.context?.packageName ?: return false
         val wanted = listOf("giphy_tab_emotes", "giphy_tab_gifs").mapNotNull { name ->
             runCatching {
-                val id = res.getIdentifier(name, "string", pkg)
+                val id = Res.id(sheet.context, name, "string")
                 if (id == 0) null else res.getString(id)
             }.getOrNull()
         }

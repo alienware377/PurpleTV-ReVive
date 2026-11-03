@@ -100,7 +100,7 @@ object Blacklist {
     fun remove(index: Int) = save(terms().filterIndexed { i, _ -> i != index })
 
     private fun rules(): Rules {
-        // Read BEFORE the terms, so a write that lands mid-parse leaves an older rev behind and
+        // Read before the terms, so a write that lands mid-parse leaves an older rev behind and
         // the next call parses again instead of keeping the old list.
         val r = Settings.rev
         cached?.let { if (it.rev == r) return it }
@@ -219,11 +219,11 @@ object Blacklist {
     /**
      * Tag an assembled chat line as hidden.
      *
-     * Must run AFTER [ChatLineStyle.apply], which replaces the body wholesale when recovering a
-     * deleted message and would drop the marker with it, and BEFORE [ChatLineStyle.plantOriginal],
+     * Must run after [ChatLineStyle.apply], which replaces the body wholesale when recovering a
+     * deleted message and would drop the marker with it, and before [ChatLineStyle.plantOriginal],
      * which copies the username slot and captures the body, marker included.
      *
-     * The marker goes on BOTH the body and the username slot. When a moderator deletes a line that
+     * The marker goes on both the body and the username slot. When a moderator deletes a line that
      * is already on screen, Twitch redraws it from a slice that ends at the username and appends
      * its "<message deleted>" placeholder, so a marker on the body alone is cut away and the row
      * comes back. Both slots share one Marker per line and Twitch's concatenation copies it only

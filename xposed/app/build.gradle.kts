@@ -13,8 +13,12 @@ android {
         applicationId = "io.github.alienware377.purpletvrevive"
         minSdk = 26
         targetSdk = 36
-        versionCode = 28
-        versionName = "1.5.0-twitch31.7.0"
+        versionCode = 29
+        versionName = "1.6.0-twitch31.7.0"
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     buildFeatures {
@@ -61,4 +65,21 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // org.json ships in android.jar at runtime, so compileOnly avoids a duplicate-class dex error.
     compileOnly("org.json:json:20240303")
+
+    testImplementation("junit:junit:4.13.2")
+    // The real org.json for the JVM tests (android.jar's copy is a stub there).
+    testImplementation("org.json:json:20240303")
+}
+
+// The translation end to end test needs the desktop ONNX Runtime natives and real models, which
+// are far too big for the repo. tools/make_translate_pack.py OUT_DIR puts both under OUT_DIR
+// (desktop-ort/ and models/); point the tests at it with -PptvTranslateDir=OUT_DIR or the
+// PTV_TRANSLATE_DIR environment variable. Without it that test skips itself.
+tasks.withType<Test>().configureEach {
+    val dir = (project.findProperty("ptvTranslateDir") as String?) ?: System.getenv("PTV_TRANSLATE_DIR")
+    if (!dir.isNullOrBlank()) systemProperty("ptv.translate.dir", dir)
+    // The same for the captions-pack-2 zips (tools/make_captions_pack.py OUT_DIR): SttModelsTest
+    // then checks them against the pins. Without it that check skips itself.
+    val cap = (project.findProperty("ptvCaptionsDir") as String?) ?: System.getenv("PTV_CAPTIONS_DIR")
+    if (!cap.isNullOrBlank()) systemProperty("ptv.captions.dir", cap)
 }

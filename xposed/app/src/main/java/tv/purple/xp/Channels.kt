@@ -6,17 +6,17 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 
 /**
- * Current-channel resolution (task #9 channel-emote half).
+ * Current-channel resolution for channel emotes.
  *
  * 7TV/BTTV/FFZ channel sets are keyed by the Twitch numeric channel id. Found by BFS over
- * the live render graph: the READABLE, R8-kept class
+ * the live render graph: the readable, R8-kept class
  *
  *   tv.twitch.android.shared.chat.pub.messages.data.ChannelChatConnectionKey
  *       .channelId   : String  (e.g. "1504494384")
  *       .channelName : String  (e.g. "goshyboo")
  *
  * is constructed when chat connects to a channel. Hooking its constructor gives us the
- * channel id/login directly — and because it lives in the kept `...chat.pub.messages.data`
+ * channel id/login directly, and because it lives in the kept `...chat.pub.messages.data`
  * package, this anchor is obfuscation-immune (unlike the single-letter render classes).
  */
 object Channels {
@@ -29,7 +29,7 @@ object Channels {
 
     fun install(lp: LoadPackageParam) {
         val key = Names.cls(lp, KEY_CLASS) ?: run {
-            log("CH ${KEY_CLASS} not found — channel-emote anchor stale")
+            log("CH ${KEY_CLASS} not found: channel-emote anchor stale")
             return
         }
         XposedBridge.hookAllConstructors(key, object : XC_MethodHook() {
@@ -50,6 +50,7 @@ object Channels {
                     EmoteRepo.loadChannelAsync(id, name)
                     ChannelPoints.onChannel(id, name)
                     RaidCard.onChannel(id)
+                    runCatching { SevenTvBadges.onChannel(id) }
                 }.onFailure { log("CH read error: $it") }
             }
         })

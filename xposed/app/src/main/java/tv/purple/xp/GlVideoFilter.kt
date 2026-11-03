@@ -31,7 +31,7 @@ import java.util.WeakHashMap
  *
  * Twitch gives its player a Surface made with `new Surface(textureView.getSurfaceTexture())`. We
  * hook that framework constructor: when the SurfaceTexture belongs to the player's TextureView, the
- * player is handed a Surface for OUR SurfaceTexture instead. Each decoded frame then lands in our
+ * player is handed a Surface for our SurfaceTexture instead. Each decoded frame then lands in our
  * texture, our shader (the same filter body as the RuntimeShader path, see [FilterShader]) draws
  * it into the TextureView's real SurfaceTexture, and the TextureView shows it as usual.
  *
@@ -92,7 +92,7 @@ object GlVideoFilter {
     /** The player TextureView that owns [st], if it is one: exact class, inside playback_view_container. */
     private fun findPlaybackView(st: SurfaceTexture): TextureView? {
         val root = ViewHider.currentActivity()?.window?.decorView ?: return null
-        val cid = root.resources.getIdentifier("playback_view_container", "id", root.context.packageName)
+        val cid = Res.id(root.context, "playback_view_container")
         var found: TextureView? = null
         fun walk(v: View, inside: Boolean) {
             if (found != null) return
@@ -162,8 +162,9 @@ object GlVideoFilter {
         @Volatile var failed = false
         @Volatile var params: Params? = null
         var ovlTex = 0; var ovlKey: String? = null
-        var gradTex = 0; var gradKey: String? = null
-        var monoTex = 0; var monoKey: String? = null
+        // The colours each ramp texture was made from, compared as arrays: no string per frame.
+        var gradTex = 0; var gradKey: IntArray? = null
+        var monoTex = 0; var monoKey: IntArray? = null
         val attachListener = object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {}
             override fun onViewDetachedFromWindow(v: View) {
@@ -209,7 +210,11 @@ object GlVideoFilter {
         @Volatile var ok = false
         private var prog = 0
         private var vao = 0
-        private val locs = HashMap<String, Int>()
+        // Uniform locations per program, then per name: looked up every frame, so no string is built.
+        private val locs = HashMap<Int, HashMap<String, Int>>()
+        private val fNames = HashMap<String, String>()
+        private fun fName(k: String) = fNames.getOrPut(k) { "f_$k" }
+        private val wh = IntArray(2)
         /** Programs built for a set of active filters (see FilterShader.glsl), by set. */
         private val progs = HashMap<String, Int>()
         private var seed = 0f
@@ -246,23 +251,33 @@ object GlVideoFilter {
 
         private fun link(vs: String, fs: String): Int {
             val p = GLES30.glCreateProgram()
-            GLES30.glAttachShader(p, compile(GLES30.GL_VERTEX_SHADER, vs))
-            GLES30.glAttachShader(p, compile(GLES30.GL_FRAGMENT_SHADER, fs))
+            val v = compile(GLES30.GL_VERTEX_SHADER, vs)
+            val f = try { compile(GLES30.GL_FRAGMENT_SHADER, fs) } catch (t: Throwable) { GLES30.glDeleteShader(v); GLES30.glDeleteProgram(p); throw t }
+            GLES30.glAttachShader(p, v)
+            GLES30.glAttachShader(p, f)
             GLES30.glLinkProgram(p)
+            // The program keeps what it needs; the shader objects would otherwise leak per filter set.
+            GLES30.glDetachShader(p, v); GLES30.glDetachShader(p, f)
+            GLES30.glDeleteShader(v); GLES30.glDeleteShader(f)
             val st = IntArray(1); GLES30.glGetProgramiv(p, GLES30.GL_LINK_STATUS, st, 0)
-            if (st[0] == 0) error("link: " + GLES30.glGetProgramInfoLog(p))
+            if (st[0] == 0) { val log = GLES30.glGetProgramInfoLog(p); GLES30.glDeleteProgram(p); error("link: $log") }
             return p
         }
 
-        private fun loc(name: String) = locs.getOrPut("$prog:$name") { GLES30.glGetUniformLocation(prog, name) }
+        private fun loc(name: String) = locs.getOrPut(prog) { HashMap() }.getOrPut(name) { GLES30.glGetUniformLocation(prog, name) }
 
         /** The program with only [active] filters compiled in; built once per set, the last few kept. */
+        private var lastSet: Set<String>? = null
+        private var lastId = ""
+
         private fun programFor(active: Set<String>): Int {
-            val id = active.sorted().joinToString(",")
+            // Called every frame: the same settings object gives the same set, so its id is reused.
+            if (active !== lastSet) { lastSet = active; lastId = active.sorted().joinToString(",") }
+            val id = lastId
             progs[id]?.let { return it }
             if (progs.size >= 6) {
                 for (old in progs.values) if (old != prog) GLES30.glDeleteProgram(old)
-                progs.values.retainAll(setOf(prog)); locs.clear()
+                progs.values.retainAll(setOf(prog)); locs.keys.retainAll(setOf(prog))
             }
             return link(VERT, FilterShader.glsl(active)).also { progs[id] = it }
         }
@@ -323,7 +338,6 @@ object GlVideoFilter {
 
         private fun draw(p: Pipe) {
             EGL14.eglMakeCurrent(dpy, p.win, p.win, ctx)
-            val wh = IntArray(2)
             EGL14.eglQuerySurface(dpy, p.win, EGL14.EGL_WIDTH, wh, 0)
             EGL14.eglQuerySurface(dpy, p.win, EGL14.EGL_HEIGHT, wh, 1)
             val w = wh[0].coerceAtLeast(1); val hh = wh[1].coerceAtLeast(1)
@@ -358,9 +372,10 @@ object GlVideoFilter {
                 // Dynamic light changes with the picture, so its values are read fresh for every frame.
                 for (k in DynLight.KEYS) {
                     if (k !in par.active) continue
-                    val l = loc("f_$k"); if (l < 0) continue
+                    val fk = fName(k)
+                    val l = loc(fk); if (l < 0) continue
                     val yz = DynLight.yz(k)
-                    GLES30.glUniform3f(l, par.uniforms["f_$k"]?.get(0) ?: 0f, yz[0], yz[1])
+                    GLES30.glUniform3f(l, par.uniforms[fk]?.get(0) ?: 0f, yz[0], yz[1])
                 }
                 // Values were measured on the view; the surface may differ slightly, so use its size.
                 GLES30.glUniform2f(loc("uSize"), w.toFloat(), hh.toFloat())
@@ -368,8 +383,10 @@ object GlVideoFilter {
                 GLES30.glUniform1f(loc("uSeed"), seed)
                 GLES30.glUniform1f(loc("uTime"), VideoFilters.now())
                 bindOverlay(p, par, w, hh)
-                p.gradTex = ramp(p.gradTex, p.gradKey, par.grad, 2, "uGrad").also { p.gradKey = par.grad.joinToString() }
-                p.monoTex = ramp(p.monoTex, p.monoKey, par.mono, 3, "uMono").also { p.monoKey = par.mono.joinToString() }
+                p.gradTex = ramp(p.gradTex, p.gradKey, par.grad, 2, "uGrad")
+                if (p.gradKey?.contentEquals(par.grad) != true) p.gradKey = par.grad.copyOf()
+                p.monoTex = ramp(p.monoTex, p.monoKey, par.mono, 3, "uMono")
+                if (p.monoKey?.contentEquals(par.mono) != true) p.monoKey = par.mono.copyOf()
             }
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
             EGLExt.eglPresentationTimeANDROID(dpy, p.win, p.input.timestamp)
@@ -414,11 +431,10 @@ object GlVideoFilter {
             DynLight.feedRgba(measBuf, DynLight.W * DynLight.H)
         }
 
-        private fun ramp(tex: Int, key: String?, colors: IntArray, unit: Int, name: String): Int {
+        private fun ramp(tex: Int, key: IntArray?, colors: IntArray, unit: Int, name: String): Int {
             var t = tex
-            val k = colors.joinToString()
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + unit)
-            if (t == 0 || k != key) {
+            if (t == 0 || key == null || !key.contentEquals(colors)) {
                 if (t == 0) { val a = IntArray(1); GLES30.glGenTextures(1, a, 0); t = a[0] }
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, t)
                 setParams(GLES30.GL_CLAMP_TO_EDGE)

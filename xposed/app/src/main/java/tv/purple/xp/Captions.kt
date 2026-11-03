@@ -209,6 +209,11 @@ object CaptionHub {
 
     fun removeListener(l: (text: String, isFinal: Boolean) -> Unit) { listeners.remove(l) }
 
+    private val lineListeners = CopyOnWriteArrayList<(String) -> Unit>()
+
+    /** Every finished caption line once, from Twitch's captions or speech to text. Main thread. */
+    fun addLineListener(l: (String) -> Unit) { lineListeners.addIfAbsent(l) }
+
     /** A caption line from Twitch (already taken out of its JSON). Any thread. */
     fun onTwitchCaption(text: String) {
         lastCcAt = SystemClock.uptimeMillis()
@@ -296,7 +301,15 @@ object CaptionHub {
             if (ccOff) return
             try {
                 val me = p.thisObject ?: return
-                if (me !== PbypWatch.player()) return
+                if (me !== PbypWatch.player()) {
+                    // The main stream's own captions, for live captions (Twitch shows them only
+                    // when its CC button is on, and never translated).
+                    if (LiveCaptions.wantsCc() && p.args.getOrNull(0) == "text/json" && me === Stt.mainPlayer()) {
+                        val b = p.args.getOrNull(1) as? ByteBuffer ?: return
+                        captionJson(b)?.let { LiveCaptions.onCcJson(it) }
+                    }
+                    return
+                }
                 if (p.args.getOrNull(0) != "text/json") return
                 val buf = p.args.getOrNull(1) as? ByteBuffer ?: return
                 val s = captionJson(buf) ?: return
@@ -460,6 +473,7 @@ object CaptionHub {
     private fun commit(t: String, at: Long, speak: Boolean) {
         lines.addLast(Line(t, at))
         while (lines.size > KEEP) lines.removeFirst()
+        for (l in lineListeners) try { l(t) } catch (e: Throwable) { log("CC line listener: $e") }
         if (speak) ReadAloud.onFinal(t)
     }
 
@@ -882,6 +896,8 @@ object ReadAloud {
             } else if (t != null) {
                 mainScope()
                 runCatching { t.setSpeechRate(rate() / 100f) }
+                // The stream language changed: a voice for the new one.
+                if (voiceLang != SttModels.chosen().lang) runCatching { pickVoice(t) }
             }
         }
     }
@@ -1331,6 +1347,9 @@ object ReadAloud {
         override fun onStop(utteranceId: String?, interrupted: Boolean) { post(create = false) { synthDone(utteranceId, false) } }
     }
 
+    /** The language the voice was last picked for. */
+    private var voiceLang = ""
+
     private fun configure(t: TextToSpeech) {
         mainScope()
         runCatching { t.setOnUtteranceProgressListener(progress) }
@@ -1340,21 +1359,24 @@ object ReadAloud {
     }
 
     /**
-     * Offline only: keep the engine's voice when it runs on the phone and speaks English (the
-     * captions are English: the speech model is, and so are nearly all Twitch captions); otherwise
-     * take an installed English voice that needs no network, nearest the phone's own country.
+     * Offline only: keep the engine's voice when it runs on the phone and speaks the stream language
+     * picked in settings (English unless changed: the speech model speaks it, and Twitch's own
+     * captions are nearly always in the streamer's language); otherwise take an installed voice for
+     * that language that needs no network, nearest the phone's own country.
      */
     private fun pickVoice(t: TextToSpeech) {
         fun local(v: Voice) = !v.isNetworkConnectionRequired &&
             v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true
+        val lang = SttModels.chosen().lang
+        voiceLang = lang
         val cur = runCatching { t.voice }.getOrNull()
-        if (cur != null && local(cur) && cur.locale.language == "en") {
+        if (cur != null && local(cur) && cur.locale.language == lang) {
             log("RA voice ${cur.name} (${cur.locale}), the engine's own")
             return
         }
         val all = runCatching { t.voices }.getOrNull().orEmpty().filter { local(it) }
         val country = Locale.getDefault().country
-        val pick = all.filter { it.locale.language == "en" }
+        val pick = all.filter { it.locale.language == lang }
             .maxWithOrNull(compareBy<Voice>({ it.locale.country == country }, { it.locale.country == "US" }, { it.quality }, { -it.latency }))
             ?: if (cur != null && local(cur)) null
             else all.filter { it.locale.language == (cur?.locale?.language ?: Locale.getDefault().language) }.maxByOrNull { it.quality }

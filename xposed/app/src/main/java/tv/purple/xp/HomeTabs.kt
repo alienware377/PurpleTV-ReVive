@@ -12,19 +12,19 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 /**
  * Removes the Home page's "Live" and "Clips" tabs and keeps "Following" selected.
  *
- * Those two tabs ARE Twitch's discovery feed -- the short-form vertical video pager. The obvious
+ * Those two tabs are Twitch's discovery feed: the short-form vertical video pager. The obvious
  * approach, hiding the feed's container views by resource entry name, is a trap: those containers
- * are FRAGMENT ROOTS. Hiding the pager's root measures it at 0x0 and tips the feed into its error
+ * are fragment roots. Hiding the pager's root measures it at 0x0 and tips the feed into its error
  * state ("Boo! Ghost sighting"), hiding the home root kills the whole Home page including
  * Following, and the fragment manager sets both back to VISIBLE on every rebind so the rule
  * silently fights the framework forever.
  *
- * Removing the TABS instead sidesteps all of that: the pages still exist and stay perfectly
+ * Removing the tabs instead sidesteps all of that: the pages still exist and stay perfectly
  * healthy, they just become unreachable.
  *
  * Obfuscation-immune throughout. The tab strip is found by resource entry name; its internals are
  * plain framework containers (the strip's only child is a LinearLayout of per-tab LinearLayouts);
- * tabs are identified by comparing their label against Twitch's OWN string resources, looked up by
+ * tabs are identified by comparing their label against Twitch's own string resources, looked up by
  * entry name rather than by id; and selection uses View.performClick(), which the tab view
  * overrides to select itself.
  */
@@ -41,7 +41,7 @@ object HomeTabs {
      *  currently visible rather than assuming. */
     private val STRIP_IDS = listOf("tab_layout", "tab_layout_no_tab_width")
 
-    /** String resource ENTRY names for the tabs to remove, and the one to fall back to. */
+    /** String resource entry names for the tabs to remove, and the one to fall back to. */
     private val REMOVE = listOf("live", "clips")
     private const val KEEP = "following"
 
@@ -126,7 +126,7 @@ object HomeTabs {
             }
         }
 
-        // Only steer the selection when the selected tab is one we hid -- otherwise this would
+        // Only steer the selection when the selected tab is one we hid. Otherwise this would
         // yank the user back to Following from a tab they are allowed to pick (like Turbo).
         if (hidSelected && following != null && !following.isSelected) {
             runCatching { following.performClick() }
@@ -169,13 +169,13 @@ object HomeTabs {
 
     private class Labels(val remove: List<String>, val keep: String)
 
-    /** Twitch's own tab captions, resolved by resource ENTRY name so this follows the app's
+    /** Twitch's own tab captions, resolved by resource entry name so this follows the app's
      *  language instead of assuming English. */
     private fun labelsOf(act: Activity): Labels {
         val r = act.resources
         val p = act.packageName
         fun s(entry: String): String? = runCatching {
-            val id = r.getIdentifier(entry, "string", p)
+            val id = Res.id(act, entry, "string")
             if (id != 0) r.getString(id).trim().lowercase() else null
         }.getOrNull()
         return Labels(REMOVE.mapNotNull { s(it) }, s(KEEP) ?: "following")

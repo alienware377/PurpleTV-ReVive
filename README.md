@@ -1,4 +1,4 @@
-# PurpleTV ReVive - Continuation of the great work
+# PurpleTV ReVive: continuing the great work
 
 **An Xposed / LSPosed module that brings third-party emotes, badges, pronouns and a pile of chat quality-of-life tweaks to the official Twitch app for Android.**
 
@@ -28,10 +28,11 @@ Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bt
 | **Favorites bar** | Long-press an emote in the picker, in chat or in the suggestions to add it to a bar at the top of the picker. 7TV, BTTV and FFZ favorites use each chat's own picture and are greyed out where that chat does not have them. Sort them into groups with a name or an emote as their icon, shown as folders that open and close, or as tabs that switch the bar. Hold a favorite to drag it into a group, to a new spot or onto the bin. The bar can be one scrolling row or grow into rows. Can be kept per streamer. |
 | **7TV, BTTV and FFZ in the emote picker** | This channel's and the global 7TV, BTTV, FFZ and Homies emotes appear as their own sections at the bottom of Twitch's emote picker. |
 | **Emote details** | Tap a 7TV, BTTV or FFZ emote in chat to see it big, with where it comes from (global or this channel's), who uploaded it, and a link to its page on 7TV, BetterTTV or FrankerFaceZ. |
+| **Emote stats** | Tap an emote in chat to also see who used it most in this chat since you opened it. Twitch's own emote card stays as it is, with the list added under it. |
 | **Frequently Used** | Emotes you send from the favorites bar or the suggestion list count towards Twitch's Frequently Used row, like ones picked in Twitch's own picker. |
 | **Emote picker backspace** | The backspace button in the emote picker deletes the whole last word or emote at once, or one letter, or keeps Twitch's own behaviour. |
 | **Auto-claim channel points** | Bonus chests are claimed automatically in the background, whether or not the chest is on screen. |
-| **Third-party badges** | FFZ, BTTV, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. |
+| **Third-party badges** | 7TV, FFZ, BTTV, Chatterino, DankChat, Chatsen and Homies badges shown next to usernames. 7TV badges come over a live connection to 7TV for the chat you have open, the way Chatterino does it, so 7TV learns which channel you are watching, as with 7TV's own apps. Each source can be switched off. |
 | **Pronouns** | Pronoun tags from pronouns.alejo.io shown next to usernames. |
 | **Timestamps** | Nine timestamp formats, including seconds, which Twitch itself cannot show. Shown even if Twitch's own chat timestamps are off. |
 | **Deleted messages** | Show what a deleted message actually said, struck through, greyed, or plain. Works as an ordinary viewer, not only as a moderator, including messages already deleted before you joined. |
@@ -49,15 +50,19 @@ Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bt
 | **Audio filters** | An Audio tab next to the video filters: volume boost, auto volume, compressor, limiter, voice clarity, rumble cut, and Bass and Treble or a full 16-band equaliser (30 Hz to 16k). Made for talk streams: even out the volume, tame loud moments and make voices clearer. Android 9 or newer. |
 | **Ad volume** | Turn ads down to 50%, 25% (the default), 15%, 10% or 5% of their loudness. The ad still plays in full, on screen, and still counts for the streamer. Works with the audio filters on or off. |
 | **Picture-by-Picture ad breaks** | When Twitch keeps the stream going in a small muted picture during an ad, show it bigger beside the ad, with captions under it: Twitch's own captions when the streamer sends them, otherwise optional speech-to-text made on your phone (two free downloads, nothing is sent anywhere). The captions can also be read aloud with an offline voice of your phone. |
+| **Ad break recap** | When an ad break of 15 seconds or more ends, a short recap in chat: what the streamer said (when captions were on for the live picture) and what chat did, with the top emotes and what most people said. |
 | **Player gestures** | In the landscape player, swipe up or down on the left half for brightness and on the right half for volume. |
 | **Sleep timer** | A crescent moon button in the player controls (purple while a timer runs). Pick 15 minutes to 2 hours, or any time in hours and minutes; when time is up it closes Twitch like PurpleTV did, or only pauses the stream if you prefer. |
 | **VOD seek amounts** | Choose how far the VOD forward and back buttons jump, from 5 seconds to 2 minutes. |
 | **Live refresh button** | A reload button in the live player controls for a stream that froze or fell behind (on by default). |
+| **Clip and save** | A button in the live player makes a Twitch clip of the last moments and saves it as a video in Movies/PurpleTV on your phone. The clip is a normal Twitch clip, so it also shows on the channel. |
 | **Player stats** | A button in the player controls that shows quality, bitrate, frame rate, how far behind live you are, the buffer, the network estimate and dropped frames over the video. |
 | **Disable low latency** | Plays live streams a few seconds further behind, for fewer stutters and rebuffers on a weak connection. |
 | **Turn off autoplay** | When a VOD or clip ends, the next video does not start by itself. The Up next card stays so you can still tap it. |
 | **Keep chat on /clear** | When a moderator clears chat, the messages stay on your screen and a short note says chat was cleared. Timeouts and bans still work. |
 | **Mod logs** | In channels you moderate (or your own), a line in chat says who timed out, banned, unbanned or deleted a message from whom, with the reason. Only works where you are a moderator. |
+| **Chat translation** | Chat lines in another language get a small translation under them, made on your phone. Nothing is sent anywhere. Pick the language to translate into and download it once from the Translation settings. |
+| **Live captions** | Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on your phone, for streams in English, Spanish, German, French, Russian, Korean or Chinese (pick the stream language, each is its own download). They can be translated into your language too. |
 | **Chat appearance** | Font size, alternating row backgrounds, opacity, and the landscape chat width, with a separate width for the expanded chat (swipe from the video edge). |
 | **Chat menu in landscape** | The three-dots chat menu beside the chat box shows in landscape too, not only in portrait. On by default. |
 | **Home tab tidy-up** | Home opens on Following by default. Optionally remove the Live and Clips tabs, and hide the Browse (search) tab or the Create (plus) button, in portrait and landscape. |
@@ -67,10 +72,6 @@ Both brought 7TV, BetterTTV and FrankerFaceZ emotes to Twitch on Android, and bt
 | **Settings sync** | Keeps your PurpleTV settings the same on all your devices through one small file in your Google Drive (or any cloud storage Android's file picker offers). No sign-in: create the file on one device, pick it on the others. Changes are saved a few seconds after you make them and loaded when Twitch opens. |
 
 Everything is opt-in and individually toggleable, and the whole module can be switched off in one tap, see [Turning it off](#turning-it-off).
-
-## Screenshots
-
-<!-- Add screenshots to docs/ and reference them here -->
 
 ## Requirements
 
@@ -88,7 +89,7 @@ Or by hand:
 
 1. Download the module file from the [latest release](https://github.com/alienware377/PurpleTV-ReVive/releases/latest): the one named `purpletv-revive-<version>-module-twitch<version>.apk` (older releases call it `purpletv-xp.apk`).
 2. Install it like a normal app.
-3. Open LSPosed → **Modules** → enable **PurpleTV ReVive**.
+3. In LSPosed, open **Modules** and enable **PurpleTV ReVive**.
 4. In the module's scope list, tick **Twitch**.
 5. Force-stop and reopen Twitch.
 
@@ -117,24 +118,26 @@ The settings row itself stays put while the module is switched off, showing just
 
 ## Building from source
 
+You need JDK 17 or newer, the Android SDK with platform 36 (point `ANDROID_HOME` at it, or put `sdk.dir=...` in `xposed/local.properties`) and Gradle 8.9 or newer. The repo has no Gradle wrapper, so use your own Gradle:
+
 ```bash
 git clone https://github.com/alienware377/PurpleTV-ReVive.git
-cd purpletv-revive/xposed
-./gradlew :app:assembleRelease
+cd PurpleTV-ReVive/xposed
+gradle :app:assembleRelease
 ```
 
-The unsigned APK lands in `app/build/outputs/apk/release/`. Sign it with any key before installing.
+The unsigned APK lands in `app/build/outputs/apk/release/`. Sign it with any key before installing. `gradle :app:testDebugUnitTest` runs the unit tests.
 
 ## How it works
 
-The Twitch Android app is obfuscated with R8, and class and method names change on every release, which is why most Twitch mods break within weeks of an update. This module deliberately avoids naming obfuscated classes. Instead it anchors on things R8 cannot rename:
+The Twitch Android app is obfuscated with R8, and class and method names change on every release, which is why most Twitch mods break within weeks of an update. Wherever it can, this module avoids naming obfuscated classes and anchors on things R8 cannot rename:
 
 - **Android framework classes** (`Activity`, `EditText`, `ViewGroup`) hooked directly.
 - **Resource entry names** (`getResourceEntryName`): resource IDs survive obfuscation and are package-independent.
 - **Kept public model packages** such as `tv.twitch.android.shared.chat.pub.messages.data`, which R8 preserves.
 - **Twitch's own GraphQL gateway** for channel points, rather than the UI layer.
 
-The result is a module that keeps working across Twitch updates far longer than smali-patch-based mods.
+Some features can only be reached through Twitch's renamed internals. Those few names are pinned for each supported Twitch version, and the module picks the set that matches your Twitch, which is why a new Twitch release can break a feature or two until the module catches up.
 
 ## Compatibility
 
@@ -181,7 +184,11 @@ Questions, ideas and show-and-tell go in [Discussions](https://github.com/alienw
 
 Emote data is provided by the [7TV](https://7tv.app), [BetterTTV](https://betterttv.com) and [FrankerFaceZ](https://frankerfacez.com) public APIs.
 
-Speech-to-text captions use [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by the k2-fsa project (Apache License 2.0; its download also contains ONNX Runtime under MIT and espeak-ng under GPL-3.0) and the [Kroko ASR](https://huggingface.co/Banafo/Kroko-ASR) English model by Banafo (CC-BY-SA), converted for sherpa-onnx by csukuangfj. Both are separate downloads from the [captions-pack-1](https://github.com/alienware377/PurpleTV-ReVive/releases/tag/captions-pack-1) release, not part of this module. Not affiliated with, endorsed by, or connected to Twitch Interactive, Inc.
+Speech-to-text captions use [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) by the k2-fsa project (Apache License 2.0; its download also contains ONNX Runtime under MIT and espeak-ng under GPL-3.0) and the [Kroko ASR](https://huggingface.co/Banafo/Kroko-ASR) English model by Banafo (CC-BY-SA), converted for sherpa-onnx by csukuangfj. Both are separate downloads from the [captions-pack-1](https://github.com/alienware377/PurpleTV-ReVive/releases/tag/captions-pack-1) release, not part of this module.
+
+Offline translation uses [ONNX Runtime](https://github.com/microsoft/onnxruntime) by Microsoft (MIT) and the [Opus-MT](https://github.com/Helsinki-NLP/Opus-MT) models by Helsinki-NLP, University of Helsinki (CC-BY 4.0), in the ONNX conversions by Xenova on Hugging Face. They are separate downloads from the [translate-pack-1](https://github.com/alienware377/PurpleTV-ReVive/releases/tag/translate-pack-1) and [translate-pack-2](https://github.com/alienware377/PurpleTV-ReVive/releases/tag/translate-pack-2) releases.
+
+Not affiliated with, endorsed by, or connected to Twitch Interactive, Inc.
 
 ## License
 

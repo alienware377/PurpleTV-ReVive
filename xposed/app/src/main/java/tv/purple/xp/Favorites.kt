@@ -3,7 +3,7 @@ package tv.purple.xp
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
- * Persistent favorite-emote store: an ORDERED list of emote names shown in the favorites bar of
+ * Persistent favorite-emote store: an ordered list of emote names shown in the favorites bar of
  * the emote picker.
  *
  * Any emote can be a favorite: the user's own Twitch / sub emotes, and 7TV / BTTV / FFZ / Homies
@@ -207,7 +207,7 @@ object Favorites {
         return loose || grouped
     }
 
-    /** Toggle membership. Returns the NEW state (true = now a favorite). */
+    /** Toggle membership. Returns the new state (true = now a favorite). */
     fun toggle(name: String): Boolean = if (contains(name)) { remove(name); false } else add(name)
 
     fun addListener(l: () -> Unit) { listeners.add(l) }

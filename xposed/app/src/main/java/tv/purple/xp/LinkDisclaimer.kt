@@ -44,12 +44,20 @@ object LinkDisclaimer {
         val ok = find(root, ctx, "alert_dialog_positive_button") ?: return
 
         // Hide first, so nothing flashes on screen for the frame before the click lands.
+        val saved = WindowManager.LayoutParams().apply { copyFrom(window.attributes) }
         window.attributes = window.attributes.apply {
             alpha = 0f
             dimAmount = 0f
         }
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         val clicked = clickable(ok)?.performClick() ?: false
+        if (!clicked) {
+            // Nothing took the click: show the dialog again, or the link would just vanish.
+            window.attributes = saved
+            if (saved.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND != 0) window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            log("link disclaimer: no button took the click, left for the user")
+            return
+        }
         if (dialog.isShowing) runCatching { dialog.dismiss() }
         log("link disclaimer skipped (click=$clicked)")
     }
@@ -63,7 +71,7 @@ object LinkDisclaimer {
     }
 
     private fun find(root: View, ctx: Context, name: String): View? {
-        val id = ctx.resources.getIdentifier(name, "id", ctx.packageName)
+        val id = Res.id(ctx, name)
         return if (id == 0) null else root.findViewById(id)
     }
 
@@ -74,7 +82,7 @@ object LinkDisclaimer {
 
     private fun fixedText(ctx: Context): Pair<String, Boolean>? {
         cached?.let { return it }
-        val id = ctx.resources.getIdentifier("browser_link_disclaimer", "string", ctx.packageName)
+        val id = Res.id(ctx, "browser_link_disclaimer", "string")
         if (id == 0) return null
         val raw = ctx.resources.getText(id).toString()
         val ph = Regex("%(\\d+\\$)?s").find(raw) ?: return null

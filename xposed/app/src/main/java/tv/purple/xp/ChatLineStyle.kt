@@ -13,17 +13,17 @@ import java.lang.reflect.Modifier
 /**
  * Timestamp reformatting, `/me` action styling and deleted-message styling.
  *
- * All three need values that live on the chat MESSAGE rather than the rendered line: the real
+ * All three need values that live on the chat message rather than the rendered line: the real
  * message time (the rendered timestamp slot is already formatted down to minutes, so seconds can
  * never be recovered from it), and the isDeleted / isAction flags.
  *
- * Those fields are reached WITHOUT pinning any obfuscated name. The message is a Kotlin data class
+ * Those fields are reached without pinning any obfuscated name. The message is a Kotlin data class
  * whose generated toString() keeps the original labels verbatim through R8, and its declared-field
- * order matches that label order -- independently confirmed, since resolving `sender` purely by
- * label matching landed on exactly the field the smali shows at that position. So:
+ * order matches that label order (confirmed separately: resolving `sender` purely by label
+ * matching landed on exactly the field the smali shows at that position). So:
  *
- *   1. Parse timestampSeconds out of toString() ONCE and find the sole Long field holding that
- *      value. That is self-verifying -- a wrong field cannot hold the right epoch.
+ *   1. Parse timestampSeconds out of toString() once and find the sole Long field holding that
+ *      value. That is self-verifying: a wrong field cannot hold the right epoch.
  *   2. The four booleans (isDeleted, isDeletedMessageClickable, isAction,
  *      isMessageEffectAnimationsEnabled) are declared immediately after it, in that order, so they
  *      are addressed as offsets from a field we just proved rather than by name or absolute index.
@@ -179,7 +179,7 @@ object ChatLineStyle {
     /**
      * Style the message body for `/me` actions.
      *
-     * Deleted messages are deliberately NOT handled here -- see [reviveDeleted]. The message's own
+     * Deleted messages are deliberately not handled here (see [reviveDeleted]). The message's own
      * isDeleted flag still reads false at this point, and the placeholder that replaces the body is
      * built further down the render chain, so anything written here would be styling text that is
      * about to be thrown away. That is exactly how this feature failed the first time.
@@ -220,7 +220,7 @@ object ChatLineStyle {
      * Recovery needs nothing obfuscated. When Twitch builds the placeholder it hands the original
      * rendered text to the ClickableSpan that powers its own tap-to-reveal, then lays that span
      * over exactly the placeholder's range. ClickableSpan is a framework class, and the original is
-     * the only declared field on it whose TYPE is android.text.SpannedString -- so the span is found
+     * the only declared field on it whose type is android.text.SpannedString, so the span is found
      * by type, the text by type, and the span's own bounds say precisely what to replace. Nothing
      * here depends on a name R8 can rewrite; if the shape ever changes, nothing matches and the
      * placeholder is left exactly as Twitch rendered it.
@@ -231,9 +231,9 @@ object ChatLineStyle {
         val mode = delMode()
         if (mode == DEL_DEFAULT) return null
 
-        // This runs on EVERY TextView write in the whole app, so it rejects in O(1) before doing
+        // This runs on every TextView write in the whole app, so it rejects in O(1) before doing
         // anything that costs. Both renderers put the placeholder last, so a line that does not end
-        // in '>' (or the bidi isolate that wraps it in RTL) cannot be one. The rejection ORDER here
+        // in '>' (or the bidi isolate that wraps it in RTL) cannot be one. The rejection order here
         // is deliberate: mode, then length, then last char, then the string compare, then spans.
         val n = cs.length
         if (n < 3) return null
@@ -253,7 +253,7 @@ object ChatLineStyle {
         val body = fromCarrier(spanned, cut) ?: fromRevealSpan(spanned, cut) ?: run {
             if (!tripwire) {
                 tripwire = true
-                log("CLS saw a deleted line but recovered nothing — carrier did not survive")
+                log("CLS saw a deleted line but recovered nothing: carrier did not survive")
             }
             return null
         }
@@ -279,14 +279,14 @@ object ChatLineStyle {
      * Our own carrier, and the reason this works for ordinary viewers.
      *
      * Twitch attaches its tap-to-reveal span only for moderators, so for everyone else the original
-     * text is genuinely gone by the time the line is rendered -- confirmed on device, where a
+     * text is genuinely gone by the time the line is rendered. Confirmed on device, where a
      * deleted line arrived carrying nothing at all. But the renderer builds the placeholder by
-     * SLICING the assembled line up to the end of the username and appending to that slice, and a
+     * slicing the assembled line up to the end of the username and appending to that slice, and a
      * slice copies every span overlapping it. So a span parked on the username slot survives into
      * the placeholder, still holding the body the renderer discarded. That is also why a deleted
      * line still shows the sender's badges and name colour.
      *
-     * The carrier must end EXACTLY where the placeholder begins, which is what makes the match
+     * The carrier must end exactly where the placeholder begins, which is what makes the match
      * exact rather than a guess.
      */
     private fun fromCarrier(spanned: Spanned, cut: Int): CharSequence? {
@@ -301,7 +301,7 @@ object ChatLineStyle {
     private fun fromRevealSpan(spanned: Spanned, cut: Int): CharSequence? {
         for (sp in spanned.getSpans(0, spanned.length, android.text.style.ClickableSpan::class.java)) {
             val original = originalOf(sp) ?: continue
-            // This span carries the message body on one render path and the WHOLE assembled line,
+            // This span carries the message body on one render path and the whole assembled line,
             // header and all, on the other. Told apart by asking the text: if what came back opens
             // with this line's own header, it is a whole line, and the body is what follows.
             val header = spanned.subSequence(0, cut).toString()
@@ -317,7 +317,7 @@ object ChatLineStyle {
     @Volatile private var tripwire = false
 
     /**
-     * Rides the chat line's USERNAME slot carrying that line's real message body.
+     * Rides the chat line's username slot carrying that line's real message body.
      *
      * A fresh instance per line, deliberately: a SpannableStringBuilder copies a span object only
      * when it is not already attached to the destination, so a shared singleton would land on the
@@ -328,12 +328,12 @@ object ChatLineStyle {
     /**
      * Park the body on the username slot, so it is still there if this line is later deleted.
      *
-     * Must run LAST in the chat-line hook: [ChatIdentity] rewrites this slot wholesale for badges
+     * Must run last in the chat-line hook: [ChatIdentity] rewrites this slot wholesale for badges
      * and pronouns and would drop a carrier planted earlier, and the body must already carry our
      * injected emotes and highlight before it is captured.
      *
-     * SPAN_INCLUSIVE_EXCLUSIVE is load-bearing rather than a style choice. An inclusive end is a
-     * POINT, so text appended at exactly that offset falls INSIDE the span -- and both the line
+     * SPAN_INCLUSIVE_EXCLUSIVE is required here, not a style choice. An inclusive end is a
+     * point, so text appended at exactly that offset falls inside the span, and both the line
      * assembler and the placeholder renderer append at exactly this offset. With an inclusive end
      * the carrier would swallow them and its end would no longer mark where the placeholder begins.
      */
@@ -342,7 +342,7 @@ object ChatLineStyle {
         if (delMode() == DEL_DEFAULT) return
         var body = XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence ?: return
         if (body.isEmpty()) return
-        // A message that was ALREADY deleted when it arrived (backlog on joining a channel) has its
+        // A message that was already deleted when it arrived (backlog on joining a channel) has its
         // placeholder in place by now, so saving the body would just save "<message deleted>"
         // again. On that path Twitch parks the real text on its tap-to-reveal span, for everyone,
         // so take that instead. Ordinary bodies only carry link and mention spans, which have no
@@ -371,7 +371,7 @@ object ChatLineStyle {
         val res = ctx.resources ?: return null
         needleText?.let { if (needleRes === res) return it }
         return runCatching {
-            val id = res.getIdentifier("chat_message_deleted", "string", ctx.packageName)
+            val id = Res.id(ctx, "chat_message_deleted", "string")
             if (id == 0) return null
             ("<" + res.getString(id) + ">").also { needleText = it; needleRes = res }
         }.getOrNull()
@@ -439,7 +439,7 @@ object ChatLineStyle {
 
 
     /** Structural, one-time resolution of the message fields this file needs. */
-    private object Fields {
+    internal object Fields {
 
         private const val MSG_PREFIX = "LiveChatMessage("
         private val TS = Regex("timestampSeconds=(\\d+)")
@@ -475,14 +475,21 @@ object ChatLineStyle {
             return null
         }
 
+        private var misses = 0
+        private const val GIVE_UP_AFTER = 20
+
         private fun ensure(msg: Any) {
             if (resolved || failed) return
             synchronized(this) {
                 if (resolved || failed) return
                 runCatching { resolve(msg) }.onFailure { log("CLS resolve: $it") }
                 if (fTimestamp == null) {
-                    failed = true
-                    log("CLS could not locate the message timestamp — line styling disabled")
+                    // One odd first message (a system line, for one) must not turn styling off
+                    // for the whole session: a few more messages get their try first.
+                    if (++misses >= GIVE_UP_AFTER) {
+                        failed = true
+                        log("CLS could not locate the message timestamp, line styling disabled")
+                    }
                 } else {
                     resolved = true
                     log("CLS fields: ts=${fTimestamp?.name} deleted=${fDeleted?.name}" +

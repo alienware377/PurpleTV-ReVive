@@ -3,7 +3,6 @@ package tv.purple.xp
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
-import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -28,22 +27,22 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import kotlin.math.abs
 
 /**
- * Live-chat emote injection (task #9 display half).
+ * Live-chat emote injection.
  *
- * The statically-traced kn5/MessageToken chain does NOT fire for live chat (proven on
+ * The statically-traced kn5/MessageToken chain does not fire for live chat (proven on
  * device: kn5.a tokenizes only startup UI; MessageToken$EmoticonToken ctor never fires
- * for chat). The REAL live render chain — found by hooking az6.y and dumping caller
- * stacks for native emote ids — is:
+ * for chat). The real live render chain (found by hooking az6.y and dumping caller
+ * stacks for native emote ids) is:
  *
  *     ik5.b -> ckm.g -> ckm.j -> az6.y     (during DraggableConstraintLayout.onLayout)
  *
  * ik5.b returns the per-chat-line model `hn5`:
- *     hn5.a = timestamp,  hn5.c = "username: ",  hn5.e = MESSAGE BODY,  hn5.f = bool
+ *     hn5.a = timestamp,  hn5.c = "username: ",  hn5.e = message body,  hn5.f = bool
  *
- * HOOK: after ik5.b, read hn5.e (the body, already carrying Twitch's own emote spans),
+ * Hook: after ik5.b, read hn5.e (the body, already carrying Twitch's own emote spans),
  * scan it for 7TV/BTTV/FFZ emote words, splice in our pre-fetched ImageSpans, and write
  * the result back to hn5.e. Emote bitmaps are pre-downloaded (EmoteRepo.drawables) so the
- * spans are ready-to-draw — we have no host TextView here to invalidate on async load.
+ * spans are ready-to-draw: we have no host TextView here to invalidate on async load.
  */
 object EmoteHooks {
 
@@ -67,7 +66,7 @@ object EmoteHooks {
         val asm = Names.cls(lp, Names.ASSEMBLER) ?: return
         XposedBridge.hookAllMethods(asm, Names.ASSEMBLER_METHOD, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                // Decided first so a hidden line can skip the decoration below, but APPLIED last:
+                // Decided first so a hidden line can skip the decoration below, but applied last:
                 // ChatLineStyle replaces the body wholesale when it recovers a deleted message,
                 // which would take the marker with it.
                 val hide = runCatching { Blacklist.matches(param.args) }
@@ -76,7 +75,7 @@ object EmoteHooks {
 
                 if (!hide) {
                     runCatching { injectBody(param.result) }.onFailure { log("inject error: $it") }
-                    // Badges + pronouns ride the SAME anchor: one of this call's arguments is the
+                    // Badges + pronouns ride the same anchor: one of this call's arguments is the
                     // chat message, which carries the author's id and login. No second pin needed.
                     runCatching { ChatIdentity.inject(param.result, param.args) }
                         .onFailure { log("identity inject error: $it") }
@@ -92,8 +91,12 @@ object EmoteHooks {
                     // Only for shown lines: a hidden user mentioning you must not buzz the phone.
                     runCatching { Mentions.onLine(param.args) }
                         .onFailure { log("mention buzz error: $it") }
+                    runCatching { ChatFeed.onLine(param.args) }
+                        .onFailure { log("chat feed error: $it") }
+                    runCatching { ChatTranslate.onLine(param.result, param.args) }
+                        .onFailure { log("chat translate error: $it") }
                 }
-                // LAST: the deleted-message carrier captures the finished body, and rides a slot
+                // Last: the deleted-message carrier captures the finished body, and rides a slot
                 // that ChatIdentity rewrites wholesale, so anything earlier would be dropped.
                 runCatching { ChatLineStyle.plantOriginal(param.result) }
                     .onFailure { log("carrier plant error: $it") }
@@ -105,20 +108,21 @@ object EmoteHooks {
 
     /**
      * Drive animated emote spans. Our injected AnimatedImageDrawables have no host View to
-     * invalidate from inside the obfuscated render chain, so we hook the FRAMEWORK
+     * invalidate from inside the obfuscated render chain, so we hook the framework
      * TextView.setText (obfuscation-immune): whenever a TextView receives a Spanned whose
-     * ImageSpans wrap AnimatedImageDrawables, we wire each drawable's callback to that TextView
-     * (so per-frame invalidateSelf repaints it) and start() it. Every animated span is a fresh
-     * instance (EmoteRepo.makeAnimated), so no cross-line callback contention.
+     * ImageSpans wrap AnimatedImageDrawables, AnimPause records that the TextView now shows them,
+     * points their callback at whatever views show them, and runs them only while one of those
+     * views can be seen.
      */
     private fun installAnimationDriver() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        AnimPause.install()
         runCatching {
             XposedHelpers.findAndHookMethod(
                 TextView::class.java, "setText",
                 CharSequence::class.java, TextView.BufferType::class.java,
                 object : XC_MethodHook() {
-                    // Deleted messages are restored BEFORE the call, by rewriting the argument.
+                    // Deleted messages are restored before the call, by rewriting the argument.
                     // Doing it afterwards would mean calling setText again from inside setText.
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val tv = param.thisObject as? TextView ?: return
@@ -136,12 +140,18 @@ object EmoteHooks {
                         val hidden = runCatching { BlacklistRows.onSetText(tv, cs) }
                             .onFailure { log("blacklist row error: $it") }
                             .getOrDefault(false)
-                        if (hidden) return
+                        if (hidden) {
+                            // Its pictures are not drawn, and the ones of the line it showed before
+                            // must not keep running for it.
+                            runCatching { AnimPause.onSetText(tv, null) }
+                            return
+                        }
                         runCatching { wireLinks(tv, cs) }
-                        runCatching { startAnimatedSpans(tv, cs) }
+                        runCatching { AnimPause.onSetText(tv, cs) }
+                            .onFailure { log("anim pause error: $it") }
                         runCatching { DeletedTip.onText(tv, cs) }
                         // Wire tap/long-press once per TextView that carries an emote we care about:
-                        // our injected 7TV/etc spans (tap = preview) OR a native Twitch emote span
+                        // our injected 7TV/etc spans (tap = preview) or a native Twitch emote span
                         // the user owns (long-press = favorite, tap = preview).
                         if (cs is Spanned && hasWirableEmote(cs)) {
                             runCatching { wireTouch(tv) }
@@ -207,33 +217,6 @@ object EmoteHooks {
             .firstOrNull { it.javaClass.name.contains("URL", ignoreCase = true) }
     }
 
-    private fun startAnimatedSpans(tv: TextView, cs: CharSequence) {
-        if (cs !is Spanned) return
-        val spans = cs.getSpans(0, cs.length, ImageSpan::class.java)
-        if (spans.isEmpty()) return
-        var cb: Drawable.Callback? = null
-        for (sp in spans) {
-            val dr = sp.drawable
-            if (dr is AnimatedImageDrawable) {
-                if (dr.callback == null) {
-                    if (cb == null) cb = viewCallback(tv)
-                    dr.callback = cb
-                }
-                if (!dr.isRunning) dr.start()
-            }
-        }
-    }
-
-    /** Callback that repaints [v] each animation frame. Full invalidate() so it works regardless
-     *  of TextView.verifyDrawable (span drawables aren't "verified"). */
-    private fun viewCallback(v: View): Drawable.Callback = object : Drawable.Callback {
-        override fun invalidateDrawable(who: Drawable) { v.invalidate() }
-        override fun scheduleDrawable(who: Drawable, what: Runnable, time: Long) {
-            v.postDelayed(what, time - SystemClock.uptimeMillis())
-        }
-        override fun unscheduleDrawable(who: Drawable, what: Runnable) { v.removeCallbacks(what) }
-    }
-
     private fun injectBody(model: Any?) {
         model ?: return
         val waiting = fill(model, first = true)
@@ -264,7 +247,7 @@ object EmoteHooks {
         val pending = EmoteRepo.channelPending()
         for (m in word.findAll(body)) {
             if (!EmoteRepo.map.containsKey(m.value) || !EmoteRepo.enabled(m.value)) continue
-            // While the new channel loads, the live set still holds the OLD channel's own emotes.
+            // While the new channel loads, the live set still holds the old channel's own emotes.
             // Drawing one now would stick (later passes skip words that already have a picture),
             // so leave the word for the late pass, which runs once the new channel is in.
             if (pending && m.value in EmoteRepo.chNames) { waiting = true; continue }
@@ -277,6 +260,9 @@ object EmoteHooks {
                 val now = EmoteRepo.map[m.value]
                 if (spanned.getSpans(s, e, PtvEmoteSpan::class.java).any { it.url == now }) continue
             }
+            // Twitch already draws its own emote here (a sub emote with the same name as a 7TV
+            // one): Twitch's picture stays, and a tap keeps opening Twitch's card.
+            if (spanned != null && spanned.getSpans(s, e, android.text.style.ImageSpan::class.java).any { it !is PtvEmoteSpan && it !is ChatIdentity.PtvBadgeSpan }) continue
             if (EmoteRepo.drawables.containsKey(m.value)) hits.add(Triple(s, e, m.value))
             // In the set but its picture is not here yet: jump it to the front of the queue so
             // the line can be filled in when it lands.
@@ -286,13 +272,13 @@ object EmoteHooks {
 
         val out = SpannableStringBuilder(body) // copies existing (native emote) spans
         for ((s, e, name) in hits) {
-            // Fresh animated copy when the emote is animated (independent frame cursor +
-            // callback per line); else the shared static drawable. PtvEmoteSpan carries the
-            // emote name so a tap can open the preview. The url is read BEFORE the picture: if a
+            // The emote's one shared animated picture (AnimPause redraws every row showing it and
+            // starts and stops it with them), else the shared static drawable. PtvEmoteSpan carries
+            // the emote name so a tap can open the preview. The url is read before the picture: if a
             // channel publishes in between, the span records the older url and a later pass swaps
             // it, rather than recording the new url over the old picture for good.
             val u = EmoteRepo.map[name]
-            val d = EmoteRepo.makeAnimated(name) ?: EmoteRepo.drawables[name] ?: continue
+            val d = EmoteRepo.chatAnimated(name) ?: EmoteRepo.drawables[name] ?: continue
             // A picture already on this word is an outdated one being replaced (see above). Two
             // pictures on one word would draw unpredictably, so the old one goes.
             for (old in out.getSpans(s, e, PtvEmoteSpan::class.java)) out.removeSpan(old)
@@ -329,7 +315,7 @@ object EmoteHooks {
     /** Attach a tap/long-press listener. Wired once per TextView (TOUCH_WIRED).
      *
      *  Our own 7TV/BTTV/FFZ emotes: the gesture is claimed on DOWN, and a tap opens our preview.
-     *  Twitch's own emotes: the gesture is NOT claimed, so a tap still reaches Twitch and opens
+     *  Twitch's own emotes: the gesture is not claimed, so a tap still reaches Twitch and opens
      *  its emote card. Claiming it used to swallow the tap and do nothing, which made Twitch
      *  emotes in chat look dead except at their very edge. Only a long press is ours there: it
      *  toggles the favorite, and the TextView gets a CANCEL so Twitch does not act on it too. */
@@ -344,12 +330,6 @@ object EmoteHooks {
         // A little shorter than the system long press, so ours fires first and can cancel it.
         val lpTimeout = (android.view.ViewConfiguration.getLongPressTimeout() - 60L).coerceAtLeast(300L)
         fun cancelLp(t: TextView) { lpRunnable?.let { t.removeCallbacks(it) }; lpRunnable = null }
-        fun cancelTwitch(t: TextView) {
-            val now = SystemClock.uptimeMillis()
-            val c = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
-            runCatching { t.onTouchEvent(c) }
-            c.recycle()
-        }
         // Twitch may already have its own touch handler on this line (links, mentions). Setting
         // ours replaced it, which broke tapping links on any line that also had an emote. It is
         // kept and handed every touch we do not claim.
@@ -358,6 +338,15 @@ object EmoteHooks {
             li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }
                 ?.get(li) as? View.OnTouchListener
         }.getOrNull()
+        // Our long press on a Twitch emote: Twitch's own handlers are told the gesture is over,
+        // the chained listener too, so its own long press (a message menu) does not fire as well.
+        fun cancelTwitch(t: TextView) {
+            val now = SystemClock.uptimeMillis()
+            val c = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
+            runCatching { t.onTouchEvent(c) }
+            runCatching { prev?.onTouch(t, c) }
+            c.recycle()
+        }
         tv.setOnTouchListener { v, ev ->
             val t = v as? TextView ?: return@setOnTouchListener false
             val mine = when (ev.action) {
@@ -388,6 +377,10 @@ object EmoteHooks {
                     if (hit != null && claimed && !longFired &&
                         abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
                         showEmotePreview(t, hit.name)
+                    } else if (hit != null && !claimed && !longFired &&
+                        abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
+                        // A Twitch emote: Twitch opens its own card, and the stats join it there.
+                        EmoteStats.noteNativeTap(hit.name)
                     }
                     claimed || longFired
                 }
@@ -421,7 +414,7 @@ object EmoteHooks {
         }
         for (sp in cs.getSpans(off, off, ImageSpan::class.java)) {
             // A badge's covered text is a lone non-breaking space, so it could never match an
-            // emote name — but skipping it explicitly keeps tap handling honest.
+            // emote name, but skipping it explicitly keeps tap handling honest.
             if (sp is PtvEmoteSpan || sp is ChatIdentity.PtvBadgeSpan) continue
             val st = cs.getSpanStart(sp); val en = cs.getSpanEnd(sp)
             if (st < 0 || en <= st) continue
@@ -488,6 +481,7 @@ object EmoteHooks {
                         setPadding(0, dp(ctx, 2f), 0, 0)
                     })
                 }
+                EmoteStats.section(ctx, name)?.let { addView(it) }
             }
             val dialog = AlertDialog.Builder(ctx).setView(box).create()
             openPreview = java.lang.ref.WeakReference(dialog)
@@ -501,8 +495,8 @@ object EmoteHooks {
                 anchor.post {
                     if (d == null) { img.setImageDrawable(null); return@post }
                     img.setImageDrawable(d)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
-                        d is AnimatedImageDrawable) d.start()
+                    // Runs while the dialog shows, stops once it is closed.
+                    AnimPause.onImage(img, d)
                 }
             }, "ptv-preview-$name").start()
             log("emote preview opened: $name")

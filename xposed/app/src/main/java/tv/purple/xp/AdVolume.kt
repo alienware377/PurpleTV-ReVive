@@ -61,14 +61,10 @@ import java.util.WeakHashMap
 object AdVolume {
 
     const val KEY = "ad_volume"
-    /** What each option stores: the percentage of the ad's normal loudness. 100 is Twitch's own. */
-    val VALUES = listOf(100, 50, 25, 15, 10, 5)
-    val OPTIONS = listOf("Normal", "50%", "25%", "15%", "10%", "5%")
-    /** Ads are mixed much louder than most streams, so 25% sits about level with the stream. */
-    const val DEF = 25
+    val VALUES get() = AdGain.VALUES
+    val OPTIONS get() = AdGain.OPTIONS
+    const val DEF = AdGain.DEF
 
-    /** About -30 dB: the floor for our gain, unless Twitch's own value is already lower. */
-    private const val MIN_GAIN = 0.03f
     /** Added to every guessed ad length before the watchdog restores. */
     private const val GRACE_MS = 20_000L
     /** The watchdog when nothing says how long the ad is. */
@@ -174,15 +170,14 @@ object AdVolume {
             // it, so a stray value (an old index, a synced value from another build) never sets a
             // level the row does not show.
             val v = Settings.getInt(KEY, DEF)
-            fCached = (if (v in VALUES) v else DEF) / 100f
+            fCached = AdGain.factorOf(v, VALUES, DEF)
             fRev = r
         }
         return fCached
     }
 
     /** The one place a gain is computed. */
-    private fun scaled(raw: Float, f: Float): Float =
-        if (raw.isNaN() || raw <= 0f || f >= 1f) raw else maxOf(raw * f, minOf(raw, MIN_GAIN))
+    private fun scaled(raw: Float, f: Float): Float = AdGain.scaled(raw, f)
 
     /** The setting changed: re-apply at once (from the menu, DevBridge or sync). */
     fun refresh() {
@@ -586,7 +581,7 @@ object AdVolume {
             }
             if (changed.isNotEmpty() || f != fNow) { adSessions = mine; fNow = f; gen++ }
         }
-        val db = if (f < 1f) (20.0 * Math.log10(f.toDouble())).toFloat() else 0f
+        val db = AdGain.dbOf(f)
         val oldAf = afSessions
         for (s in af) AudioFilters.setAdCut(s, db)
         for (s in oldAf) if (s !in af) AudioFilters.setAdCut(s, 0f)

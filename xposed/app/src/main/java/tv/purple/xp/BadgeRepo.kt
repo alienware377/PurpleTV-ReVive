@@ -13,30 +13,32 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Third-party chat badges (FFZ / Chatterino / DankChat / Chatsen / Homies / BTTV).
+ * Third-party chat badges (FFZ / Chatterino / DankChat / Chatsen / Homies / BTTV / 7TV).
  *
- * Every supported provider ships a GLOBAL manifest keyed by numeric Twitch user id, so this is
+ * Every provider but 7TV ships a global manifest keyed by numeric Twitch user id, so this is
  * fetch-once-at-startup: there is never a per-message or per-user HTTP call. That is the whole
- * reason these four were chosen.
+ * reason these were chosen.
  *
  * Endpoints re-verified live on 2026-07-27:
  *   FFZ        api.frankerfacez.com/v1/badges/ids   { badges:[{id,urls}], users:{ "<bid>":[uid,..] } }
  *   Chatterino api.chatterino.com/badges            { badges:[{tooltip,image2,users:["uid",..]}] }
  *   DankChat   flxrs.com/api/badges                 [ {type,url,users:["uid",..]} ]
- *   Chatsen    raw.githubusercontent.com/chatsen/…  { badges:[{name,image}], users:[{id,badges:[{badgeName}]}] }
+ *   Chatsen    raw.githubusercontent.com/chatsen/... { badges:[{name,image}], users:[{id,badges:[{badgeName}]}] }
  *   Homies     chatterinohomies.com/api/badges/list { badges:[{userId,tooltip,image1,image2,..}] } (2026-10-19)
  *   BTTV       api.betterttv.net/3/cached/badges/twitch [ {providerId, badge:{description,svg}} ] (2026-10-25)
  *
  * Homies is the odd one out: almost every badge is a personal one (about 9.6k users, 9.6k
- * images), so its images are NOT prefetched. The first message from a Homies user starts a
+ * images), so its images are not prefetched. The first message from a Homies user starts a
  * download of just that user's image, and the badge shows from their next message on.
  *
- * NOT supported, deliberately:
- *   (BTTV's images are SVG, which Android cannot decode; SvgBadge draws them instead.)
- *   7TV   — the bulk cosmetics endpoint (7tv.io/v3/cosmetics) returns 404. The only route left is
- *           one request per distinct chatter, which is exactly what this design refuses to do.
+ * BTTV's images are SVG, which Android cannot decode; SvgBadge draws them instead.
  *
- * Sizing is deliberately NOT shared with EmoteRepo: emotes render at 28dp, Twitch's own chat
+ * 7TV has no manifest: the bulk cosmetics endpoint (7tv.io/v3/cosmetics) returns 404, and asking
+ * per chatter is exactly what this design refuses to do. Instead SevenTvBadges keeps one socket
+ * to 7TV's EventAPI subscribed to the open chat, as Chatterino 7 does, and 7TV pushes the badges
+ * of the people in it. Those land in SevenTvBadges, not [byUser], and [forUser] asks it per line.
+ *
+ * Sizing is deliberately not shared with EmoteRepo: emotes render at 28dp, Twitch's own chat
  * badges are ~18dp, and reusing the emote height makes third-party badges tower over native ones.
  */
 object BadgeRepo {
@@ -47,6 +49,7 @@ object BadgeRepo {
     const val KEY_CHATSEN = "chatsen_badges"
     const val KEY_HOMIES = "homies_badges"
     const val KEY_BTTV = "bttv_badges"
+    const val KEY_7TV = "seventv_badges"
 
     private val ALL_SRC = listOf("ffz" to KEY_FFZ, "cha" to KEY_CHA,
         "dank" to KEY_DANK, "chatsen" to KEY_CHATSEN, "homies" to KEY_HOMIES, "bttv" to KEY_BTTV)
@@ -63,10 +66,8 @@ object BadgeRepo {
     /** url -> static ready-to-draw Drawable (bounds set). */
     private val static = ConcurrentHashMap<String, Drawable>()
 
-    /** Source bytes for ANIMATED badges (DankChat and Chatsen both ship GIFs), keyed by url.
-     *  An AnimatedImageDrawable is stateful — one frame cursor, one callback — so it cannot be
-     *  shared across chat lines. Same approach as EmoteRepo.animBytes: keep the bytes, mint a
-     *  fresh drawable per span. */
+    /** Source bytes for animated badges (DankChat and Chatsen both ship GIFs, 7TV animated
+     *  WebPs), keyed by url. Decoded once per badge and shared by every line ([makeAnimated]). */
     private val animBytes = ConcurrentHashMap<String, ByteArray>()
     private val animBounds = ConcurrentHashMap<String, IntArray>()
 
@@ -83,10 +84,14 @@ object BadgeRepo {
         "chatsen" -> Settings.get(KEY_CHATSEN, true)
         "homies" -> Settings.get(KEY_HOMIES, false)
         "bttv" -> Settings.get(KEY_BTTV, true)
+        "7tv" -> Settings.get(KEY_7TV, true)
         else -> false
     }
 
-    fun anyEnabled(): Boolean = ALL_SRC.any { enabled(it.first) }
+    fun anyEnabled(): Boolean = ALL_SRC.any { enabled(it.first) } || enabled("7tv")
+
+    /** Height badges are drawn at, so 7TV's picture size can be picked to match. */
+    fun badgeHeightPx(): Int = heightPx
 
     /**
      * Ready-to-draw badges for [userId], honouring the per-source toggles. Never blocks and never
@@ -95,14 +100,18 @@ object BadgeRepo {
      */
     fun forUser(userId: String): List<Drawable> {
         if (userId.isEmpty()) return emptyList()
-        val list = byUser[userId] ?: return emptyList()
-        val out = ArrayList<Drawable>(list.size)
+        val list = byUser[userId]
+        val seven = if (enabled("7tv")) SevenTvBadges.badgeFor(userId) else null
+        if (list == null && seven == null) return emptyList()
+        val out = ArrayList<Drawable>((list?.size ?: 0) + 1)
         // Copy under the list's own lock: the fetch thread may still be appending.
-        val snapshot = synchronized(list) { list.toList() }
+        val snapshot = if (list == null) ArrayList(1) else synchronized(list) { list.toMutableList() }
+        // 7TV's badge last: it is the one most likely to change while the user watches.
+        if (seven != null) snapshot.add(seven)
         for (b in snapshot) {
             if (!enabled(b.src)) continue
             val d = makeAnimated(b.url) ?: static[b.url]
-            if (d == null) { if (b.src in LAZY) fetchLater(b.url); continue }
+            if (d == null) { if (b.src in LAZY || b.src == "7tv") fetchLater(b.url); continue }
             out.add(d)
         }
         return out
@@ -110,6 +119,8 @@ object BadgeRepo {
 
     /** Fetch every enabled provider's manifest, then its images. Safe to call repeatedly. */
     fun loadAsync() {
+        // 7TV's socket follows its toggle both ways, so it is told about every change.
+        runCatching { SevenTvBadges.sync() }
         if (!anyEnabled()) return
         heightPx = (18f * Resources.getSystem().displayMetrics.density).toInt().coerceAtLeast(24)
         Thread({
@@ -139,7 +150,7 @@ object BadgeRepo {
             prefetch()
             log("BADGE images ready: ${static.size}")
             // End-to-end self-test: only ~43k accounts worldwide carry a third-party badge, so a
-            // quiet channel proves nothing either way. Resolve a few ids we KNOW are tagged and
+            // quiet channel proves nothing either way. Resolve a few ids we know are tagged and
             // report how many ready-to-draw badges come back, which exercises the whole path
             // (manifest -> toggle gate -> prefetched drawable) without needing the right chatter.
             runCatching {
@@ -161,12 +172,14 @@ object BadgeRepo {
         // Chatterino's user lists carry sentinels ("-1") and even YouTube channel ids; every
         // provider here keys on a numeric Twitch id, so anything else is not addressable.
         if (userId.isEmpty() || userId == "-1" || !userId.all { it.isDigit() }) return
+        // A manifest that failed partway is read again on retry; the badges it had already added
+        // must not be added twice, or that user shows the same badge two times.
         byUser.getOrPut(userId) { java.util.Collections.synchronizedList(ArrayList(2)) }
-            .let { synchronized(it) { it.add(b) } }
+            .let { synchronized(it) { if (it.none { o -> o.src == b.src && o.url == b.url }) it.add(b) } }
     }
 
     // { "badges":[{id,title,urls:{"1","2","4"}}], "users":{ "<badgeId>":[uid,...] } }
-    // NOTE: /v1/badges/ids, not /v1/badges — the latter keys its user lists by LOGIN.
+    // /v1/badges/ids, not /v1/badges: the latter keys its user lists by login.
     private fun loadFfz() {
         val root = JSONObject(EmoteRepo.httpGet("https://api.frankerfacez.com/v1/badges/ids"))
         val meta = HashMap<String, Badge>()
@@ -204,7 +217,7 @@ object BadgeRepo {
         log("BADGE cha: ${arr.length()} badges, $n assignments")
     }
 
-    // [ { "type":"DuckerZ", "url":"…/ente.gif", "users":["uid",..] } ]
+    // [ { "type":"DuckerZ", "url":".../ente.gif", "users":["uid",..] } ]
     private fun loadDankChat() {
         val arr = JSONArray(EmoteRepo.httpGet("https://flxrs.com/api/badges"))
         var n = 0
@@ -219,7 +232,7 @@ object BadgeRepo {
     }
 
     // { "badges":[{name,title,image}], "users":[ {id, badges:[{badgeName}]} ] }
-    // Note the inverted shape vs the others: users is an ARRAY of user objects that each name
+    // Note the inverted shape vs the others: users is an array of user objects that each name
     // their badges, so the join runs user -> badgeName -> badge, not badge -> users.
     private fun loadChatsen() {
         val root = JSONObject(EmoteRepo.httpGet(
@@ -264,7 +277,6 @@ object BadgeRepo {
     private val inflight: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val lazyReady = java.util.concurrent.atomic.AtomicInteger()
 
-    /** One background download per image, ever; a failure is not retried this session. */
     // [ {providerId, badge:{description, svg}} ]: one entry per badged user, only a few hundred.
     private fun loadBttv() {
         val arr = JSONArray(EmoteRepo.httpGet("https://api.betterttv.net/3/cached/badges/twitch"))
@@ -278,19 +290,38 @@ object BadgeRepo {
         log("BADGE bttv: $n assignments")
     }
 
+    /** Start downloading a badge picture that is about to be needed (7TV, as its badge arrives). */
+    fun prefetchImage(url: String) {
+        if (!static.containsKey(url) && !animBytes.containsKey(url)) fetchLater(url)
+    }
+
+    /** url -> when its download last failed, so a dead link is not asked for on every line. */
+    private val failedAt = ConcurrentHashMap<String, Long>()
+    private const val RETRY_FAILED_MS = 2 * 60_000L
+
+    /** One background download per image at a time; a failure may be tried again two minutes on. */
     private fun fetchLater(url: String) {
+        val failed = failedAt[url]
+        if (failed != null && System.currentTimeMillis() - failed < RETRY_FAILED_MS) return
         if (!inflight.add(url)) return
         lazyPool.execute {
             runCatching {
                 static[url] = build(url, EmoteRepo.httpBytes(url), Resources.getSystem())
                     ?: error("decode failed")
+                failedAt.remove(url)
                 val n = lazyReady.incrementAndGet()
                 if (n <= 3 || n % 50 == 0) log("BADGE lazy image ready #$n")
-            }.onFailure { log("BADGE img fail '$url': $it") }
+            }.onFailure {
+                // Let a later chat line try again (after a pause), instead of the badge staying
+                // missing for the rest of the session because of one bad moment on the network.
+                failedAt[url] = System.currentTimeMillis()
+                inflight.remove(url)
+                log("BADGE img fail '$url': $it")
+            }
         }
     }
 
-    /** Download + decode each DISTINCT badge image once. Small: all four providers together use
+    /** Download + decode each distinct badge image once. Small: all four providers together use
      *  well under a hundred images, however many users they cover. */
     private fun prefetch() {
         val res = Resources.getSystem()
@@ -353,9 +384,21 @@ object BadgeRepo {
         }.getOrNull()
     }
 
-    /** Fresh independently-animating drawable for [url], or null if the badge isn't animated. */
+    /**
+     * One animated picture per badge, shared by every line that shows it. Twitch assembles each
+     * line more than once, and a fresh decode each time meant a new decoder (and its frame
+     * buffers) per line per assembly. Sharing is safe since AnimPause gives span pictures one
+     * callback that redraws every row showing them, and runs a picture while any of them is seen.
+     */
+    private val animShared = object : android.util.LruCache<String, Drawable>(64) {}
+
     private fun makeAnimated(url: String): Drawable? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
+        animShared.get(url)?.let { return it }
+        return decodeAnimated(url)?.also { animShared.put(url, it) }
+    }
+
+    private fun decodeAnimated(url: String): Drawable? {
         val bytes = animBytes[url] ?: return null
         val b = animBounds[url]
         return runCatching {
