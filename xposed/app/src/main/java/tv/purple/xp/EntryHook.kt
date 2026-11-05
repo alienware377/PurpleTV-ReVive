@@ -103,6 +103,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { EmoteAutocomplete.install(lpparam) }.onFailure { log("autocomplete failed: $it") }
         runCatching { GlVideoFilter.install() }.onFailure { log("GL filter install failed: $it") }
         runCatching { FrequentEmotes.install(lpparam) }.onFailure { log("frequent emotes failed: $it") }
+        runCatching { FollowerEmoteFix.install(lpparam) }.onFailure { log("follower emote fix failed: $it") }
         runCatching { RefreshButton.install(lpparam) }.onFailure { log("refresh button failed: $it") }
         runCatching { VodSeek.install(lpparam) }.onFailure { log("vod seek failed: $it") }
         runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
