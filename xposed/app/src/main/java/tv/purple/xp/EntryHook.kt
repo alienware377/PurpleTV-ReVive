@@ -24,6 +24,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
 
     override fun handleLoadPackage(lpparam: LoadPackageParam) {
         if (lpparam.packageName !in TWITCH_PKGS) return
+        runCatching { LoaderFix.install() }.onFailure { log("loader fix failed: $it") }
         // Only Twitch's main process: a second process would run every feature again on its own
         // copy of the settings, and its writes could overwrite what the app itself just saved.
         val proc = lpparam.processName
