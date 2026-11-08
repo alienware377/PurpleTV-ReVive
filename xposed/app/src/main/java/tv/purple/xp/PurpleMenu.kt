@@ -521,7 +521,7 @@ object PurpleMenu {
             "Twitch 31.5 and newer open live streams on phones in a new screen that PurpleTV cannot reach (no 7TV, BTTV or FFZ emotes, badges or chat tweaks there). This keeps the classic one. Tablets always use it",
             ClassicTheatre.KEY, def = true, done = true),
         Toggle("Use the whole screen in fullscreen",
-            "On phones with a camera hole, let the landscape video use the strip beside the hole so it sits in the middle of the screen. Android 14 and older only; newer Android already does this",
+            "On phones with a camera hole, let the landscape player use the strip beside the hole instead of leaving it black, so the video sits in the middle of the screen and zooming fills it",
             CutoutFill.KEY, def = true, done = true),
         Toggle("Disable low latency",
             "Live streams play a few seconds further behind, but stutter and rebuffer less on a weak connection. Applies from the next stream you open.",
