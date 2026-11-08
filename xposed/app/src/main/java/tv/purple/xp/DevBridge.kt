@@ -97,6 +97,7 @@ object DevBridge {
     private const val ACTION_STATS = "tv.purple.xp.DEV_ESTATS"
     private const val ACTION_ANIM = "tv.purple.xp.DEV_ANIM"
     private const val ACTION_TR = "tv.purple.xp.DEV_TR"
+    private const val ACTION_BADGE = "tv.purple.xp.DEV_BADGE"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -133,6 +134,7 @@ object DevBridge {
                         ACTION_STATS -> i.getStringExtra("name")?.let { n -> log("DEV estats $n: " + EmoteStats.top(n)) }
                         ACTION_ANIM -> log(AnimPause.report())
                         ACTION_TR -> translateTest(app, i)
+                        ACTION_BADGE -> BadgeInfo.dev(i)
                         ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
@@ -146,7 +148,7 @@ object DevBridge {
             addAction(ACTION_ADVOL)
             addAction(ACTION_PBYP); addAction(ACTION_CAPTION); addAction(ACTION_STT); addAction(ACTION_TTS)
             addAction(ACTION_CLIP); addAction(ACTION_STATS)
-            addAction(ACTION_ANIM); addAction(ACTION_TR)
+            addAction(ACTION_ANIM); addAction(ACTION_TR); addAction(ACTION_BADGE)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {

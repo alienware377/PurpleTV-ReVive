@@ -60,6 +60,11 @@ object BadgeRepo {
     /** A badge a user owns. [url] doubles as the image cache key. */
     class Badge(val src: String, val title: String, val url: String)
 
+    /** url -> the colour FFZ draws behind a badge (its pictures are white shapes on that colour). */
+    private val bgOf = ConcurrentHashMap<String, Int>()
+
+    fun backgroundOf(url: String): Int? = bgOf[url]
+
     /** userId -> ordered badge list. Written by the fetch thread, read from the render path. */
     private val byUser = ConcurrentHashMap<String, MutableList<Badge>>()
 
@@ -98,12 +103,12 @@ object BadgeRepo {
      * hits the network: a badge whose image hasn't been prefetched yet is simply skipped and will
      * appear on that user's next message.
      */
-    fun forUser(userId: String): List<Drawable> {
+    fun forUser(userId: String): List<Pair<Badge, Drawable>> {
         if (userId.isEmpty()) return emptyList()
         val list = byUser[userId]
         val seven = if (enabled("7tv")) SevenTvBadges.badgeFor(userId) else null
         if (list == null && seven == null) return emptyList()
-        val out = ArrayList<Drawable>((list?.size ?: 0) + 1)
+        val out = ArrayList<Pair<Badge, Drawable>>((list?.size ?: 0) + 1)
         // Copy under the list's own lock: the fetch thread may still be appending.
         val snapshot = if (list == null) ArrayList(1) else synchronized(list) { list.toMutableList() }
         // 7TV's badge last: it is the one most likely to change while the user watches.
@@ -112,7 +117,7 @@ object BadgeRepo {
             if (!enabled(b.src)) continue
             val d = makeAnimated(b.url) ?: static[b.url]
             if (d == null) { if (b.src in LAZY || b.src == "7tv") fetchLater(b.url); continue }
-            out.add(d)
+            out.add(b to d)
         }
         return out
     }
@@ -188,8 +193,9 @@ object BadgeRepo {
             val e = arr.optJSONObject(i) ?: continue
             val raw = e.optJSONObject("urls")?.optString("2")?.takeIf { it.isNotEmpty() }
                 ?: e.optString("image").takeIf { it.isNotEmpty() } ?: continue
-            meta[e.optInt("id").toString()] = Badge(
-                "ffz", e.optString("title"), if (raw.startsWith("//")) "https:$raw" else raw)
+            val url = if (raw.startsWith("//")) "https:$raw" else raw
+            runCatching { android.graphics.Color.parseColor(e.optString("color")) }.getOrNull()?.let { bgOf[url] = it }
+            meta[e.optInt("id").toString()] = Badge("ffz", e.optString("title"), url)
         }
         val users = root.optJSONObject("users") ?: return
         var n = 0
@@ -345,6 +351,36 @@ object BadgeRepo {
      * first frame, exactly like EmoteRepo does for animated emotes.
      */
     private fun build(url: String, bytes: ByteArray, res: Resources): Drawable? {
+        val d = decode(url, bytes, res) ?: return null
+        val bg = bgOf[url] ?: return d
+        return withBackground(d, bg, res)
+    }
+
+    /** [d] drawn over a rounded square of [color], the way FFZ shows its badges. */
+    fun withBackground(d: Drawable, color: Int, res: Resources): Drawable {
+        val w = d.bounds.width().coerceAtLeast(1); val h = d.bounds.height().coerceAtLeast(1)
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val r = minOf(w, h) * 0.2f
+        c.drawRoundRect(0f, 0f, w.toFloat(), h.toFloat(), r, r,
+            android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { this.color = color })
+        // ImageDecoder hands back GPU-only bitmaps, which draw nothing on a plain Canvas like this
+        // one, so those are drawn from a normal copy.
+        val src = (d as? BitmapDrawable)?.bitmap
+        if (src != null) {
+            val soft = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                src.config == android.graphics.Bitmap.Config.HARDWARE)
+                src.copy(android.graphics.Bitmap.Config.ARGB_8888, false) else src
+            c.drawBitmap(soft, null, android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()),
+                android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        } else {
+            val old = android.graphics.Rect(d.bounds)
+            d.setBounds(0, 0, w, h); d.draw(c); d.bounds = old
+        }
+        return BitmapDrawable(res, bmp).apply { setBounds(0, 0, w, h) }
+    }
+
+    private fun decode(url: String, bytes: ByteArray, res: Resources): Drawable? {
         if (SvgBadge.isSvg(bytes)) {
             val bmp = SvgBadge.render(bytes, heightPx) ?: return null
             // Hidden test switch: save what was drawn, to check it against the real badge.

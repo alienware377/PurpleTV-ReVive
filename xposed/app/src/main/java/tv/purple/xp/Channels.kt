@@ -55,5 +55,33 @@ object Channels {
             }
         })
         log("CH channel anchor installed on ${KEY_CLASS}")
+        installReplay(lp)
+    }
+
+    /**
+     * VOD chat replay never connects to a chat, so the key above is not built and the VOD's
+     * channel emotes were never loaded. Its lines still go through the live assembler, so loading
+     * the channel from each replayed comment is all that is missing.
+     */
+    private fun installReplay(lp: LoadPackageParam) {
+        val line = Names.cls(lp, Names.CHOMMENT_LINE) ?: run {
+            log("CH replay line builder ${Names.CHOMMENT_LINE} not found: VOD channel emotes off")
+            return
+        }
+        val methods = line.declaredMethods.filter {
+            it.name == "a" && it.parameterTypes.size == 1 && android.text.Spanned::class.java.isAssignableFrom(it.returnType)
+        }
+        if (methods.isEmpty()) { log("CH replay line builder has no a(chomment): VOD channel emotes off"); return }
+        for (m in methods) XposedBridge.hookMethod(m, object : XC_MethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                runCatching {
+                    val id = XposedHelpers.getObjectField(param.args[0], Names.CHOMMENT_CHANNEL_FIELD) as? String
+                    if (id.isNullOrBlank() || !id.all { it.isDigit() }) return
+                    if (id != loggedId) { loggedId = id; log("CH replay channel: id=$id") }
+                    EmoteRepo.loadChannelAsync(id, null)
+                }.onFailure { log("CH replay read error: $it") }
+            }
+        })
+        log("CH replay anchor installed on ${line.name}")
     }
 }

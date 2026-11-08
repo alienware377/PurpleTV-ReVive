@@ -33,6 +33,11 @@ object Names {
     const val BADGE_FIELD = "b"           // f86.b : CharSequence = Twitch's own badges
     const val TIME_FIELD = "a"            // f86.a : CharSequence = timestamp, e.g. "2:42 "
 
+    // VOD chat replay ("chomments") builds each line with .a(ChommentModel): SpannedString, which
+    // hands the line to ASSEMBLER like live chat does. ChommentModel.c is the channel id.
+    val CHOMMENT_LINE: String get() = TwitchVersion.pick("y27", "r67")
+    const val CHOMMENT_CHANNEL_FIELD = "c"
+
     // --- (legacy/unused) stable readable model classes ---
     const val PKG = "tv.twitch.android.shared.chat.pub.messages.data"
     const val TEXT_TOKEN = "$PKG.MessageToken\$TextToken"

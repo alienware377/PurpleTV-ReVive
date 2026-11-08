@@ -143,5 +143,6 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { ChatAppearance.install(lpparam) }.onFailure { log("chat appearance failed: $it") }
         runCatching { LinkDisclaimer.install(lpparam) }.onFailure { log("link disclaimer failed: $it") }
         runCatching { PlayerGestures.install(lpparam) }.onFailure { log("player gestures failed: $it") }
+        runCatching { CutoutFill.install(lpparam) }.onFailure { log("cutout fill failed: $it") }
     }
 }

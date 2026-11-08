@@ -35,7 +35,7 @@ object ChatIdentity {
 
     /** Our badge span. Subclasses ImageSpan so the existing animation driver still starts animated
      *  (DankChat / Chatsen GIF) badges, but is its own type so emote hit-testing can skip it. */
-    class PtvBadgeSpan(d: Drawable, val title: String) : ImageSpan(d, ALIGN_BASELINE)
+    class PtvBadgeSpan(d: Drawable, val title: String, val src: String = "", val url: String = "") : ImageSpan(d, ALIGN_BASELINE)
 
     /** Non-breaking space: a one-character carrier for a badge ImageSpan. It never matches an
      *  emote name, so the tap-to-preview scan can't mistake a badge for an emote. */
@@ -101,6 +101,15 @@ object ChatIdentity {
             }
             val tag = " $pronoun"
             out.insert(at, tag)
+            // The username's tap target can grow over text inserted at its end, which made a tap on
+            // the pronoun open the user card. It ends where the name does again.
+            for (c in out.getSpans(at, at + tag.length, android.text.style.ClickableSpan::class.java)) {
+                val st = out.getSpanStart(c); val en = out.getSpanEnd(c)
+                if (en <= at || st >= at + tag.length) continue
+                val flags = out.getSpanFlags(c)
+                out.removeSpan(c)
+                if (st < at) out.setSpan(c, st, at, flags)
+            }
             out.setSpan(RelativeSizeSpan(0.8f), at, at + tag.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             out.setSpan(ForegroundColorSpan(TAG_COLOR), at, at + tag.length,
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -110,8 +119,9 @@ object ChatIdentity {
         // SpannableStringBuilder keeps every existing span's offsets correct across an insert, so
         // Twitch's username colouring survives untouched.
         for (i in badges.indices.reversed()) {
+            val (b, d) = badges[i]
             out.insert(0, CARRIER)
-            out.setSpan(PtvBadgeSpan(badges[i], ""), 0, CARRIER.length,
+            out.setSpan(PtvBadgeSpan(d, b.title, b.src, b.url), 0, CARRIER.length,
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 

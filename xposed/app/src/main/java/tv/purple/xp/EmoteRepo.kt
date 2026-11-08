@@ -676,7 +676,7 @@ object EmoteRepo {
         val req = Request.Builder()
             .url(GQL_URL)
             .header("Client-ID", GQL_CLIENT_ID)
-            .header("Authorization", "OAuth $token")
+            .apply { if (token.isNotBlank()) header("Authorization", "OAuth $token") }
             .post(jsonBody.toRequestBody("application/json".toMediaType()))
             .build()
         http.newCall(req).execute().use { r ->
@@ -962,7 +962,9 @@ object EmoteRepo {
      */
     fun loadChannelAsync(channelId: String, channelName: String?) {
         if (channelId.isBlank()) return
-        if (channelId == activeChannel) return // same channel (ctor burst / no switch): ignore
+        // Same channel (ctor burst / no switch): ignore. A VOD loads its channel without a login, so
+        // live chat of that channel coming in with one loads again once, for Twitch's own list.
+        if (channelId == activeChannel && (channelName.isNullOrBlank() || !activeName.isNullOrBlank())) return
         activeChannel = channelId
         activeName = channelName
         reloadingFor = null
@@ -1289,6 +1291,14 @@ object EmoteRepo {
             val url = map[name] ?: twitch[name] ?: return null
             getBytes(url)
         }.getOrNull() ?: return null
+        return decodePreview(bytes)
+    }
+
+    /** A picture at [url] at its own size, animated if it is, for a big preview. Blocks. */
+    fun loadPreviewUrl(url: String): Drawable? =
+        runCatching { getBytes(url) }.getOrNull()?.let { decodePreview(it) }
+
+    private fun decodePreview(bytes: ByteArray): Drawable? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val d = runCatching {
                 val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))

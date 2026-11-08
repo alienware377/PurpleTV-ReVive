@@ -193,6 +193,9 @@ object PurpleMenu {
     )
 
     private val BADGES = listOf(
+        Toggle("Badge info on tap",
+            "Tap a badge in chat, chat history or VOD chat replay to see it bigger, its name and where it comes from, and copy its name",
+            BadgeInfo.KEY, def = true, done = true),
         Toggle("FFZ badges", "Enable support for FrankerFaceZ (FFZ) badges in the chat",
             BadgeRepo.KEY_FFZ, def = true, done = true),
         Toggle("Chatterino badges", "Enable support for Chatterino badges in the chat",
@@ -517,6 +520,9 @@ object PurpleMenu {
         Toggle("Use the classic stream screen",
             "Twitch 31.5 and newer open live streams on phones in a new screen that PurpleTV cannot reach (no 7TV, BTTV or FFZ emotes, badges or chat tweaks there). This keeps the classic one. Tablets always use it",
             ClassicTheatre.KEY, def = true, done = true),
+        Toggle("Use the whole screen in fullscreen",
+            "On phones with a camera hole, let the landscape video use the strip beside the hole so it sits in the middle of the screen. Android 14 and older only; newer Android already does this",
+            CutoutFill.KEY, def = true, done = true),
         Toggle("Disable low latency",
             "Live streams play a few seconds further behind, but stutter and rebuffer less on a weak connection. Applies from the next stream you open.",
             PlayerStats.KEY_NO_LOW_LATENCY, done = true),

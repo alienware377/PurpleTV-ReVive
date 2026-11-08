@@ -79,6 +79,7 @@ object EmoteHooks {
                     // chat message, which carries the author's id and login. No second pin needed.
                     runCatching { ChatIdentity.inject(param.result, param.args) }
                         .onFailure { log("identity inject error: $it") }
+                    runCatching { markLine(param.result) }
                 }
                 runCatching { ChatLineStyle.apply(param.result, param.args) }
                     .onFailure { log("line style error: $it") }
@@ -104,6 +105,8 @@ object EmoteHooks {
         })
         log("emote inject hook installed on ${Names.ASSEMBLER}.${Names.ASSEMBLER_METHOD} (field .${Names.BODY_FIELD})")
         installAnimationDriver()
+        installTouchKeeper()
+        installStrictLinks()
     }
 
     /**
@@ -153,7 +156,8 @@ object EmoteHooks {
                         // Wire tap/long-press once per TextView that carries an emote we care about:
                         // our injected 7TV/etc spans (tap = preview) or a native Twitch emote span
                         // the user owns (long-press = favorite, tap = preview).
-                        if (cs is Spanned && hasWirableEmote(cs)) {
+                        // Badges too, for the badge info sheet.
+                        if (cs is Spanned && (hasWirableEmote(cs) || BadgeInfo.hasBadge(cs))) {
                             runCatching { wireTouch(tv) }
                         }
                     }
@@ -215,6 +219,80 @@ object EmoteHooks {
         val off = layout.getOffsetForHorizontal(line, lx)
         return cs.getSpans(off, off, android.text.style.ClickableSpan::class.java)
             .firstOrNull { it.javaClass.name.contains("URL", ignoreCase = true) }
+    }
+
+    /** Marks a chat line (on its name slot), so its link taps can be judged strictly. */
+    private object ChatLineMark
+
+    /**
+     * Chat lines open links (the username, links, tap-to-reveal) through Android's
+     * LinkMovementMethod, which clicks whatever tap target touches the character nearest the
+     * finger. A tap just right of a name, on a pronoun, or on an emote next to the name opened the
+     * user card. On chat lines only, a tap now has to land on the target itself; a miss is left
+     * to Twitch's own handling of a plain tap, as if there were no link there.
+     */
+    private fun installStrictLinks() {
+        runCatching {
+            XposedHelpers.findAndHookMethod(android.text.method.LinkMovementMethod::class.java, "onTouchEvent",
+                TextView::class.java, android.text.Spannable::class.java, MotionEvent::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val ev = param.args[2] as? MotionEvent ?: return
+                        val action = ev.action
+                        if (action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_UP) return
+                        val buf = param.args[1] as? android.text.Spannable ?: return
+                        if (buf.getSpans(0, buf.length, ChatLineMark::class.java).isEmpty()) return
+                        val tv = param.args[0] as? TextView ?: return
+                        val (_, exact) = strictLink(tv, ev.x, ev.y) ?: return
+                        if (action == MotionEvent.ACTION_UP && exact != null) runCatching { exact.onClick(tv) }
+                        param.result = exact != null
+                    }
+                })
+        }.onFailure { log("strict links failed: $it") }
+    }
+
+    private fun markLine(model: Any?) {
+        model ?: return
+        val name = XposedHelpers.getObjectField(model, Names.NAME_FIELD) as? CharSequence ?: return
+        if (name.isEmpty()) return
+        if (name is Spanned && name.getSpans(0, name.length, ChatLineMark::class.java).isNotEmpty()) return
+        val out = name as? android.text.Spannable ?: android.text.SpannableString(name)
+        out.setSpan(ChatLineMark, 0, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (out !== name) XposedHelpers.setObjectField(model, Names.NAME_FIELD, out)
+    }
+
+    /**
+     * What a tap at (x, y) would click, judged the strict way. Android's link handling takes the
+     * character nearest the finger and any tap target touching it, so a tap just right of a name,
+     * on a pronoun or on an emote beside it still opened the user card. Returns null when that
+     * standard handling is right; otherwise (true, span to click instead, or null for nothing).
+     */
+    private fun strictLink(tv: TextView, x: Float, y: Float): Pair<Boolean, android.text.style.ClickableSpan?>? {
+        val layout = tv.layout ?: return null
+        val cs = tv.text as? Spanned ?: return null
+        val lx = x - tv.totalPaddingLeft + tv.scrollX
+        val ly = y - tv.totalPaddingTop + tv.scrollY
+        val line = layout.getLineForVertical(ly.toInt())
+        val off = layout.getOffsetForHorizontal(line, lx)
+        val near = cs.getSpans(off, off, android.text.style.ClickableSpan::class.java)
+        if (near.isEmpty()) return null
+        val onLine = ly >= layout.getLineTop(line) && ly <= layout.getLineBottom(line) &&
+            lx >= layout.getLineLeft(line) && lx <= layout.getLineRight(line)
+        val ls = layout.getLineStart(line); val le = layout.getLineVisibleEnd(line)
+        fun exact(sp: Any): Boolean {
+            if (!onLine) return false
+            val st = cs.getSpanStart(sp); val en = cs.getSpanEnd(sp)
+            if (en <= ls || st >= le) return false
+            val a = if (st > ls) layout.getPrimaryHorizontal(st) else layout.getLineLeft(line)
+            val b = if (en < le) layout.getPrimaryHorizontal(en) else layout.getLineRight(line)
+            return lx >= minOf(a, b) && lx <= maxOf(a, b)
+        }
+        val hit = near.firstOrNull { exact(it) }
+        return when {
+            hit == null -> true to null
+            hit === near[0] -> null
+            else -> true to hit
+        }
     }
 
     private fun injectBody(model: Any?) {
@@ -295,7 +373,8 @@ object EmoteHooks {
 
     /** An emote located under a touch point: its [name] and whether it can be favorited
      *  (true only for the user's own Twitch/sub emotes). */
-    private data class Hit(val name: String, val favoritable: Boolean, val isPtv: Boolean = false)
+    private data class Hit(val name: String, val favoritable: Boolean, val isPtv: Boolean = false,
+                           val badge: BadgeInfo.Hit? = null)
 
     /** True if [cs] carries an emote we should wire touch for: one of our injected spans, or a
      *  native Twitch ImageSpan whose covered text is an emote the user owns (favoritable). */
@@ -311,6 +390,9 @@ object EmoteHooks {
         }
         return false
     }
+
+    fun isWired(tv: TextView) = TOUCH_WIRED.contains(tv)
+    fun prevOf(tv: TextView): View.OnTouchListener? = PREV[tv]
 
     /** Attach a tap/long-press listener. Wired once per TextView (TOUCH_WIRED).
      *
@@ -333,7 +415,9 @@ object EmoteHooks {
         // Twitch may already have its own touch handler on this line (links, mentions). Setting
         // ours replaced it, which broke tapping links on any line that also had an emote. It is
         // kept and handed every touch we do not claim.
-        val prev: View.OnTouchListener? = runCatching {
+        // Twitch can also set its handler after ours (VOD chat replay rows do), which used to throw
+        // ours away; installTouchKeeper keeps ours and chains theirs instead.
+        PREV[tv] = runCatching {
             val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(tv)
             li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }
                 ?.get(li) as? View.OnTouchListener
@@ -344,11 +428,11 @@ object EmoteHooks {
             val now = SystemClock.uptimeMillis()
             val c = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
             runCatching { t.onTouchEvent(c) }
-            runCatching { prev?.onTouch(t, c) }
+            runCatching { PREV[t]?.onTouch(t, c) }
             c.recycle()
         }
-        tv.setOnTouchListener { v, ev ->
-            val t = v as? TextView ?: return@setOnTouchListener false
+        val ours = View.OnTouchListener { v, ev ->
+            val t = v as? TextView ?: return@OnTouchListener false
             val mine = when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = ev.x; downY = ev.y; longFired = false
@@ -376,7 +460,7 @@ object EmoteHooks {
                     val hit = pending; pending = null
                     if (hit != null && claimed && !longFired &&
                         abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
-                        showEmotePreview(t, hit.name)
+                        if (hit.badge != null) BadgeInfo.show(t, hit.badge) else showEmotePreview(t, hit.name)
                     } else if (hit != null && !claimed && !longFired &&
                         abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
                         // A Twitch emote: Twitch opens its own card, and the stats join it there.
@@ -387,8 +471,31 @@ object EmoteHooks {
                 MotionEvent.ACTION_CANCEL -> { cancelLp(t); pending = null; claimed = false; false }
                 else -> claimed
             }
-            if (mine) true else prev?.onTouch(v, ev) ?: false
+            if (mine) true else PREV[t]?.onTouch(v, ev) ?: false
         }
+        OURS[tv] = ours
+        tv.setOnTouchListener(ours)
+    }
+
+    /** Our listener on each wired TextView, and the one Twitch set there, which ours hands on to. */
+    private val OURS = java.util.WeakHashMap<TextView, View.OnTouchListener>()
+    private val PREV = java.util.WeakHashMap<TextView, View.OnTouchListener?>()
+
+    /** Keeps our listener on a wired TextView when Twitch sets one of its own later. */
+    private fun installTouchKeeper() {
+        runCatching {
+            XposedHelpers.findAndHookMethod(View::class.java, "setOnTouchListener", View.OnTouchListener::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val tv = param.thisObject as? TextView ?: return
+                        val ours = OURS[tv] ?: return
+                        val l = param.args[0]
+                        if (l === ours) return
+                        PREV[tv] = l as? View.OnTouchListener
+                        param.args[0] = ours
+                    }
+                })
+        }.onFailure { log("touch keeper failed: $it") }
     }
 
     /** Find the emote under touch point (x,y) in [tv], or null. Checks our PtvEmoteSpans first,
@@ -411,6 +518,11 @@ object EmoteHooks {
         }
         for (sp in cs.getSpans(off, off, PtvEmoteSpan::class.java)) {
             if (within(sp)) return Hit(sp.emoteName, Favorites.isFavoritable(sp.emoteName), isPtv = true)
+        }
+        // A badge, ours or Twitch's: claimed like our emotes, a tap opens the badge sheet.
+        if (BadgeInfo.enabled()) for (sp in cs.getSpans(off, off, ImageSpan::class.java)) {
+            val b = BadgeInfo.hitOf(sp) ?: continue
+            if (within(sp)) return Hit(b.title ?: "", false, isPtv = true, badge = b)
         }
         for (sp in cs.getSpans(off, off, ImageSpan::class.java)) {
             // A badge's covered text is a lone non-breaking space, so it could never match an
