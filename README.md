@@ -7,7 +7,7 @@ If you have ever wanted BetterTTV, FrankerFaceZ and 7TV emotes to actually rende
 [![Latest release](https://img.shields.io/github/v/release/alienware377/PurpleTV-ReVive?label=download&style=flat-square)](https://github.com/alienware377/PurpleTV-ReVive/releases/latest)
 [![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-3ddc84?style=flat-square)](#requirements)
 [![Xposed](https://img.shields.io/badge/Xposed-LSPosed%20%7C%20LSPatch-9146ff?style=flat-square)](#installation)
-[![Website](https://img.shields.io/badge/website-purpletv--revive-7c3aed?style=flat-square)](https://alienware377.github.io/purpletv-revive/)
+[![Website](https://img.shields.io/badge/website-purptv.app-7c3aed?style=flat-square)](https://purptv.app)
 
 ---
 
