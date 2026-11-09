@@ -47,7 +47,7 @@ object Channels {
                         loggedId = id; loggedAt = now
                         log("CH channel connect: id=$id name=$name")
                     }
-                    liveId = id; liveName = name; liveAt = now
+                    liveId = id; liveName = name
                     EmoteRepo.loadChannelAsync(id, name)
                     ChannelPoints.onChannel(id, name)
                     RaidCard.onChannel(id)
@@ -59,38 +59,38 @@ object Channels {
         installReplay(lp)
     }
 
-    /** The channel whose chat last connected, and when a line of it was last built. */
+    /** The channel whose chat last connected, and the channel of the last replayed line. */
     @Volatile private var liveId: String? = null
     @Volatile private var liveName: String? = null
-    @Volatile private var liveAt = 0L
-    /** When a replayed line was last built, and whether one is being built on this thread. */
-    @Volatile private var replayAt = 0L
-    private val inReplay = ThreadLocal<Boolean>()
-    /** Set while a replayed line is built for a channel whose emotes are not in yet. */
-    val replayWaiting = ThreadLocal<Boolean>()
-
-    /** How long one kind of chat must be quiet before the other may take the emote channel over. */
-    private const val QUIET_MS = 5_000L
+    @Volatile private var replayId: String? = null
+    /** Which chat is on screen, from the last ViewHider pass. */
+    @Volatile private var liveShown = false
+    @Volatile private var replayShown = false
+    /** The channel of the replayed line being built on this thread, or null. */
+    val replayChannel = ThreadLocal<String?>()
 
     /**
-     * From the line assembler, for every chat line. A line of the connected live chat brings that
-     * channel's emotes back once replays have gone quiet (a clip's chat or a VOD in the background
-     * had taken them over).
+     * From each ViewHider pass. Whichever chat is on screen owns the emotes: the live chat gets its
+     * channel back after a clip's chat or a VOD had them, and a VOD's chat gets its own back when
+     * it shows again. VOD replay uses the live chat's list id too, inside a container of its own.
      */
-    fun onLine() {
-        if (inReplay.get() == true) return
-        val now = android.os.SystemClock.uptimeMillis()
-        liveAt = now
-        val id = liveId ?: return
-        if (id != EmoteRepo.currentChannel() && now - replayAt > QUIET_MS) EmoteRepo.loadChannelAsync(id, liveName)
+    fun onPass(root: android.view.View) {
+        val ctx = root.context
+        val live = Res.id(ctx, "chat_view_delegate_root").takeIf { it != 0 }?.let { root.findViewById<android.view.View>(it) }
+        val replay = Res.id(ctx, "chomments_coordinator_layout").takeIf { it != 0 }?.let { root.findViewById<android.view.View>(it) }
+        liveShown = live?.isShown == true
+        replayShown = replay?.isShown == true
+        val now = EmoteRepo.currentChannel()
+        if (liveShown && !replayShown) liveId?.let { if (it != now) EmoteRepo.loadChannelAsync(it, liveName) }
+        else if (replayShown && !liveShown) replayId?.let { if (it != now) EmoteRepo.loadChannelAsync(it, null) }
     }
 
     /**
      * VOD chat replay never connects to a chat, so the key above is not built and the VOD's
      * channel emotes were never loaded. Its lines still go through the live assembler, so loading
      * the channel from each replayed comment is all that is missing. Clips with chat use the same
-     * builder. While a live chat is still busy the replay waits its turn, and its lines are marked
-     * to be filled in once its channel is in.
+     * builder. While a live chat is on screen and the replay is not, the live chat keeps its emotes
+     * and the replayed lines wait (marked with their channel) to be filled in later.
      */
     private fun installReplay(lp: LoadPackageParam) {
         val line = Names.cls(lp, Names.CHOMMENT_LINE) ?: run {
@@ -103,23 +103,21 @@ object Channels {
         if (methods.isEmpty()) { log("CH replay line builder has no a(chomment): VOD channel emotes off"); return }
         for (m in methods) XposedBridge.hookMethod(m, object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
-                inReplay.set(true)
-                replayWaiting.set(false)
+                replayChannel.set(null)
                 runCatching {
                     val id = XposedHelpers.getObjectField(param.args[0], Names.CHOMMENT_CHANNEL_FIELD) as? String
                     if (id.isNullOrBlank() || !id.all { it.isDigit() }) return
-                    val now = android.os.SystemClock.uptimeMillis()
-                    replayAt = now
+                    replayChannel.set(id)
+                    replayId = id
                     if (id == EmoteRepo.currentChannel()) return
-                    if (now - liveAt <= QUIET_MS) { replayWaiting.set(true); return }
+                    if (liveShown && !replayShown) return
                     if (id != loggedId) { loggedId = id; log("CH replay channel: id=$id") }
                     EmoteRepo.loadChannelAsync(id, null)
                 }.onFailure { log("CH replay read error: $it") }
             }
 
             override fun afterHookedMethod(param: MethodHookParam) {
-                inReplay.set(false)
-                replayWaiting.set(false)
+                replayChannel.set(null)
             }
         })
         log("CH replay anchor installed on ${line.name}")

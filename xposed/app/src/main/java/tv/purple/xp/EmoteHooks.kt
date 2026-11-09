@@ -66,7 +66,6 @@ object EmoteHooks {
         val asm = Names.cls(lp, Names.ASSEMBLER) ?: return
         XposedBridge.hookAllMethods(asm, Names.ASSEMBLER_METHOD, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                runCatching { Channels.onLine() }
                 // Decided first so a hidden line can skip the decoration below, but applied last:
                 // ChatLineStyle replaces the body wholesale when it recovers a deleted message,
                 // which would take the marker with it.
@@ -280,17 +279,20 @@ object EmoteHooks {
         val onLine = ly >= layout.getLineTop(line) && ly <= layout.getLineBottom(line) &&
             lx >= layout.getLineLeft(line) && lx <= layout.getLineRight(line)
         val ls = layout.getLineStart(line); val le = layout.getLineVisibleEnd(line)
+        // The span's own area on this line, as the text would be highlighted: right even where it
+        // wraps in mixed left-to-right and right-to-left text.
+        val path = android.graphics.Path()
+        val clip = android.graphics.Region(layout.getLineLeft(line).toInt() - 1, layout.getLineTop(line),
+            layout.getLineRight(line).toInt() + 1, layout.getLineBottom(line))
         fun exact(sp: Any): Boolean {
             if (!onLine) return false
-            val st = cs.getSpanStart(sp); val en = cs.getSpanEnd(sp)
-            if (en <= ls || st >= le) return false
-            // Where a span runs on from the line before or onto the next, its cut edge is the line's
-            // start or end, which is the right side in a right-to-left line.
-            val a = if (st > ls) layout.getPrimaryHorizontal(st)
-                else if (layout.isRtlCharAt(ls)) layout.getLineRight(line) else layout.getLineLeft(line)
-            val b = if (en < le) layout.getPrimaryHorizontal(en)
-                else if (layout.isRtlCharAt(maxOf(ls, le - 1))) layout.getLineLeft(line) else layout.getLineRight(line)
-            return lx >= minOf(a, b) && lx <= maxOf(a, b)
+            val st = maxOf(cs.getSpanStart(sp), ls); val en = minOf(cs.getSpanEnd(sp), le)
+            if (en <= st) return false
+            path.reset()
+            layout.getSelectionPath(st, en, path)
+            val area = android.graphics.Region()
+            area.setPath(path, clip)
+            return area.contains(lx.toInt(), ly.toInt())
         }
         val hit = near.firstOrNull { exact(it) }
         return when {
@@ -302,8 +304,8 @@ object EmoteHooks {
 
     private fun injectBody(model: Any?) {
         model ?: return
-        // A replayed line whose channel waits for the live chat to go quiet waits too.
-        val waiting = fill(model, first = true, forceWait = Channels.replayWaiting.get() == true)
+        // A replayed line is filled for its own channel, which may not be the loaded one yet.
+        val waiting = fill(model, first = true, waitFor = Channels.replayChannel.get())
         // Drawn before its channel's emotes or their pictures arrived: filled in once they do.
         if (waiting || EmoteRepo.channelPending() || EmoteRepo.listsLate()) LateEmotes.add(model)
     }
@@ -314,16 +316,18 @@ object EmoteHooks {
      * swap a picture whose name now points somewhere else. Returns true when a word is an emote
      * whose picture is still downloading, or one that must wait for the new channel's emotes.
      */
-    internal fun fill(model: Any, first: Boolean, forceWait: Boolean = false): Boolean {
+    internal fun fill(model: Any, first: Boolean, waitFor: String? = null): Boolean {
         val body = runCatching {
             XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence
         }.getOrNull() ?: return false
         if (body.isEmpty()) return false
         // already processed?
         if (first && body is Spanned && body.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return false
-        val (out, found) = fillText(body, first)
-        val waiting = found || forceWait
-        val marked = markWait(out ?: body, waiting)
+        // A replayed line for a channel that is not the loaded one: only global emotes for now.
+        val elsewhere = waitFor != null && waitFor != EmoteRepo.currentChannel()
+        val (out, found) = fillText(body, first, hold = elsewhere)
+        val waiting = found || elsewhere || EmoteRepo.channelPending() || EmoteRepo.listsLate()
+        val marked = markWait(out ?: body, waiting, waitFor ?: EmoteRepo.currentChannel())
         if (out != null || marked != null) XposedHelpers.setObjectField(model, Names.BODY_FIELD, marked ?: out)
         return waiting
     }
@@ -333,37 +337,36 @@ object EmoteHooks {
      * (VOD chat replay keeps only the finished line, and shows it again and again) it is filled in
      * then. Returns [text] with the mark put on or taken off, or null when nothing changed.
      */
-    private fun markWait(text: CharSequence, waiting: Boolean): CharSequence? {
+    private fun markWait(text: CharSequence, waiting: Boolean, ch: String?): CharSequence? {
         val has = text is Spanned && text.getSpans(0, text.length, WaitMark::class.java).isNotEmpty()
         if (has == waiting) return null
         val out = text as? SpannableStringBuilder ?: SpannableStringBuilder(text)
-        if (waiting) out.setSpan(WaitMark, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) else out.removeSpan(WaitMark)
+        // Not growing at its ends: Twitch adds bidi marks right after the body in a right to left
+        // layout, which would otherwise become part of the last word.
+        if (waiting) out.setSpan(WaitMark(ch, SystemClock.uptimeMillis()), 0, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        else for (m in out.getSpans(0, out.length, WaitMark::class.java)) out.removeSpan(m)
         return out
     }
 
-    /** Marks the part of a chat line that still waits for its emotes. See [markWait]. */
-    internal object WaitMark
+    /**
+     * Marks the part of a chat line that still waits for its emotes, for channel [ch], since
+     * [since]. See [markWait]. Lines stop being refreshed a minute after they were made, so a
+     * picture that never arrives does not keep its row busy.
+     */
+    internal class WaitMark(val ch: String?, val since: Long)
 
-    /** Chat rows showing a line that still waits, with when they started, to show again when its
-     *  emotes arrive. A row gives up after a minute (a picture that never downloads). */
-    private val waitingViews = java.util.WeakHashMap<TextView, Long>()
+    /** Chat rows showing a line that still waits, to show again when its emotes arrive. */
+    private val waitingViews = java.util.Collections.newSetFromMap(java.util.WeakHashMap<TextView, Boolean>())
     private const val WAIT_VIEW_MS = 60_000L
 
     fun hasWaitingViews() = synchronized(waitingViews) { waitingViews.isNotEmpty() }
 
     /** From LateEmotes on the main thread: shows each waiting row's line again, which fills it in. */
     fun refreshWaitingViews() {
-        val now = SystemClock.uptimeMillis()
-        val views = synchronized(waitingViews) {
-            waitingViews.entries.removeAll { now - it.value > WAIT_VIEW_MS }
-            waitingViews.keys.toList()
-        }
+        val views = synchronized(waitingViews) { waitingViews.toList().also { waitingViews.clear() } }
         for (tv in views) {
-            val t = tv.text as? Spanned
-            if (t == null || !tv.isAttachedToWindow || t.getSpans(0, t.length, WaitMark::class.java).isEmpty()) {
-                synchronized(waitingViews) { waitingViews.remove(tv) }
-                continue
-            }
+            val t = tv.text as? Spanned ?: continue
+            if (!tv.isAttachedToWindow || t.getSpans(0, t.length, WaitMark::class.java).isEmpty()) continue
             runCatching { tv.text = t }
         }
     }
@@ -371,12 +374,17 @@ object EmoteHooks {
     /** A line about to be shown that still waits: its body filled in now if it can be, or null. */
     private fun refillWaiting(tv: TextView, cs: Spanned): CharSequence? {
         val mark = cs.getSpans(0, cs.length, WaitMark::class.java).firstOrNull() ?: return null
+        val fresh = SystemClock.uptimeMillis() - mark.since < WAIT_VIEW_MS
         fun keep(): CharSequence? {
-            synchronized(waitingViews) { if (tv !in waitingViews) waitingViews[tv] = SystemClock.uptimeMillis() }
-            LateEmotes.poke(); return null
+            if (fresh) { synchronized(waitingViews) { waitingViews.add(tv) }; LateEmotes.poke() }
+            return null
         }
-        if (EmoteRepo.channelPending()) return keep()
-        val ws = cs.getSpanStart(mark); val we = cs.getSpanEnd(mark)
+        if (EmoteRepo.channelPending() || EmoteRepo.listsLate()) return keep()
+        // Its channel is not the loaded one yet (the live chat still has the emotes).
+        if (mark.ch != null && mark.ch != EmoteRepo.currentChannel()) return keep()
+        var ws = cs.getSpanStart(mark); var we = cs.getSpanEnd(mark)
+        while (we > ws && cs[we - 1].category == CharCategory.FORMAT) we--
+        while (ws < we && cs[ws].category == CharCategory.FORMAT) ws++
         if (ws < 0 || we <= ws) return null
         val (filled, waiting) = fillText(cs.subSequence(ws, we), first = false)
         if (filled == null && waiting) return keep()
@@ -386,22 +394,23 @@ object EmoteHooks {
             for (old in out.getSpans(s, e, PtvEmoteSpan::class.java)) out.removeSpan(old)
             out.setSpan(sp, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        if (waiting) keep() else out.removeSpan(WaitMark)
+        if (waiting && fresh) keep() else for (m in out.getSpans(0, out.length, WaitMark::class.java)) out.removeSpan(m)
         return out
     }
 
     /**
      * The emote pictures for the words of [body]: a copy with them on, or null when there are none
      * to put on, and whether a word still waits (its channel loading, or its picture downloading).
+     * [hold] keeps the loaded channel's own emotes off, for a line from another channel.
      */
-    private fun fillText(body: CharSequence, first: Boolean): Pair<SpannableStringBuilder?, Boolean> {
+    private fun fillText(body: CharSequence, first: Boolean, hold: Boolean = false): Pair<SpannableStringBuilder?, Boolean> {
         val spanned = body as? Spanned
 
         // quick reject: any whole word a known (prefetched) emote?
         val hits = ArrayList<Triple<Int, Int, String>>(2)
         var waiting = false
         // Read once so every word of the line follows the same decision.
-        val pending = EmoteRepo.channelPending()
+        val pending = EmoteRepo.channelPending() || hold
         for (m in word.findAll(body)) {
             if (!EmoteRepo.map.containsKey(m.value) || !EmoteRepo.enabled(m.value)) continue
             // While the new channel loads, the live set still holds the old channel's own emotes.
@@ -422,8 +431,9 @@ object EmoteHooks {
             if (spanned != null && spanned.getSpans(s, e, android.text.style.ImageSpan::class.java).any { it !is PtvEmoteSpan && it !is ChatIdentity.PtvBadgeSpan }) continue
             if (EmoteRepo.drawables.containsKey(m.value)) hits.add(Triple(s, e, m.value))
             // In the set but its picture is not here yet: jump it to the front of the queue so
-            // the line can be filled in when it lands.
-            else { waiting = true; EmoteRepo.ensure(m.value) }
+            // the line can be filled in when it lands. One whose picture is gone for good is not
+            // waited for.
+            else if (!EmoteRepo.pictureGone(m.value)) { waiting = true; EmoteRepo.ensure(m.value) }
         }
         if (hits.isEmpty()) return null to waiting
 
@@ -514,6 +524,8 @@ object EmoteHooks {
         var pending: Hit? = null            // emote the DOWN landed on
         var claimed = false                 // gesture owned by us (our own emotes only)
         var longFired = false               // long-press already handled this gesture
+        var deep = false                    // a firm press, which Twitch takes as a long press
+        var downAt = 0L                     // when we saw the DOWN
         var lpRunnable: Runnable? = null
         val slop = android.view.ViewConfiguration.get(tv.context).scaledTouchSlop
         val systemLp = android.view.ViewConfiguration.getLongPressTimeout()
@@ -537,7 +549,8 @@ object EmoteHooks {
             val t = v as? TextView ?: return@ChainedTouch false
             val mine = when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = ev.x; downY = ev.y; longFired = false
+                    downX = ev.x; downY = ev.y; longFired = false; deep = false
+                    downAt = SystemClock.uptimeMillis()
                     val hit = findHitAt(t, ev.x, ev.y)
                     pending = hit
                     claimed = hit?.isPtv == true && hit.badge == null
@@ -555,13 +568,20 @@ object EmoteHooks {
                 MotionEvent.ACTION_MOVE -> {
                     if (pending != null && (abs(ev.x - downX) > slop || abs(ev.y - downY) > slop))
                         cancelLp(t)
+                    // A firm press opens Twitch's long press at once on Android 10 and newer.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        ev.classification == MotionEvent.CLASSIFICATION_DEEP_PRESS) deep = true
                     claimed || longFired
                 }
                 MotionEvent.ACTION_UP -> {
                     cancelLp(t)
                     val hit = pending; pending = null
                     val still = abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop
-                    if (hit?.badge != null && !longFired && still && ev.eventTime - ev.downTime < systemLp) {
+                    // Held long enough for Twitch's long press, measured both from the finger and
+                    // from when we saw it, or Twitch's menu already took the screen: not ours.
+                    val quick = ev.eventTime - ev.downTime < systemLp - 50 &&
+                        SystemClock.uptimeMillis() - downAt < systemLp - 50 && !deep && t.hasWindowFocus()
+                    if (hit?.badge != null && !longFired && still && quick) {
                         // A quick tap on a badge: ours. A held one was Twitch's long press.
                         cancelTwitch(t, self)
                         BadgeInfo.show(t, hit.badge)

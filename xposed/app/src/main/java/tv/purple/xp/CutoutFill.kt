@@ -68,10 +68,14 @@ object CutoutFill {
      * not the autoplay previews in lists, which use the same id.
      */
     private fun player(decor: View): View? {
-        val theatre = Res.id(decor.context, "theatre_root_container").takeIf { it != 0 } ?: return null
         val pane = Res.id(decor.context, "player_pane").takeIf { it != 0 } ?: return null
-        val root = decor.findViewById<View>(theatre)?.takeIf { it.isShown } ?: return null
-        return root.findViewById<View>(pane)?.takeIf { it.isShown && it.height > 0 }
+        // Live streams sit in the theatre root; VODs and clips in the video presenter's container.
+        for (host in arrayOf("video_presenter_container", "theatre_root_container")) {
+            val id = Res.id(decor.context, host).takeIf { it != 0 } ?: continue
+            val root = decor.findViewById<View>(id)?.takeIf { it.isShown } ?: continue
+            root.findViewById<View>(pane)?.takeIf { it.isShown && it.height > 0 }?.let { return it }
+        }
+        return null
     }
 
     /**

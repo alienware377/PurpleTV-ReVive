@@ -381,6 +381,7 @@ object ViewHider {
         // Last of the player buttons: fits the whole row once every button has placed itself.
         timed("barfit") { runCatching { BarFit.apply(root) }.onFailure { log("bar fit: $it") } }
         timed("cutout") { runCatching { CutoutFill.onPass(root) } }
+        timed("chatowner") { runCatching { Channels.onPass(root) } }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")

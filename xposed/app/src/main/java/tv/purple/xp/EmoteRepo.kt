@@ -345,6 +345,9 @@ object EmoteRepo {
      * failed download recoverable. Previously a fetch that timed out was never tried again, so one
      * slow response left that emote as plain text for the rest of the session.
      */
+    /** True when [name]'s picture is known to be gone for good (its address answered 404). */
+    fun pictureGone(name: String): Boolean = urlOf(name)?.let { it in gone } == true
+
     fun ensure(name: String) {
         if (drawables.containsKey(name) || inflight.contains(name) || !map.containsKey(name)) return
         hotPool.execute { fetch(name) }

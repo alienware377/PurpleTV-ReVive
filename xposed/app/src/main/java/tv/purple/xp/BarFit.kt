@@ -92,8 +92,15 @@ object BarFit {
             val end = twitch.maxOf { it.x + it.width }
             val gap = dp(ctx, 8f)
             val play = playRect(bar)?.takeIf { it.top < y + size * 2 && it.bottom > y + size }
-            val zones = if (play == null) listOf(gap to end)
+            var zones = if (play == null) listOf(gap to end)
                 else listOf((play.right + gap) to end, gap to (play.left - gap))
+            // Twitch's own buttons below the row (the vertical-view switch) are cut out of the line.
+            for (o in all - twitch.toSet()) {
+                val l = o.x - gap; val r = o.x + o.width + gap
+                zones = zones.flatMap { (a, b) ->
+                    if (r <= a || l >= b) listOf(a to b) else listOf(a to l, r to b).filter { it.second - it.first > 0f }
+                }
+            }
             scale2 = 1f
             while (scale2 > 0.6f && zones.sumOf { ((it.second - it.first) / (size * scale2)).toInt().coerceAtLeast(0) } < line2.size)
                 scale2 -= 0.05f
@@ -108,9 +115,10 @@ object BarFit {
             }
             // Should not all of it fit, the rest still go on the line rather than vanish.
             val rest = k
-            while (k < line2.size) { place(line2[k], gap + size * scale2 * (k - rest), y2, size, scale2); k++ }
+            val from = zones.minOfOrNull { it.first } ?: gap
+            while (k < line2.size) { place(line2[k], from + size * scale2 * (k - rest), y2, size, scale2); k++ }
         }
-        for (v in twitch + listOfNotNull(back, label)) shift(v, need)
+        for (v in all + listOfNotNull(back, label)) shift(v, need)
         // The filters tip goes under its button where that ended up, below a second line if any.
         bar.findViewWithTag<View>("ptv_filters_button")?.takeIf { it.visibility == View.VISIBLE }?.let { b ->
             val s = b.scaleX
