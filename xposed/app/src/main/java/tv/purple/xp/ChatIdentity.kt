@@ -102,13 +102,14 @@ object ChatIdentity {
             val tag = " $pronoun"
             out.insert(at, tag)
             // The username's tap target can grow over text inserted at its end, which made a tap on
-            // the pronoun open the user card. It ends where the name does again.
+            // the pronoun open the user card. It ends where the name does again. Moved in place,
+            // never removed and added back: the tap target paints the link colour, and the name's
+            // own colour only wins because it comes after it. Added back, it would come last and
+            // every name with pronouns would turn the link colour.
             for (c in out.getSpans(at, at + tag.length, android.text.style.ClickableSpan::class.java)) {
                 val st = out.getSpanStart(c); val en = out.getSpanEnd(c)
                 if (en <= at || st >= at + tag.length) continue
-                val flags = out.getSpanFlags(c)
-                out.removeSpan(c)
-                if (st < at) out.setSpan(c, st, at, flags)
+                if (st < at) out.setSpan(c, st, at, out.getSpanFlags(c)) else out.removeSpan(c)
             }
             out.setSpan(RelativeSizeSpan(0.8f), at, at + tag.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             out.setSpan(ForegroundColorSpan(TAG_COLOR), at, at + tag.length,
