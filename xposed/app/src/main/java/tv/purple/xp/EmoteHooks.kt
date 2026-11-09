@@ -66,6 +66,7 @@ object EmoteHooks {
         val asm = Names.cls(lp, Names.ASSEMBLER) ?: return
         XposedBridge.hookAllMethods(asm, Names.ASSEMBLER_METHOD, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
+                runCatching { Channels.onLine() }
                 // Decided first so a hidden line can skip the decoration below, but applied last:
                 // ChatLineStyle replaces the body wholesale when it recovers a deleted message,
                 // which would take the marker with it.
@@ -133,6 +134,11 @@ object EmoteHooks {
                         runCatching { ChatLineStyle.reviveDeleted(tv.context, cs) }
                             .onFailure { log("revive deleted error: $it") }
                             .getOrNull()?.let { param.args[0] = it }
+                        // A line drawn before its emotes were in gets them now, wherever it shows.
+                        (param.args[0] as? Spanned)?.let { s ->
+                            runCatching { refillWaiting(tv, s) }.onFailure { log("refill error: $it") }
+                                .getOrNull()?.let { param.args[0] = it }
+                        }
                     }
 
                     override fun afterHookedMethod(param: MethodHookParam) {
@@ -181,17 +187,12 @@ object EmoteHooks {
         val spans = cs.getSpans(0, cs.length, android.text.style.ClickableSpan::class.java)
         if (spans.none { it.javaClass.name.contains("URL", ignoreCase = true) }) return
         if (!LINKS_WIRED.add(tv)) return
-        val prev: View.OnTouchListener? = runCatching {
-            val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(tv)
-            li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }
-                ?.get(li) as? View.OnTouchListener
-        }.getOrNull()
         var downOn: android.text.style.ClickableSpan? = null
         val slop = android.view.ViewConfiguration.get(tv.context).scaledTouchSlop
         var dx = 0f; var dy = 0f
-        tv.setOnTouchListener { v, ev ->
+        tv.setOnTouchListener(ChainedTouch(currentTouch(tv)) { self, v, ev ->
             val t = v as TextView
-            if (t.movementMethod != null) return@setOnTouchListener prev?.onTouch(v, ev) ?: false
+            if (t.movementMethod != null) return@ChainedTouch self.pass(v, ev)
             val mine = when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { dx = ev.x; dy = ev.y; downOn = linkAt(t, ev.x, ev.y); downOn != null }
                 MotionEvent.ACTION_MOVE -> {
@@ -205,8 +206,8 @@ object EmoteHooks {
                 MotionEvent.ACTION_CANCEL -> { downOn = null; false }
                 else -> downOn != null
             }
-            if (mine) true else prev?.onTouch(v, ev) ?: false
-        }
+            if (mine) true else self.pass(v, ev)
+        })
     }
 
     private fun linkAt(tv: TextView, x: Float, y: Float): android.text.style.ClickableSpan? {
@@ -283,8 +284,12 @@ object EmoteHooks {
             if (!onLine) return false
             val st = cs.getSpanStart(sp); val en = cs.getSpanEnd(sp)
             if (en <= ls || st >= le) return false
-            val a = if (st > ls) layout.getPrimaryHorizontal(st) else layout.getLineLeft(line)
-            val b = if (en < le) layout.getPrimaryHorizontal(en) else layout.getLineRight(line)
+            // Where a span runs on from the line before or onto the next, its cut edge is the line's
+            // start or end, which is the right side in a right-to-left line.
+            val a = if (st > ls) layout.getPrimaryHorizontal(st)
+                else if (layout.isRtlCharAt(ls)) layout.getLineRight(line) else layout.getLineLeft(line)
+            val b = if (en < le) layout.getPrimaryHorizontal(en)
+                else if (layout.isRtlCharAt(maxOf(ls, le - 1))) layout.getLineLeft(line) else layout.getLineRight(line)
             return lx >= minOf(a, b) && lx <= maxOf(a, b)
         }
         val hit = near.firstOrNull { exact(it) }
@@ -297,7 +302,8 @@ object EmoteHooks {
 
     private fun injectBody(model: Any?) {
         model ?: return
-        val waiting = fill(model, first = true)
+        // A replayed line whose channel waits for the live chat to go quiet waits too.
+        val waiting = fill(model, first = true, forceWait = Channels.replayWaiting.get() == true)
         // Drawn before its channel's emotes or their pictures arrived: filled in once they do.
         if (waiting || EmoteRepo.channelPending() || EmoteRepo.listsLate()) LateEmotes.add(model)
     }
@@ -308,15 +314,88 @@ object EmoteHooks {
      * swap a picture whose name now points somewhere else. Returns true when a word is an emote
      * whose picture is still downloading, or one that must wait for the new channel's emotes.
      */
-    internal fun fill(model: Any, first: Boolean): Boolean {
+    internal fun fill(model: Any, first: Boolean, forceWait: Boolean = false): Boolean {
         val body = runCatching {
             XposedHelpers.getObjectField(model, Names.BODY_FIELD) as? CharSequence
         }.getOrNull() ?: return false
         if (body.isEmpty()) return false
-        val spanned = body as? Spanned
-
         // already processed?
-        if (first && spanned != null && spanned.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return false
+        if (first && body is Spanned && body.getSpans(0, body.length, Marker::class.java).isNotEmpty()) return false
+        val (out, found) = fillText(body, first)
+        val waiting = found || forceWait
+        val marked = markWait(out ?: body, waiting)
+        if (out != null || marked != null) XposedHelpers.setObjectField(model, Names.BODY_FIELD, marked ?: out)
+        return waiting
+    }
+
+    /**
+     * Marks a body still waiting for emotes, so that wherever the finished line is shown later
+     * (VOD chat replay keeps only the finished line, and shows it again and again) it is filled in
+     * then. Returns [text] with the mark put on or taken off, or null when nothing changed.
+     */
+    private fun markWait(text: CharSequence, waiting: Boolean): CharSequence? {
+        val has = text is Spanned && text.getSpans(0, text.length, WaitMark::class.java).isNotEmpty()
+        if (has == waiting) return null
+        val out = text as? SpannableStringBuilder ?: SpannableStringBuilder(text)
+        if (waiting) out.setSpan(WaitMark, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE) else out.removeSpan(WaitMark)
+        return out
+    }
+
+    /** Marks the part of a chat line that still waits for its emotes. See [markWait]. */
+    internal object WaitMark
+
+    /** Chat rows showing a line that still waits, with when they started, to show again when its
+     *  emotes arrive. A row gives up after a minute (a picture that never downloads). */
+    private val waitingViews = java.util.WeakHashMap<TextView, Long>()
+    private const val WAIT_VIEW_MS = 60_000L
+
+    fun hasWaitingViews() = synchronized(waitingViews) { waitingViews.isNotEmpty() }
+
+    /** From LateEmotes on the main thread: shows each waiting row's line again, which fills it in. */
+    fun refreshWaitingViews() {
+        val now = SystemClock.uptimeMillis()
+        val views = synchronized(waitingViews) {
+            waitingViews.entries.removeAll { now - it.value > WAIT_VIEW_MS }
+            waitingViews.keys.toList()
+        }
+        for (tv in views) {
+            val t = tv.text as? Spanned
+            if (t == null || !tv.isAttachedToWindow || t.getSpans(0, t.length, WaitMark::class.java).isEmpty()) {
+                synchronized(waitingViews) { waitingViews.remove(tv) }
+                continue
+            }
+            runCatching { tv.text = t }
+        }
+    }
+
+    /** A line about to be shown that still waits: its body filled in now if it can be, or null. */
+    private fun refillWaiting(tv: TextView, cs: Spanned): CharSequence? {
+        val mark = cs.getSpans(0, cs.length, WaitMark::class.java).firstOrNull() ?: return null
+        fun keep(): CharSequence? {
+            synchronized(waitingViews) { if (tv !in waitingViews) waitingViews[tv] = SystemClock.uptimeMillis() }
+            LateEmotes.poke(); return null
+        }
+        if (EmoteRepo.channelPending()) return keep()
+        val ws = cs.getSpanStart(mark); val we = cs.getSpanEnd(mark)
+        if (ws < 0 || we <= ws) return null
+        val (filled, waiting) = fillText(cs.subSequence(ws, we), first = false)
+        if (filled == null && waiting) return keep()
+        val out = SpannableStringBuilder(cs)
+        if (filled != null) for (sp in filled.getSpans(0, filled.length, PtvEmoteSpan::class.java)) {
+            val s = ws + filled.getSpanStart(sp); val e = ws + filled.getSpanEnd(sp)
+            for (old in out.getSpans(s, e, PtvEmoteSpan::class.java)) out.removeSpan(old)
+            out.setSpan(sp, s, e, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if (waiting) keep() else out.removeSpan(WaitMark)
+        return out
+    }
+
+    /**
+     * The emote pictures for the words of [body]: a copy with them on, or null when there are none
+     * to put on, and whether a word still waits (its channel loading, or its picture downloading).
+     */
+    private fun fillText(body: CharSequence, first: Boolean): Pair<SpannableStringBuilder?, Boolean> {
+        val spanned = body as? Spanned
 
         // quick reject: any whole word a known (prefetched) emote?
         val hits = ArrayList<Triple<Int, Int, String>>(2)
@@ -346,7 +425,7 @@ object EmoteHooks {
             // the line can be filled in when it lands.
             else { waiting = true; EmoteRepo.ensure(m.value) }
         }
-        if (hits.isEmpty()) return waiting
+        if (hits.isEmpty()) return null to waiting
 
         val out = SpannableStringBuilder(body) // copies existing (native emote) spans
         for ((s, e, name) in hits) {
@@ -364,9 +443,8 @@ object EmoteHooks {
         }
         if (out.getSpans(0, out.length, Marker::class.java).isEmpty())
             out.setSpan(Marker, 0, out.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
-        XposedHelpers.setObjectField(model, Names.BODY_FIELD, out)
         log("injected ${hits.size} emote(s)${if (first) "" else " late"}: ${hits.joinToString(",") { it.third }}")
-        return waiting
+        return out to waiting
     }
 
     // --- tap-to-preview + long-press-to-favorite ---
@@ -392,7 +470,34 @@ object EmoteHooks {
     }
 
     fun isWired(tv: TextView) = TOUCH_WIRED.contains(tv)
-    fun prevOf(tv: TextView): View.OnTouchListener? = PREV[tv]
+
+    /** Twitch's own listener at the end of our chain on [tv], for the test hook. */
+    fun prevOf(tv: TextView): View.OnTouchListener? {
+        var l = currentTouch(tv)
+        while (l is ChainedTouch) l = l.prev
+        return l
+    }
+
+    /**
+     * One of our touch listeners. It hands every touch it does not keep to [prev], whatever was on
+     * the TextView before it. The chain lives in the listeners the TextView itself holds, so
+     * nothing static keeps a chat row alive.
+     */
+    private class ChainedTouch(var prev: View.OnTouchListener?,
+                               private val body: (ChainedTouch, View, MotionEvent) -> Boolean) : View.OnTouchListener {
+        override fun onTouch(v: View, ev: MotionEvent) = body(this, v, ev)
+        fun pass(v: View, ev: MotionEvent) = prev?.onTouch(v, ev) ?: false
+    }
+
+    private val listenerInfo by lazy { View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true } }
+    private var touchField: java.lang.reflect.Field? = null
+
+    /** The touch listener [v] holds right now. */
+    private fun currentTouch(v: View): View.OnTouchListener? = runCatching {
+        val li = listenerInfo.get(v) ?: return null
+        val f = touchField ?: li.javaClass.getDeclaredField("mOnTouchListener").apply { isAccessible = true }.also { touchField = it }
+        f.get(li) as? View.OnTouchListener
+    }.getOrNull()
 
     /** Attach a tap/long-press listener. Wired once per TextView (TOUCH_WIRED).
      *
@@ -400,7 +505,9 @@ object EmoteHooks {
      *  Twitch's own emotes: the gesture is not claimed, so a tap still reaches Twitch and opens
      *  its emote card. Claiming it used to swallow the tap and do nothing, which made Twitch
      *  emotes in chat look dead except at their very edge. Only a long press is ours there: it
-     *  toggles the favorite, and the TextView gets a CANCEL so Twitch does not act on it too. */
+     *  toggles the favorite, and the TextView gets a CANCEL so Twitch does not act on it too.
+     *  Badges are not claimed either, so a long press on one still opens Twitch's message menu;
+     *  a quick tap opens the badge sheet, and Twitch is told the gesture is over. */
     private fun wireTouch(tv: TextView) {
         if (!TOUCH_WIRED.add(tv)) return
         var downX = 0f; var downY = 0f
@@ -409,40 +516,35 @@ object EmoteHooks {
         var longFired = false               // long-press already handled this gesture
         var lpRunnable: Runnable? = null
         val slop = android.view.ViewConfiguration.get(tv.context).scaledTouchSlop
+        val systemLp = android.view.ViewConfiguration.getLongPressTimeout()
         // A little shorter than the system long press, so ours fires first and can cancel it.
-        val lpTimeout = (android.view.ViewConfiguration.getLongPressTimeout() - 60L).coerceAtLeast(300L)
+        val lpTimeout = (systemLp - 60L).coerceAtLeast(300L)
         fun cancelLp(t: TextView) { lpRunnable?.let { t.removeCallbacks(it) }; lpRunnable = null }
         // Twitch may already have its own touch handler on this line (links, mentions). Setting
         // ours replaced it, which broke tapping links on any line that also had an emote. It is
-        // kept and handed every touch we do not claim.
-        // Twitch can also set its handler after ours (VOD chat replay rows do), which used to throw
-        // ours away; installTouchKeeper keeps ours and chains theirs instead.
-        PREV[tv] = runCatching {
-            val li = View::class.java.getDeclaredField("mListenerInfo").apply { isAccessible = true }.get(tv)
-            li?.javaClass?.getDeclaredField("mOnTouchListener")?.apply { isAccessible = true }
-                ?.get(li) as? View.OnTouchListener
-        }.getOrNull()
+        // kept and handed every touch we do not claim. Twitch can also set its handler after ours
+        // (VOD chat replay rows do); installTouchKeeper then puts it at the end of our chain.
         // Our long press on a Twitch emote: Twitch's own handlers are told the gesture is over,
         // the chained listener too, so its own long press (a message menu) does not fire as well.
-        fun cancelTwitch(t: TextView) {
+        fun cancelTwitch(t: TextView, self: ChainedTouch) {
             val now = SystemClock.uptimeMillis()
             val c = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, downX, downY, 0)
             runCatching { t.onTouchEvent(c) }
-            runCatching { PREV[t]?.onTouch(t, c) }
+            runCatching { self.pass(t, c) }
             c.recycle()
         }
-        val ours = View.OnTouchListener { v, ev ->
-            val t = v as? TextView ?: return@OnTouchListener false
+        val ours = ChainedTouch(currentTouch(tv)) { self, v, ev ->
+            val t = v as? TextView ?: return@ChainedTouch false
             val mine = when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = ev.x; downY = ev.y; longFired = false
                     val hit = findHitAt(t, ev.x, ev.y)
                     pending = hit
-                    claimed = hit?.isPtv == true
+                    claimed = hit?.isPtv == true && hit.badge == null
                     if (hit != null && hit.favoritable) {
                         val r = Runnable {
                             longFired = true
-                            if (!claimed) cancelTwitch(t)
+                            if (!claimed) cancelTwitch(t, self)
                             val now = Favorites.toggle(hit.name)
                             toast(t.context, if (now) "★ Favorited ${hit.name}" else "Removed ${hit.name}")
                         }
@@ -458,41 +560,48 @@ object EmoteHooks {
                 MotionEvent.ACTION_UP -> {
                     cancelLp(t)
                     val hit = pending; pending = null
-                    if (hit != null && claimed && !longFired &&
-                        abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
-                        if (hit.badge != null) BadgeInfo.show(t, hit.badge) else showEmotePreview(t, hit.name)
-                    } else if (hit != null && !claimed && !longFired &&
-                        abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop) {
-                        // A Twitch emote: Twitch opens its own card, and the stats join it there.
-                        EmoteStats.noteNativeTap(hit.name)
+                    val still = abs(ev.x - downX) <= slop && abs(ev.y - downY) <= slop
+                    if (hit?.badge != null && !longFired && still && ev.eventTime - ev.downTime < systemLp) {
+                        // A quick tap on a badge: ours. A held one was Twitch's long press.
+                        cancelTwitch(t, self)
+                        BadgeInfo.show(t, hit.badge)
+                        true
+                    } else {
+                        if (hit != null && claimed && !longFired && still) {
+                            showEmotePreview(t, hit.name)
+                        } else if (hit != null && hit.badge == null && !claimed && !longFired && still) {
+                            // A Twitch emote: Twitch opens its own card, and the stats join it there.
+                            EmoteStats.noteNativeTap(hit.name)
+                        }
+                        claimed || longFired
                     }
-                    claimed || longFired
                 }
                 MotionEvent.ACTION_CANCEL -> { cancelLp(t); pending = null; claimed = false; false }
                 else -> claimed
             }
-            if (mine) true else PREV[t]?.onTouch(v, ev) ?: false
+            if (mine) true else self.pass(v, ev)
         }
-        OURS[tv] = ours
         tv.setOnTouchListener(ours)
     }
 
-    /** Our listener on each wired TextView, and the one Twitch set there, which ours hands on to. */
-    private val OURS = java.util.WeakHashMap<TextView, View.OnTouchListener>()
-    private val PREV = java.util.WeakHashMap<TextView, View.OnTouchListener?>()
-
-    /** Keeps our listener on a wired TextView when Twitch sets one of its own later. */
+    /**
+     * Keeps our listeners on a TextView when Twitch sets one of its own later: Twitch's goes to the
+     * end of our chain instead of replacing it. Ours always add themselves in front, so the chain
+     * can never loop back on itself.
+     */
     private fun installTouchKeeper() {
         runCatching {
             XposedHelpers.findAndHookMethod(View::class.java, "setOnTouchListener", View.OnTouchListener::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val tv = param.thisObject as? TextView ?: return
-                        val ours = OURS[tv] ?: return
                         val l = param.args[0]
-                        if (l === ours) return
-                        PREV[tv] = l as? View.OnTouchListener
-                        param.args[0] = ours
+                        if (l is ChainedTouch) return
+                        val head = currentTouch(tv) as? ChainedTouch ?: return
+                        var last: ChainedTouch = head
+                        while (true) { last = last.prev as? ChainedTouch ?: break }
+                        last.prev = l as? View.OnTouchListener
+                        param.args[0] = head
                     }
                 })
         }.onFailure { log("touch keeper failed: $it") }

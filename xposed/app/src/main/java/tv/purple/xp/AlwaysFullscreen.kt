@@ -28,8 +28,10 @@ object AlwaysFullscreen {
         val hook = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 val act = param.thisObject as? Activity ?: return
-                if (act.packageName != lp.packageName || !on()) return
+                if (act.packageName != lp.packageName) return
                 if (param.method.name == "onWindowFocusChanged" && param.args[0] != true) return
+                // Switched off while this screen was in the back: it gets its status bar back now.
+                if (!on()) { if (hidden.remove(act) != null) runCatching { show(act) }; return }
                 runCatching { hide(act) }.onFailure { log("always fullscreen: $it") }
             }
         }
@@ -64,8 +66,12 @@ object AlwaysFullscreen {
         log("always fullscreen installed")
     }
 
+    /** Screens this hid the status bar on, to show it again there once switched off. */
+    private val hidden = java.util.WeakHashMap<Activity, Boolean>()
+
     @Suppress("DEPRECATION")
     private fun hide(act: Activity) {
+        hidden[act] = true
         val w = act.window ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             w.insetsController?.apply {
@@ -78,15 +84,22 @@ object AlwaysFullscreen {
         }
     }
 
-    /** After the switch changes: hide or show the status bar on the screen behind the menu. */
     @Suppress("DEPRECATION")
+    private fun show(act: Activity) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) act.window?.insetsController?.show(WindowInsets.Type.statusBars())
+        else act.window?.decorView?.let {
+            it.systemUiVisibility = it.systemUiVisibility and
+                (View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY).inv()
+        }
+        act.window?.decorView?.requestApplyInsets()
+    }
+
+    /** After the switch changes: hide or show the status bar on the screen behind the menu. */
     fun refresh() {
         val act = ViewHider.currentActivity() ?: return
         act.runOnUiThread {
             runCatching {
-                if (on()) hide(act)
-                else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) act.window?.insetsController?.show(WindowInsets.Type.statusBars())
-                else act.window?.decorView?.let { it.systemUiVisibility = it.systemUiVisibility and View.SYSTEM_UI_FLAG_FULLSCREEN.inv() }
+                if (on()) hide(act) else { hidden.remove(act); show(act) }
                 act.window?.decorView?.requestApplyInsets()
             }
         }

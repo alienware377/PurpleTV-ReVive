@@ -50,9 +50,12 @@ object BadgeInfo {
 
     private val UUID = Regex("/badges/v1/([0-9a-fA-F-]{36})")
 
-    /** Drawable class -> its String field holding a badge address, or null when it has none. */
-    private val urlField = ConcurrentHashMap<Class<*>, Any>()
-    private object NoField
+    /**
+     * Drawable class -> its own String fields. Twitch draws badges and emotes with the same class,
+     * so which field holds a badge address cannot be learned from one picture: every field is
+     * read each time, and only the list of fields is kept.
+     */
+    private val stringFields = ConcurrentHashMap<Class<*>, List<Field>>()
 
     private class Info(val title: String, val description: String?, val channel: Boolean)
 
@@ -65,23 +68,24 @@ object BadgeInfo {
     /** The Twitch badge address carried by [span]'s picture, or null if it is not a Twitch badge. */
     fun twitchUrl(span: ImageSpan): String? {
         val d = span.drawable ?: return null
-        val f = urlField.getOrPut(d.javaClass) { findUrlField(d) ?: NoField } as? Field ?: return null
-        val u = runCatching { f.get(d) as? String }.getOrNull() ?: return null
-        return if (UUID.containsMatchIn(u)) u else null
+        for (f in stringFields.getOrPut(d.javaClass) { fieldsOf(d.javaClass) }) {
+            val u = runCatching { f.get(d) as? String }.getOrNull() ?: continue
+            if (UUID.containsMatchIn(u)) return u
+        }
+        return null
     }
 
-    private fun findUrlField(d: Drawable): Field? {
-        var c: Class<*>? = d.javaClass
+    private fun fieldsOf(cls: Class<*>): List<Field> {
+        val out = ArrayList<Field>()
+        var c: Class<*>? = cls
         while (c != null && c != Drawable::class.java && !c.name.startsWith("android.")) {
             for (f in c.declaredFields) {
                 if (f.type != String::class.java || java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                f.isAccessible = true
-                val v = runCatching { f.get(d) as? String }.getOrNull() ?: continue
-                if (UUID.containsMatchIn(v)) return f
+                runCatching { f.isAccessible = true; out.add(f) }
             }
             c = c.superclass
         }
-        return null
+        return out
     }
 
     /** True if [cs] shows a badge a tap can explain. Cheap: run for every chat line drawn. */
@@ -161,8 +165,12 @@ object BadgeInfo {
         val ctx = anchor.context ?: return
         runCatching {
             val img = ImageView(ctx).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+            val source = if (hit.src == "twitch") "Twitch" else sourceName(hit.src)
+            // A Twitch badge's name is only known once it has been looked up; until then (or if
+            // that fails) there is no name to copy.
+            var known = hit.title != null
             val title = TextView(ctx).apply {
-                text = hit.title ?: "Twitch badge"
+                text = hit.title ?: "$source badge"
                 setTextColor(Color.WHITE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
                 paint.isFakeBoldText = true
@@ -204,6 +212,7 @@ object BadgeInfo {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 })
                 setOnClickListener {
+                    if (!known) { toast(ctx, "This badge's name isn't known yet"); return@setOnClickListener }
                     val name = title.text.toString()
                     runCatching {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -249,9 +258,12 @@ object BadgeInfo {
                 val big = runCatching { EmoteRepo.loadPreviewUrl(hit.url) }.getOrNull()?.let { d ->
                     BadgeRepo.backgroundOf(hit.url)?.let { BadgeRepo.withBackground(d, it, ctx.resources) } ?: d
                 }
-                anchor.post {
+                // Through the main thread, not the chat row: the row may have scrolled away.
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if (!dialog.isShowing) return@post
                     if (big != null) { img.setImageDrawable(big); AnimPause.onImage(img, big) }
                     if (info != null) {
+                        known = true
                         title.text = info.title
                         kind.text = if (info.channel) "Twitch channel badge" else "Twitch global badge"
                         if (!info.description.isNullOrBlank() && info.description != info.title) {
@@ -309,6 +321,21 @@ object BadgeInfo {
                         "listener=${touchListenerOf(v)?.javaClass?.name} prev=${EmoteHooks.prevOf(v)?.javaClass?.name} " +
                         "movement=${v.movementMethod?.javaClass?.name} clickable=${cs.getSpans(0, cs.length, android.text.style.ClickableSpan::class.java).joinToString { it.javaClass.name }}")
                     if (n == open) show(v, h)
+                    // Extra "press": hold the finger on this badge for that many ms, through the
+                    // row's own touch handling (ours, then Twitch's).
+                    val press = i.getIntExtra("press", -1)
+                    if (press >= 0 && n == i.getIntExtra("at", 0)) {
+                        val px = x; val py = y
+                        val t0 = android.os.SystemClock.uptimeMillis()
+                        val down = android.view.MotionEvent.obtain(t0, t0, android.view.MotionEvent.ACTION_DOWN, px, py, 0)
+                        v.dispatchTouchEvent(down); down.recycle()
+                        v.postDelayed({
+                            val up = android.view.MotionEvent.obtain(t0, android.os.SystemClock.uptimeMillis(),
+                                android.view.MotionEvent.ACTION_UP, px, py, 0)
+                            v.dispatchTouchEvent(up); up.recycle()
+                            log("DEV badge pressed #$n for ${press}ms")
+                        }, press.toLong())
+                    }
                     n++
                 }
             }

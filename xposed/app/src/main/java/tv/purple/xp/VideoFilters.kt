@@ -91,7 +91,8 @@ object VideoFilters {
 
     /** Re-run [attach] on the screen in front, after a change made in the panel. */
     fun refresh(anyView: View) {
-        anyView.rootView?.let { r -> runCatching { attach(r) } }
+        // The row is fitted again after, or the button would sit where it places itself.
+        anyView.rootView?.let { r -> runCatching { attach(r) }; runCatching { BarFit.apply(r) } }
     }
 
     private var sigKey = -1
@@ -490,18 +491,31 @@ object VideoFilters {
             }
             bar.addView(tip, ViewGroup.LayoutParams(w, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        if (tip.visibility != View.VISIBLE) tip.visibility = View.VISIBLE
+        moveTip(tip, btn.x, btn.width.toFloat(), btn.y + btn.height)
+        tip.bringToFront()
+    }
+
+    /**
+     * Puts the tip under the button drawn at [left] with [width], its top at [top]. BarFit calls it
+     * again once it has fitted the row, since the button may be drawn smaller or on a second line.
+     */
+    fun moveTip(bar: ViewGroup, left: Float, width: Float, top: Float) {
+        val tip = bar.findViewWithTag<View>(TIP_TAG)?.takeIf { it.visibility == View.VISIBLE } ?: return
+        moveTip(tip, left, width, top)
+    }
+
+    private fun moveTip(tip: View, left: Float, width: Float, top: Float) {
         val tw = tip.layoutParams.width.toFloat()
-        val tx = (btn.x + btn.width - tw).coerceAtLeast(dp(8f).toFloat())
-        val ty = btn.y + btn.height
+        val margin = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 8f, tip.resources.displayMetrics)
+        val tx = (left + width - tw).coerceAtLeast(margin)
         // Point the bubble's arrow at the middle of the button.
         (tip.background as? BubbleDrawable)?.let { b ->
-            val ax = btn.x + btn.width / 2f - tx
+            val ax = left + width / 2f - tx
             if (b.arrowX != ax) { b.arrowX = ax; b.invalidateSelf() }
         }
         if (tip.x != tx) tip.x = tx
-        if (tip.y != ty) tip.y = ty
-        if (tip.visibility != View.VISIBLE) tip.visibility = View.VISIBLE
-        tip.bringToFront()
+        if (tip.y != top) tip.y = top
     }
 
     /** A rounded speech bubble with a small arrow on top, at [arrowX] from its left edge. */

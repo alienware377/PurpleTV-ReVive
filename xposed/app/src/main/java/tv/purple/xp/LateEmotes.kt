@@ -41,6 +41,11 @@ object LateEmotes {
         if (!scheduled) { scheduled = true; main.postDelayed(::tick, TICK_MS) }
     }
 
+    /** Keeps the ticks going for rows waiting on screen (see EmoteHooks.refreshWaitingViews). */
+    fun poke() {
+        if (!scheduled) { scheduled = true; main.postDelayed(::tick, TICK_MS) }
+    }
+
     private fun body(m: Any): CharSequence? =
         runCatching { de.robv.android.xposed.XposedHelpers.getObjectField(m, Names.BODY_FIELD) as? CharSequence }.getOrNull()
 
@@ -65,7 +70,8 @@ object LateEmotes {
         }
         synchronized(lines) { lines.removeAll(done) }
         if (filled.isNotEmpty()) runCatching { redraw(filled) }.onFailure { log("late emotes redraw: $it") }
-        val more = synchronized(lines) { lines.isNotEmpty() }
+        if (!pending) runCatching { EmoteHooks.refreshWaitingViews() }.onFailure { log("late emotes rows: $it") }
+        val more = synchronized(lines) { lines.isNotEmpty() } || EmoteHooks.hasWaitingViews()
         if (more && !scheduled) { scheduled = true; main.postDelayed(::tick, TICK_MS) }
     }
 

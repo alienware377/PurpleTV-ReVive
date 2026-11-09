@@ -7,6 +7,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import java.util.WeakHashMap
+import kotlin.math.abs
 
 /**
  * Fits the player's top row of buttons, run after every one of our buttons has placed itself.
@@ -51,10 +52,12 @@ object BarFit {
         val ctx = bar.context
         fun byId(n: String) = Res.id(ctx, n).takeIf { it != 0 }?.let { bar.findViewById<View>(it) }
             ?.takeIf { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }
-        val twitch = TWITCH.mapNotNull { byId(it) }
-        val ref = sizeRef(bar, twitch) ?: return
+        val all = TWITCH.mapNotNull { byId(it) }
+        val ref = sizeRef(bar, all) ?: return
         val size = ref.height.toFloat()
         if (size <= 0f) return
+        // Only the buttons on the gear's line: the vertical-view switch sits on a line of its own.
+        val twitch = all.filter { abs(baseY(it) - baseY(ref)) < size / 2 }
         val ours = OURS.mapNotNull { t -> bar.findViewWithTag<View>(t)?.takeIf { it.visibility == View.VISIBLE } }
         val back = byId("back_button")
         val label = byId("mature_disclosure_container")
@@ -108,6 +111,14 @@ object BarFit {
             while (k < line2.size) { place(line2[k], gap + size * scale2 * (k - rest), y2, size, scale2); k++ }
         }
         for (v in twitch + listOfNotNull(back, label)) shift(v, need)
+        // The filters tip goes under its button where that ended up, below a second line if any.
+        bar.findViewWithTag<View>("ptv_filters_button")?.takeIf { it.visibility == View.VISIBLE }?.let { b ->
+            val s = b.scaleX
+            val visTop = b.y + size * (1f - s) / 2f
+            val onLine1 = b in line1
+            val below = if (onLine1 && line2.isNotEmpty()) y + size + size * scale2 else visTop + size * s
+            VideoFilters.moveTip(bar, b.x + size * (1f - s) / 2f, size * s, below)
+        }
 
         val sig = "${bar.width} ${room.toInt()} ${line1.size}+${line2.size} ${need.toInt()}"
         if (sig != lastSig) {

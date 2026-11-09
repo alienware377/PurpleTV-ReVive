@@ -1299,6 +1299,10 @@ object EmoteRepo {
         runCatching { getBytes(url) }.getOrNull()?.let { decodePreview(it) }
 
     private fun decodePreview(bytes: ByteArray): Drawable? {
+        // BTTV badges are SVG, which neither decoder below can read.
+        if (SvgBadge.isSvg(bytes)) return SvgBadge.render(bytes, 192)?.let {
+            BitmapDrawable(Resources.getSystem(), it).apply { setBounds(0, 0, it.width, it.height) }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val d = runCatching {
                 val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
