@@ -144,5 +144,6 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { LinkDisclaimer.install(lpparam) }.onFailure { log("link disclaimer failed: $it") }
         runCatching { PlayerGestures.install(lpparam) }.onFailure { log("player gestures failed: $it") }
         runCatching { CutoutFill.install(lpparam) }.onFailure { log("cutout fill failed: $it") }
+        runCatching { AlwaysFullscreen.install(lpparam) }.onFailure { log("always fullscreen failed: $it") }
     }
 }

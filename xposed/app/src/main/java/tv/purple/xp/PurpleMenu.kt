@@ -523,6 +523,9 @@ object PurpleMenu {
         Toggle("Use the whole screen in fullscreen",
             "On phones with a camera hole, let the landscape player use the strip beside the hole instead of leaving it black, so the video sits in the middle of the screen and zooming fills it",
             CutoutFill.KEY, def = true, done = true),
+        Toggle("Always fullscreen",
+            "Hide the status bar everywhere in Twitch, so the player can also use the top of the screen in portrait. Swipe down from the top edge to see it for a moment",
+            AlwaysFullscreen.KEY, done = true),
         Toggle("Disable low latency",
             "Live streams play a few seconds further behind, but stutter and rebuffer less on a weak connection. Applies from the next stream you open.",
             PlayerStats.KEY_NO_LOW_LATENCY, done = true),
@@ -800,6 +803,7 @@ object PurpleMenu {
                     }
                     // 7TV's badges come over a live socket, which switching off should also close.
                     if (!v && item.key == BadgeRepo.KEY_7TV) SevenTvBadges.sync()
+                    if (item.key == AlwaysFullscreen.KEY || item.key == CutoutFill.KEY) AlwaysFullscreen.refresh()
                     // The user's own switch: speech to text may put its hooks in now (see Stt.maybeHook).
                     AdBreakSettings.changed(item.key, byUser = true)
                     if (item.key == Stt.KEY && v) sttNeedsDownloads(ctx)

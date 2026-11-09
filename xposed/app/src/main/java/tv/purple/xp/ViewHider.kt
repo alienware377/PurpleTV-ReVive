@@ -378,6 +378,9 @@ object ViewHider {
         timed("following") { runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") } }
         timed("points") { runCatching { PointsWatch.check(root) } }
         timed("stats") { runCatching { PlayerStats.attach(root) } }
+        // Last of the player buttons: fits the whole row once every button has placed itself.
+        timed("barfit") { runCatching { BarFit.apply(root) }.onFailure { log("bar fit: $it") } }
+        timed("cutout") { runCatching { CutoutFill.onPass(root) } }
 
         val sig = active.joinToString(",") { it.key } +
             (if (Settings.get(KEY_BROWSE, false)) ",$KEY_BROWSE" else "")

@@ -63,7 +63,7 @@ object CutoutFill {
         val type = (decor.layoutParams as? WindowManager.LayoutParams)?.type ?: return null
         if (type != WindowManager.LayoutParams.TYPE_BASE_APPLICATION) return null
         if (insets.displayCutout == null) return null
-        if (!landscape(decor) || !statusBarHidden(decor, insets)) return null
+        if (!(landscape(decor) || (AlwaysFullscreen.on() && playerOnTop(decor))) || !statusBarHidden(decor, insets)) return null
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowInsets.Builder(insets)
                 .setInsets(WindowInsets.Type.displayCutout(), Insets.NONE)
@@ -75,7 +75,31 @@ object CutoutFill {
         }
     }
 
-    /** Landscape only: upright, the hole sits on the player's top row of buttons. */
+    /** Whether the player sits at the top of [decor]'s window, upright, so it may use the strip. */
+    private fun playerOnTop(decor: View): Boolean {
+        // The pane, not the buttons over it: those come and go with a tap.
+        val id = Res.id(decor.context, "player_pane").takeIf { it != 0 } ?: return false
+        val player = decor.findViewById<View>(id)?.takeIf { it.isShown && it.height > 0 } ?: return false
+        val cut = decor.rootWindowInsets?.displayCutout ?: return false
+        val cutBottom = cut.boundingRects.maxOfOrNull { it.bottom } ?: return false
+        val at = IntArray(2); player.getLocationInWindow(at)
+        return at[1] <= cutBottom + 4
+    }
+
+    /** Whether each window was last given the strip upright, to ask for new insets when that changes. */
+    private val uprightOn = java.util.WeakHashMap<View, Boolean>()
+
+    /** From each ViewHider pass: the player opening or closing upright changes who gets the strip. */
+    fun onPass(root: View) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        val now = Settings.get(KEY, true) && AlwaysFullscreen.on() && !landscape(root) && playerOnTop(root)
+        if (uprightOn[root] == now) return
+        uprightOn[root] = now
+        log("cutout: upright strip ${if (now) "on" else "off"}")
+        root.requestApplyInsets()
+    }
+
+    /** Upright, the strip is only used with Always fullscreen and the player at the top. */
     private fun landscape(v: View) =
         v.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
@@ -101,7 +125,8 @@ object CutoutFill {
         val window = act.window ?: return
         val base = original[act] ?: return
         val root = decor.rootWindowInsets
-        val want = Settings.get(KEY, true) && landscape(decor) && root != null && statusBarHidden(decor, root)
+        val want = Settings.get(KEY, true) && (landscape(decor) || (AlwaysFullscreen.on() && playerOnTop(decor))) &&
+            root != null && statusBarHidden(decor, root)
         val mode = if (want) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES else base
         val attrs = window.attributes
         if (attrs.layoutInDisplayCutoutMode == mode) return
