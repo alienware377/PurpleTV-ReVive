@@ -48,7 +48,7 @@ class SttModelsTest {
         assertSame(SttModels.EN, SttModels.forValue(SttModels.ALL.size))
         assertSame(SttModels.EN, SttModels.forValue(-1))
         // The stored number is a place in ALL, so the order must never change. New ones go last.
-        assertEquals(listOf("en", "es", "de", "fr", "ru", "ko", "zh"), SttModels.ALL.map { it.lang })
+        assertEquals(listOf("en", "es", "de", "fr", "ru", "ko", "zh", "ja", "tl", "lt", "auto"), SttModels.ALL.map { it.lang })
         assertEquals(SttModels.ALL.map { it.label }, SttModels.labels())
         for (m in SttModels.ALL) assertSame(m, SttModels.byLang(m.lang))
     }
@@ -58,7 +58,7 @@ class SttModelsTest {
             assertTrue(m.asset, m.asset.endsWith(".zip") && '/' !in m.asset)
             assertTrue(m.sha256, m.sha256.matches(Regex("[0-9a-f]{64}")))
             assertTrue(m.bytes > 0)
-            assertTrue(m.lang, m.lang.matches(Regex("[a-z]{2}")))
+            assertTrue(m.lang, m.lang.matches(Regex("[a-z]{2}")) || m.lang == SttModels.AUTO)
             assertTrue(m.credit, m.credit.isNotBlank() && m.licence.isNotBlank())
             for ((name, pin) in m.entries) {
                 assertTrue(name, ".." !in name && !name.startsWith("/") && '\\' !in name)
@@ -67,16 +67,55 @@ class SttModelsTest {
             // Every role the model's kind needs is named, and every named file is in the zip.
             assertEquals(m.lang, m.kind.roles.toSet(), m.files.keys)
             for (f in m.files.values) assertTrue("${m.lang}: $f", f in m.entries)
-            if (m !== SttModels.EN) {
+            if (m in SttModels.PACK2) {
                 assertEquals(SttModels.TAG2, m.tag)
                 assertEquals("model-${m.lang}", m.dir)
-                assertTrue("LICENSE.txt" in m.entries && "README.txt" in m.entries)
+            }
+            if (m in SttModels.PACK3) {
+                assertEquals(SttModels.TAG3, m.tag)
+                assertTrue(m.lang, m.kind.offline)
+                assertTrue(m.lang, "LICENSE-MIT-silero-vad.txt" in m.entries)
+            }
+            if (m !== SttModels.EN) assertTrue("LICENSE.txt" in m.entries && "README.txt" in m.entries)
+        }
+        // Asset names and folders tell the packs apart on disk. Languages that share a model share
+        // both, and everything else about the download too.
+        for ((_, same) in SttModels.ALL.groupBy { it.asset }) {
+            val a = same.first()
+            for (m in same) {
+                assertEquals(a.dir, m.dir)
+                assertEquals(a.sha256, m.sha256)
+                assertEquals(a.bytes, m.bytes)
+                assertEquals(a.entries, m.entries)
+                assertEquals(a.kind, m.kind)
+                assertEquals(a.what, m.what)
             }
         }
-        // Asset names and folders tell the packs apart on disk, so they must all differ.
-        assertEquals(SttModels.ALL.size, SttModels.ALL.map { it.asset }.toSet().size)
-        assertEquals(SttModels.ALL.size, SttModels.ALL.map { it.dir }.toSet().size)
+        assertEquals(SttModels.ALL.map { it.asset }.toSet().size, SttModels.ALL.map { it.dir }.toSet().size)
         assertEquals(SttModels.ALL.size, SttModels.ALL.map { it.lang }.toSet().size)
+        // Filipino, Lithuanian and Auto are one download.
+        assertEquals(1, SttModels.ALL.filter { it.lang in setOf("tl", "lt", SttModels.AUTO) }.map { it.asset }.toSet().size)
+    }
+
+    @Test fun wholeSentenceModelsGetTheirOwnConfig() {
+        val ja = SttModels.byLang("ja")!!
+        val c = SttModels.offlineConfig(ja, dir, 2)
+        assertEquals(File(dir, ja.files.getValue("encoder")).absolutePath, c.transducer.encoder)
+        assertEquals(File(dir, ja.files.getValue("tokens")).absolutePath, c.tokens)
+        assertEquals("", c.omnilingual.model)
+        assertEquals(2, c.numThreads)
+        val auto = SttModels.byLang(SttModels.AUTO)!!
+        val o = SttModels.offlineConfig(auto, dir, 2)
+        assertEquals(File(dir, "model.int8.onnx").absolutePath, o.omnilingual.model)
+        assertEquals("", o.transducer.encoder)
+        for (m in SttModels.PACK3) {
+            val v = SttModels.vadConfig(m, dir)
+            assertEquals(File(dir, "silero_vad.onnx").absolutePath, v.sileroVadModelConfig.model)
+            assertEquals(16000, v.sampleRate)
+        }
+        // A streaming config for a whole sentence model (or the other way round) is a mistake.
+        assertTrue(runCatching { SttModels.modelConfig(ja, dir, 1) }.isFailure)
+        assertTrue(runCatching { SttModels.offlineConfig(SttModels.EN, dir, 1) }.isFailure)
     }
 
     @Test fun configFollowsTheModelKind() {
@@ -105,9 +144,12 @@ class SttModelsTest {
 
     /** Translator must understand every stream language as a source (live captions pass it on). */
     @Test fun streamLanguagesAreTranslatorCodes() {
-        // Its targets, plus Korean: opus-mt-mul-en reads Korean, it is only not offered as a target.
-        val known = Translator.languages().map { it.code }.toSet() + setOf("ko")
-        for (m in SttModels.ALL) assertTrue(m.lang, m.lang in known)
+        // Its targets, plus languages opus-mt-mul-en reads that are not offered as a target.
+        val known = Translator.languages().map { it.code }.toSet() + setOf("ko", "ja", "tl", "lt")
+        for (m in SttModels.ALL) {
+            if (m.lang == SttModels.AUTO) assertEquals(null, m.sourceLang)
+            else assertTrue(m.lang, m.sourceLang == m.lang && m.lang in known)
+        }
     }
 
     /** With -PptvCaptionsDir set, the built zips must match the pins exactly. */
@@ -115,7 +157,7 @@ class SttModelsTest {
         val out = System.getProperty("ptv.captions.dir")?.let { File(it) }
         assumeTrue(out?.isDirectory == true)
         var n = 0
-        for (m in SttModels.PACK2) {
+        for (m in (SttModels.PACK2 + SttModels.PACK3).distinctBy { it.asset }) {
             val f = File(out, m.asset)
             if (!f.isFile) continue
             assertEquals(m.asset, m.bytes, f.length())

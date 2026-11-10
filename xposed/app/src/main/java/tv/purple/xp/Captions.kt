@@ -897,7 +897,7 @@ object ReadAloud {
                 mainScope()
                 runCatching { t.setSpeechRate(rate() / 100f) }
                 // The stream language changed: a voice for the new one.
-                if (voiceLang != SttModels.chosen().lang) runCatching { pickVoice(t) }
+                if (voiceLang != voiceLangNow()) runCatching { pickVoice(t) }
             }
         }
     }
@@ -1367,16 +1367,16 @@ object ReadAloud {
     private fun pickVoice(t: TextToSpeech) {
         fun local(v: Voice) = !v.isNetworkConnectionRequired &&
             v.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true
-        val lang = SttModels.chosen().lang
+        val lang = voiceLangNow()
         voiceLang = lang
         val cur = runCatching { t.voice }.getOrNull()
-        if (cur != null && local(cur) && cur.locale.language == lang) {
+        if (cur != null && local(cur) && speaks(cur, lang)) {
             log("RA voice ${cur.name} (${cur.locale}), the engine's own")
             return
         }
         val all = runCatching { t.voices }.getOrNull().orEmpty().filter { local(it) }
         val country = Locale.getDefault().country
-        val pick = all.filter { it.locale.language == lang }
+        val pick = all.filter { speaks(it, lang) }
             .maxWithOrNull(compareBy<Voice>({ it.locale.country == country }, { it.locale.country == "US" }, { it.quality }, { -it.latency }))
             ?: if (cur != null && local(cur)) null
             else all.filter { it.locale.language == (cur?.locale?.language ?: Locale.getDefault().language) }.maxByOrNull { it.quality }
@@ -1387,6 +1387,13 @@ object ReadAloud {
         val r = runCatching { t.setVoice(pick) }.getOrDefault(TextToSpeech.ERROR)
         log("RA voice ${pick.name} (${pick.locale}) chosen, result $r")
     }
+
+    /** Android names Filipino voices "fil"; the stream language says "tl". */
+    private fun speaks(v: Voice, lang: String): Boolean =
+        v.locale.language == lang || (lang == "tl" && v.locale.language == "fil")
+
+    /** The stream language's voice; with Auto, the phone's own language. */
+    private fun voiceLangNow(): String = SttModels.chosen().sourceLang ?: Locale.getDefault().language
 
     private fun rate() = Settings.getInt(KEY_RATE, DEF_RATE).coerceIn(50, 200)
 

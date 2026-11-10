@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Builds the speech model packs for the GitHub pre-release captions-pack-2.
+"""Builds the speech model packs for the GitHub pre-releases captions-pack-2 and captions-pack-3.
 
 Run it with python3 -I (no site packages are needed, only the standard library):
 
     python3 -I tools/make_captions_pack.py OUT_DIR [--langs es,de]
 
-captions-pack-2 holds one speech model per stream language other than English. English and the
-engine (the sherpa-onnx library) stay in captions-pack-1, which never changes.
+captions-pack-2 holds one streaming speech model per stream language other than English.
+captions-pack-3 holds the whole sentence models (Japanese, and one model for many languages that
+also serves Filipino, Lithuanian and Auto). They hear a sentence at a time, so each zip also
+carries Silero VAD, which cuts the sound into sentences. English and the engine (the sherpa-onnx
+library) stay in captions-pack-1, which never changes.
 
 What it does:
   - downloads each model's files from its Hugging Face repo at a fixed commit, and checks every
@@ -69,6 +72,28 @@ The original model is published under the Apache License 2.0:
 Full licence text: LICENSE-Apache-2.0.txt in this zip, and
 https://www.apache.org/licenses/LICENSE-2.0
 """
+
+TAG3 = "captions-pack-3"
+
+# Silero VAD (MIT), the copy sherpa-onnx's own examples use. Each pack 3 zip carries it.
+SILERO = dict(repo="csukuangfj/vad", commit="fba88cd2e921609e7675c3aaf51e0b9b295da4bc",
+              name="silero_vad.onnx", size=1807522,
+              sha="a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28")
+SILERO_ORIGIN = "https://github.com/snakers4/silero-vad"
+SILERO_LICENCE_URL = ("https://raw.githubusercontent.com/snakers4/silero-vad/"
+                      "066409f3d9db45a30d21dfcbf9147826ffdd7052/LICENSE")
+SILERO_LICENCE_BYTES = 1075
+SILERO_LICENCE_SHA256 = "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"
+SILERO_LICENCE_FILE = "LICENSE-MIT-silero-vad.txt"
+SILERO_TEXT = """
+Speech finder: silero_vad.onnx
+------------------------------
+Silero VAD by the Silero Team (%s), MIT licence.
+It only tells speech from silence, so the speech model hears one sentence at
+a time. The file is byte for byte the copy at
+https://huggingface.co/%s (commit %s).
+Full licence text: %s in this zip.
+""" % (SILERO_ORIGIN, SILERO["repo"], SILERO["commit"], SILERO_LICENCE_FILE)
 
 # One entry per stream language. "files" lists (role, file name in the repo and in the zip,
 # bytes, SHA-256); the roles are what the app's recognizer config asks for. "kind" and
@@ -201,6 +226,60 @@ MODELS = [
     ),
 ]
 
+# captions-pack-3: whole sentence (offline) models, fed one sentence at a time through Silero VAD.
+# The many languages model has no language of its own: the app offers it as Filipino, Lithuanian
+# and Auto, which all share this one zip.
+MODELS3 = [
+    dict(
+        lang="ja", label="Japanese", tag=TAG3, pack=3, vad=True,
+        asset="purpletv-captions-model-reazonspeech-k2-v2-ja.zip",
+        repo="reazon-research/reazonspeech-k2-v2",
+        commit="291488c8151be24d7da4bf7af26e533fad96e407",
+        kind="offline_transducer", model_type="",
+        files=[
+            ("encoder", "encoder-epoch-99-avg-1.int8.onnx", 154670139,
+             "2c7bd08a8a99f9ddd0d9e458456577b1f6279214e51426f114f9eced44c54e1d"),
+            ("decoder", "decoder-epoch-99-avg-1.onnx", 11767836,
+             "58b18211ae06265466bfa17172dab574df94f76c8bcb61a3640c28ba860e4124"),
+            ("joiner", "joiner-epoch-99-avg-1.int8.onnx", 2696970,
+             "49cc7ea1d3d35a40a27442db5e89996da64bf0e683a903dce76e99e57a12e4de"),
+            ("tokens", "tokens.txt", 45754,
+             "2c3ac659818a48a0c04010e0593bbc4d7c8a24a054340b01131499c05fd52def"),
+        ],
+        what="ReazonSpeech k2 v2, a whole sentence Zipformer transducer for Japanese\n"
+             "trained on 35,000 hours of Japanese TV, with 8 bit weights for the encoder\n"
+             "and joiner (the decoder is the full one, as sherpa-onnx's examples use).",
+        credit="ReazonSpeech k2 v2 by Reazon Human Interaction Lab\n"
+               "(https://huggingface.co/reazon-research/reazonspeech-k2-v2), Apache-2.0",
+        licence="Apache-2.0", licence_text=APACHE_LICENCE_TEXT,
+        origin="https://huggingface.co/reazon-research/reazonspeech-k2-v2",
+    ),
+    dict(
+        lang="mul", label="Many languages", tag=TAG3, pack=3, vad=True,
+        asset="purpletv-captions-model-omnilingual-asr-300m-ctc-int8-2025-11-12.zip",
+        repo="csukuangfj/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12",
+        commit="6abf1ece20cd2308bdb7d13cd78ec1c44fa4c094",
+        kind="omnilingual_ctc", model_type="",
+        files=[
+            ("model", "model.int8.onnx", 365352120,
+             "e7c4e54ee4c4c47829cc6667d5d00ed8ea7bef1dcfeef0fce766f77752a2726c"),
+            ("tokens", "tokens.txt", 86423,
+             "a7a044c52cb29cbe8b0dc1953e92cefd4ca16b0ed968177b6beab21f9a7d0b31"),
+        ],
+        # Meta's own licence notice, kept beside the full Apache text.
+        notice=("LICENSE", "LICENSE-omnilingual-asr.txt", 581,
+                "a70a523bafbb595c2844104feb313d204904dac91c3d186c05f22a10a71c7a94"),
+        what="Omnilingual ASR CTC 300M by Meta, one whole sentence model for more than\n"
+             "1600 languages, with 8 bit weights. It writes what it hears without\n"
+             "capitals or punctuation, and needs no language to be named.",
+        credit="Omnilingual ASR (omniASR_CTC_300M) by Meta\n"
+               "(https://github.com/facebookresearch/omnilingual-asr), Apache-2.0,\n"
+               "converted for sherpa-onnx by csukuangfj",
+        licence="Apache-2.0", licence_text=APACHE_LICENCE_TEXT,
+        origin="https://github.com/facebookresearch/omnilingual-asr",
+    ),
+]
+
 
 def fetch(url, dst):
     """Downloads url to dst once (kept as a cache), retrying on 429 and network errors."""
@@ -254,18 +333,20 @@ def licence_txt(m):
     head = "Licence of the model files in this pack\n========================================\n\nFiles: %s\n\n" % names
     body = m["licence_text"].format(credit=m["credit"].replace("\n", "\n"), origin=m["origin"])
     tail = (
-        "\nChanges: none. The model files are byte for byte the ones in the sherpa-onnx\n"
-        "copy at https://huggingface.co/%s\n(commit %s). They were only put into this zip\n"
+        "\nChanges: none. The model files are byte for byte the ones published at\n"
+        "https://huggingface.co/%s\n(commit %s). They were only put into this zip\n"
         "together with README.txt and this file.\n\n"
         "No warranty: the model is provided as is, without any warranty, as the\nlicence says.\n\n"
         "This licence covers only the model files. The PurpleTV ReVive module and\n"
         "the separate engine pack have their own licences.\n" % (m["repo"], m["commit"])
     )
+    if m.get("vad"):
+        tail += SILERO_TEXT
     return (head + body + tail).encode()
 
 
 def readme_txt(m, model_entries):
-    title = "PurpleTV ReVive captions model pack 2 (%s speech model)" % m["label"]
+    title = "PurpleTV ReVive captions model pack %d (%s speech model)" % (m.get("pack", 2), m["label"])
     lines = [
         title, "=" * len(title), "",
         "What this is", "------------",
@@ -278,26 +359,42 @@ def readme_txt(m, model_entries):
         "Credits", "-------", m["credit"], "",
         "Model: " + m["what"],
         "    Original:         " + m["origin"],
-        "    sherpa-onnx copy: https://huggingface.co/" + m["repo"],
+        "    Files from:       https://huggingface.co/" + m["repo"],
         "                      (commit %s)" % m["commit"],
         "    Model list:       " + MODEL_LIST, "",
         "What is inside", "--------------",
-        "The model files are byte for byte the ones published in the sherpa-onnx",
-        "copy above. Nothing was changed, removed from them or retrained. Only the",
+        "The model files are byte for byte the ones published at the address",
+        "above. Nothing was changed, removed from them or retrained. Only the",
         "README.txt and LICENSE.txt are new.", "",
     ]
     for name, data in model_entries:
         lines.append("%s   %d bytes" % (name, len(data)))
         lines.append("    SHA-256 " + sha256_bytes(data))
+    if m.get("vad"):
+        lines.append("%s   the speech finder (Silero VAD, MIT)" % SILERO["name"])
+    if m.get("notice"):
+        lines.append("%s   the model maker's own licence notice" % m["notice"][1])
     lines += [
         "LICENSE.txt    the licence of the model files",
-    ] + (["%s   the full licence text" % APACHE_FILE] if m["licence"] == "Apache-2.0" else []) + [
+    ] + (["%s   the full licence text" % APACHE_FILE] if m["licence"] == "Apache-2.0" else []) + (
+        ["%s   the speech finder's licence" % SILERO_LICENCE_FILE] if m.get("vad") else []) + [
         "README.txt     this file", "",
         "Licence", "-------",
         "The model files are under the %s licence. See LICENSE.txt." % m["licence"],
         "If you share these files, keep the credit line above and the same licence.", "",
     ]
     return "\n".join(lines).encode()
+
+
+def check(path, size, sha):
+    """The file's bytes, after checking them against a pin (None: not pinned yet, printed)."""
+    data = open(path, "rb").read()
+    got = sha256_bytes(data)
+    if (size is not None and len(data) != size) or (sha is not None and got != sha):
+        raise SystemExit("%s: %d bytes, sha %s; expected %s bytes, sha %s" % (path, len(data), got, size, sha))
+    if size is None or sha is None:
+        print("  unpinned %s: %d bytes, sha %s" % (os.path.basename(path), len(data), got))
+    return data
 
 
 def build_model(out, cache, m):
@@ -309,6 +406,8 @@ def build_model(out, cache, m):
                   os.path.join(cache, m["repo"].replace("/", "__"), m["commit"], name))
         data = open(p, "rb").read()
         got = sha256_bytes(data)
+        if sha is None:
+            print("  unpinned %s/%s: %d bytes, sha %s" % (m["repo"], name, len(data), got))
         if len(data) != size or (sha is not None and got != sha):
             raise SystemExit("%s/%s: %d bytes, sha %s; expected %d bytes, sha %s"
                              % (m["repo"], name, len(data), got, size, sha))
@@ -322,20 +421,41 @@ def build_model(out, cache, m):
         if len(data) != APACHE_BYTES or sha256_bytes(data) != APACHE_SHA256:
             raise SystemExit("%s does not match its pin" % APACHE_URL)
         extra.append((APACHE_FILE, data))
+    if m.get("notice"):
+        src, name, size, sha = m["notice"]
+        p = fetch(HF + m["repo"] + "/resolve/" + m["commit"] + "/" + src,
+                  os.path.join(cache, m["repo"].replace("/", "__"), m["commit"], src))
+        data = check(p, size, sha)
+        extra.append((name, data))
+    if m.get("vad"):
+        v = SILERO
+        p = fetch(HF + v["repo"] + "/resolve/" + v["commit"] + "/" + v["name"],
+                  os.path.join(cache, v["repo"].replace("/", "__"), v["commit"], v["name"]))
+        data = check(p, v["size"], v["sha"])
+        model_entries.append((v["name"], data))
+        with open(os.path.join(unpacked, v["name"]), "wb") as f:
+            f.write(data)
+        p = fetch(SILERO_LICENCE_URL, os.path.join(cache, SILERO_LICENCE_FILE))
+        extra.append((SILERO_LICENCE_FILE, check(p, SILERO_LICENCE_BYTES, SILERO_LICENCE_SHA256)))
     entries = model_entries + [("LICENSE.txt", licence_txt(m))] + extra + [("README.txt", readme_txt(m, model_entries))]
     size, sha = write_zip(os.path.join(out, m["asset"]), entries)
     return size, sha, entries
 
 
+KINDS = {"transducer": "TRANSDUCER", "zipformer2_ctc": "ZIPFORMER2_CTC",
+         "offline_transducer": "OFFLINE_TRANSDUCER", "omnilingual_ctc": "OMNILINGUAL_CTC"}
+
+
 def kotlin_pin(m, size, sha, entries):
-    roles = ",\n".join('            %s to %s' % (kt(r), kt(n)) for r, n, _, _ in m["files"])
+    files = list(m["files"]) + ([("vad", SILERO["name"], 0, None)] if m.get("vad") else [])
+    roles = ",\n".join('            %s to %s' % (kt(r), kt(n)) for r, n, _, _ in files)
     ents = ",\n".join('            %s to PackPins.FilePin(%dL, "%s")' % (kt(n), len(d), sha256_bytes(d))
                       for n, d in entries)
     credit = m["credit"].replace("\n", " ")
     return (
         "        // %s: %s at %s\n"
         "        SttModel(\n"
-        "            lang = %s, label = %s, tag = TAG2,\n"
+        "            lang = %s, label = %s, tag = %s,\n"
         "            asset = %s,\n"
         "            sha256 = \"%s\", bytes = %dL,\n"
         "            kind = %s, modelType = %s,\n"
@@ -344,8 +464,9 @@ def kotlin_pin(m, size, sha, entries):
         "            files = mapOf(\n%s\n            ),\n"
         "            entries = mapOf(\n%s\n            )\n"
         "        )"
-        % (m["label"], m["repo"], m["commit"], kt(m["lang"]), kt(m["label"]), kt(m["asset"]), sha, size,
-           "SttModel.Kind." + ("TRANSDUCER" if m["kind"] == "transducer" else "ZIPFORMER2_CTC"),
+        % (m["label"], m["repo"], m["commit"], kt(m["lang"]), kt(m["label"]),
+           "TAG3" if m.get("tag") == TAG3 else "TAG2", kt(m["asset"]), sha, size,
+           "SttModel.Kind." + KINDS[m["kind"]],
            kt(m["model_type"]), kt(m["licence"]), kt(credit),
            roles.replace("            ", "                "), ents.replace("            ", "                "))
     )
@@ -361,7 +482,7 @@ def main():
     cache = os.path.join(out, "cache")
     os.makedirs(cache, exist_ok=True)
     pins = []
-    for m in MODELS:
+    for m in MODELS + MODELS3:
         if only and m["lang"] not in only:
             continue
         size, sha, entries = build_model(out, cache, m)

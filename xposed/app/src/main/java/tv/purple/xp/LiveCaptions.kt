@@ -113,8 +113,9 @@ object LiveCaptions {
     private fun finish(t: String, fromStt: Boolean) {
         val l = Line(t, SystemClock.uptimeMillis(), t, fromStt)
         // Speech to text speaks the stream language picked in settings; read it now, on main, so
-        // a line already in the queue keeps the language it was heard in.
-        val sttLang = if (fromStt) SttModels.chosen().lang else null
+        // a line already in the queue keeps the language it was heard in. Auto names none: the
+        // translator guesses each line's language then.
+        val sttLang = if (fromStt) SttModels.chosen().sourceLang else null
         lines.addLast(l)
         while (lines.size > KEEP) lines.removeFirst()
         if (translating()) {

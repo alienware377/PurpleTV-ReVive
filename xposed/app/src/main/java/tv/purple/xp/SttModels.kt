@@ -1,8 +1,13 @@
 package tv.purple.xp
 
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.OnlineZipformer2CtcModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.io.File
 
 /**
@@ -15,7 +20,10 @@ import java.io.File
  * before anything is used. A changed model means a new tag and new pins, never a replaced asset.
  */
 class SttModel(
-    /** The stream language, a two letter code that Translator understands as a source language. */
+    /**
+     * The stream language, a two letter code that Translator understands as a source language,
+     * or [SttModels.AUTO] for a model that hears any language.
+     */
     val lang: String,
     /** The language's name for the settings page. */
     val label: String,
@@ -36,17 +44,32 @@ class SttModel(
     /** Every entry of the zip by its name inside the zip. This is the unpack allow-list. */
     val entries: Map<String, PackPins.FilePin>,
     /** Folder under ptv_stt. English keeps "model", where captions-pack-1 always put it. */
-    val dir: String = "model-$lang"
+    val dir: String = "model-$lang",
+    /** What the download is called in the menu; languages that share one model share the name. */
+    val what: String = "$label speech model",
+    /** Which writing systems of its text are kept (see SpeechScript). */
+    val script: SpeechScript.Mode = SpeechScript.Mode.ANY
 ) {
-    /** The shapes of streaming model sherpa-onnx 1.13.8 can run that are in use here. */
-    enum class Kind(val roles: List<String>) {
+    /**
+     * The shapes of model sherpa-onnx 1.13.8 can run that are in use here. Streaming models hear
+     * the sound as it comes; whole sentence ones are given one sentence at a time, found with the
+     * Silero VAD file ("vad") that comes in the same zip.
+     */
+    enum class Kind(val roles: List<String>, val offline: Boolean = false) {
         /** Encoder, decoder and joiner: Zipformer and Zipformer2 transducers. */
         TRANSDUCER(listOf("encoder", "decoder", "joiner", "tokens")),
         /** One model file with a CTC head: Zipformer2 CTC. */
-        ZIPFORMER2_CTC(listOf("model", "tokens"))
+        ZIPFORMER2_CTC(listOf("model", "tokens")),
+        /** A whole sentence Zipformer transducer. */
+        OFFLINE_TRANSDUCER(listOf("encoder", "decoder", "joiner", "tokens", "vad"), offline = true),
+        /** Meta's Omnilingual ASR CTC model, one model for every language it knows. */
+        OMNILINGUAL_CTC(listOf("model", "tokens", "vad"), offline = true)
     }
 
     val unpackedBytes: Long get() = entries.values.sumOf { it.bytes }
+
+    /** The language the translator starts from: null lets it guess from each line. */
+    val sourceLang: String? get() = if (lang == SttModels.AUTO) null else lang
 }
 
 object SttModels {
@@ -62,6 +85,13 @@ object SttModels {
     /** The pre-release with the speech models for languages other than English. */
     const val TAG2 = "captions-pack-2"
     const val RELEASE_PAGE2 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG2
+
+    /** The pre-release with the whole sentence models: Japanese, and one model for many languages. */
+    const val TAG3 = "captions-pack-3"
+    const val RELEASE_PAGE3 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG3
+
+    /** The stream language of the many-language model when no language is named. */
+    const val AUTO = "auto"
 
     /** English: the captions-pack-1 model, read from PackPins, which never changes. */
     val EN = SttModel(
@@ -217,8 +247,80 @@ object SttModels {
         )
     )
 
+    // captions-pack-3, built by tools/make_captions_pack.py, which prints these pins.
+
+    // Japanese: reazon-research/reazonspeech-k2-v2 at 291488c8151be24d7da4bf7af26e533fad96e407
+    val JA = SttModel(
+        lang = "ja", label = "Japanese", tag = TAG3,
+        asset = "purpletv-captions-model-reazonspeech-k2-v2-ja.zip",
+        sha256 = "7655db3b03d7685b887758a3173bdfb07aa8c2e45291e018c889e1e3d02bf26c", bytes = 139267071L,
+        kind = SttModel.Kind.OFFLINE_TRANSDUCER, modelType = "",
+        licence = "Apache-2.0",
+        credit = "ReazonSpeech k2 v2 by Reazon Human Interaction Lab (https://huggingface.co/reazon-research/reazonspeech-k2-v2), Apache-2.0",
+        files = mapOf(
+            "encoder" to "encoder-epoch-99-avg-1.int8.onnx",
+            "decoder" to "decoder-epoch-99-avg-1.onnx",
+            "joiner" to "joiner-epoch-99-avg-1.int8.onnx",
+            "tokens" to "tokens.txt",
+            "vad" to "silero_vad.onnx"
+        ),
+        entries = mapOf(
+            "encoder-epoch-99-avg-1.int8.onnx" to PackPins.FilePin(154670139L, "2c7bd08a8a99f9ddd0d9e458456577b1f6279214e51426f114f9eced44c54e1d"),
+            "decoder-epoch-99-avg-1.onnx" to PackPins.FilePin(11767836L, "58b18211ae06265466bfa17172dab574df94f76c8bcb61a3640c28ba860e4124"),
+            "joiner-epoch-99-avg-1.int8.onnx" to PackPins.FilePin(2696970L, "49cc7ea1d3d35a40a27442db5e89996da64bf0e683a903dce76e99e57a12e4de"),
+            "tokens.txt" to PackPins.FilePin(45754L, "2c3ac659818a48a0c04010e0593bbc4d7c8a24a054340b01131499c05fd52def"),
+            "silero_vad.onnx" to PackPins.FilePin(1807522L, "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"),
+            "LICENSE.txt" to PackPins.FilePin(1468L, "82763e41ad08d680e836979ae26153719d3e1f3aba05fd1b9f3cd69b06c46fb2"),
+            "LICENSE-Apache-2.0.txt" to PackPins.FilePin(11358L, "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
+            "LICENSE-MIT-silero-vad.txt" to PackPins.FilePin(1075L, "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"),
+            "README.txt" to PackPins.FilePin(2459L, "9ca6a8130352a7e4cd2a9a0bf71e74d69d482b788e4c3a3b546b49643d445ee4")
+        )
+    )
+
+    private val MANY_ENTRIES = mapOf(
+        "model.int8.onnx" to PackPins.FilePin(365352120L, "e7c4e54ee4c4c47829cc6667d5d00ed8ea7bef1dcfeef0fce766f77752a2726c"),
+        "tokens.txt" to PackPins.FilePin(86423L, "a7a044c52cb29cbe8b0dc1953e92cefd4ca16b0ed968177b6beab21f9a7d0b31"),
+        "silero_vad.onnx" to PackPins.FilePin(1807522L, "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"),
+        "LICENSE.txt" to PackPins.FilePin(1454L, "4932c4b7c43729dff4b96a60a722681393e4a2abc223719837f5d36477a3e91c"),
+        "LICENSE-Apache-2.0.txt" to PackPins.FilePin(11358L, "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
+        "LICENSE-omnilingual-asr.txt" to PackPins.FilePin(581L, "a70a523bafbb595c2844104feb313d204904dac91c3d186c05f22a10a71c7a94"),
+        "LICENSE-MIT-silero-vad.txt" to PackPins.FilePin(1075L, "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"),
+        "README.txt" to PackPins.FilePin(2333L, "3166c27dc117cd227b3b53027b7f38db7753a154ed8b77218eabe85d4cd83716")
+    )
+
+    /**
+     * Many languages: csukuangfj/sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12
+     * at 6abf1ece20cd2308bdb7d13cd78ec1c44fa4c094. The model is told no language, so Filipino,
+     * Lithuanian and Auto share one zip and one folder; they differ in the scripts kept and the
+     * language the translator starts from.
+     */
+    private fun many(lang: String, label: String, script: SpeechScript.Mode) = SttModel(
+        lang = lang, label = label, tag = TAG3,
+        asset = "purpletv-captions-model-omnilingual-asr-300m-ctc-int8-2025-11-12.zip",
+        sha256 = "6cdbdb5b41672ef32b56a2bdf5cdd32201978ddedd4eea20d136ab0df5190b1b", bytes = 290520222L,
+        kind = SttModel.Kind.OMNILINGUAL_CTC, modelType = "",
+        licence = "Apache-2.0",
+        credit = "Omnilingual ASR (omniASR_CTC_300M) by Meta (https://github.com/facebookresearch/omnilingual-asr), Apache-2.0, converted for sherpa-onnx by csukuangfj",
+        files = mapOf(
+            "model" to "model.int8.onnx",
+            "tokens" to "tokens.txt",
+            "vad" to "silero_vad.onnx"
+        ),
+        entries = MANY_ENTRIES,
+        dir = "model-mul",
+        what = "many-language speech model (Filipino, Lithuanian and Auto)",
+        script = script
+    )
+
+    val PACK3: List<SttModel> = listOf(
+        JA,
+        many("tl", "Filipino", SpeechScript.Mode.LATIN),
+        many("lt", "Lithuanian", SpeechScript.Mode.LATIN),
+        many(AUTO, "Auto (any language)", SpeechScript.Mode.AUTO)
+    )
+
     /** Every language in the order the settings page lists them; the stored number is the place here. */
-    val ALL: List<SttModel> = listOf(EN) + PACK2
+    val ALL: List<SttModel> = listOf(EN) + PACK2 + PACK3
 
     fun labels(): List<String> = ALL.map { it.label }
 
@@ -246,6 +348,42 @@ object SttModels {
             SttModel.Kind.TRANSDUCER -> base.copy(transducer = OnlineTransducerModelConfig(
                 encoder = path("encoder"), decoder = path("decoder"), joiner = path("joiner")))
             SttModel.Kind.ZIPFORMER2_CTC -> base.copy(zipformer2Ctc = OnlineZipformer2CtcModelConfig(model = path("model")))
+            else -> error("${m.lang} is a whole sentence model, see offlineConfig")
         }
     }
+
+    /** The same for the whole sentence models. */
+    fun offlineConfig(m: SttModel, dir: File, threads: Int): OfflineModelConfig {
+        fun path(role: String) = File(dir, m.files[role] ?: error("no $role in the ${m.lang} model pins")).absolutePath
+        val base = OfflineModelConfig(
+            tokens = path("tokens"),
+            numThreads = threads,
+            provider = "cpu",
+            modelType = m.modelType
+        )
+        return when (m.kind) {
+            SttModel.Kind.OFFLINE_TRANSDUCER -> base.copy(transducer = OfflineTransducerModelConfig(
+                encoder = path("encoder"), decoder = path("decoder"), joiner = path("joiner")))
+            SttModel.Kind.OMNILINGUAL_CTC -> base.copy(omnilingual = OfflineOmnilingualAsrCtcModelConfig(model = path("model")))
+            else -> error("${m.lang} is a streaming model, see modelConfig")
+        }
+    }
+
+    /**
+     * Silero VAD for a whole sentence model. It only says whether someone is talking; Stt cuts the
+     * sentences itself, so the VAD's own longest sentence is set well above Stt's.
+     */
+    fun vadConfig(m: SttModel, dir: File): VadModelConfig = VadModelConfig(
+        sileroVadModelConfig = SileroVadModelConfig(
+            model = File(dir, m.files["vad"] ?: error("no vad in the ${m.lang} model pins")).absolutePath,
+            threshold = 0.5f,
+            minSilenceDuration = 0.4f,
+            minSpeechDuration = 0.25f,
+            windowSize = 512,
+            maxSpeechDuration = 30f
+        ),
+        sampleRate = 16000,
+        numThreads = 1,
+        provider = "cpu"
+    )
 }

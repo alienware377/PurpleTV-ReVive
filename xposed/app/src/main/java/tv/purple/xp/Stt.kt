@@ -17,9 +17,13 @@ import android.os.SystemClock
 import com.k2fsa.sherpa.onnx.EndpointConfig
 import com.k2fsa.sherpa.onnx.EndpointRule
 import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineStream
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VersionInfo
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -44,6 +48,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipFile
 import kotlin.math.PI
 import kotlin.math.cos
@@ -123,10 +128,18 @@ object SttPacks {
 
     internal val ENGINE = Pack("engine", "engine", PackPins.ENGINE_ASSET, PackPins.ENGINE_SHA256,
         PackPins.ENGINE_BYTES, PackPins.ENGINE_ENTRIES)
-    /** One pack per stream language, made up front so every one counts as a member of the group. */
-    internal val MODELS: Map<String, Pack> = SttModels.ALL.associate { m ->
-        m.lang to Pack("${m.label} speech model", m.dir, m.asset, m.sha256, m.bytes, m.entries, tag = m.tag)
+    /**
+     * The pack of each stream language, made up front so every one counts as a member of the
+     * group. Languages that share a model (Filipino, Lithuanian and Auto) share its pack, so one
+     * download and one folder serve them all.
+     */
+    internal val MODELS: Map<String, Pack> = HashMap<String, Pack>().let { byDir ->
+        SttModels.ALL.associate { m ->
+            m.lang to byDir.getOrPut(m.dir) { Pack(m.what, m.dir, m.asset, m.sha256, m.bytes, m.entries, tag = m.tag) }
+        }
     }
+    /** Every speech model pack once. */
+    internal val MODEL_PACKS: List<Pack> = MODELS.values.distinct()
     /** The English model of captions-pack-1, the default. */
     internal val MODEL: Pack = MODELS.getValue("en")
 
@@ -166,7 +179,7 @@ object SttPacks {
     fun modelReady(ctx: Context): Boolean = ready(ctx, modelPack())
 
     /** True while the engine or any speech model is downloading. */
-    fun downloading(): Boolean = ENGINE.busy.get() || MODELS.values.any { it.busy.get() }
+    fun downloading(): Boolean = ENGINE.busy.get() || MODEL_PACKS.any { it.busy.get() }
 
     /** Credit lines for the settings page. Each model's licence asks for its credit. */
     fun credits(): String = PackPins.ENGINE_CREDIT + "\n" + SttModels.chosen().credit
@@ -313,7 +326,7 @@ object SttPacks {
         STT_GROUP.cancelGen++
         // A read stuck on a stalled connection only sees the stop after its 60 s timeout; cutting
         // the call ends it at once. OkHttp's cancel is safe from any thread and does no network work.
-        val all = listOf(ENGINE) + MODELS.values
+        val all = listOf(ENGINE) + MODEL_PACKS
         for (p in all) runCatching { p.call?.cancel() }
         Stt.afterUnload("packs deleted") {
             synchronized(swapLock) { runCatching { root(app).deleteRecursively() } }
@@ -568,7 +581,7 @@ object SttPacks {
      */
     fun verify(ctx: Context): String {
         val chosen = modelPack()
-        val packs = listOf(ENGINE, chosen) + MODELS.values.filter { it !== chosen && ready(ctx, it) }
+        val packs = listOf(ENGINE, chosen) + MODEL_PACKS.filter { it !== chosen && ready(ctx, it) }
         return packs.joinToString(", ") { p ->
             p.hashed = false
             val r = synchronized(swapLock) { runCatching { ensureHashed(ctx, p) }.getOrElse { "error ${it.javaClass.simpleName}" } }
@@ -627,6 +640,13 @@ object SttPacks {
  * When: the model (well over 70 MB of memory once loaded) is loaded when a PbyP break starts and
  * unloaded 60 s after it ends, at once when the phone is low on memory or too hot, and right away
  * when the option is switched off.
+ *
+ * Whole sentence models (Japanese, and the many-language model behind Filipino, Lithuanian and
+ * Auto) have no streaming version. For those, Silero VAD on ptv-stt tells talking from quiet, the
+ * sound of each sentence is collected (cut at a quiet moment after 7 s at most), and the sentence
+ * is heard on a second thread, ptv-stt-dec, so a slow decode never holds up the copying. While a
+ * sentence goes on, it is heard again now and then for a partial line, as often as the phone keeps
+ * up with.
  */
 object Stt {
 
@@ -651,6 +671,22 @@ object Stt {
     /** 128 slots of 8 KB: about 2.7 s of 48 kHz stereo in typical 4 KB pieces. */
     private const val SLOTS = 128
     private const val SLOT_BYTES = 8_192
+
+    /** Silero VAD's window: 32 ms at 16 kHz. */
+    private const val VAD_WINDOW = 512
+    /** Sound kept from before the VAD says "talking", which it only says after 0.25 s of it. */
+    private const val PRE_SAMPLES = 8_000
+    /** A sentence is cut after this long, so a streamer who never pauses still gets captions. */
+    private const val MAX_SENTENCE = 7 * 16_000
+    /** Where a long sentence is cut: the quietest 0.1 s of its last 2 s. */
+    private const val CUT_LOOK = 2 * 16_000
+    private const val CUT_STEP = 1_600
+    /** Shorter than this (a cough, a click) is not worth hearing. */
+    private const val MIN_SENTENCE = 4_000
+    /** A partial line at most this often, and never sooner than three decodes' time. */
+    private const val OFF_PARTIAL_MS = 1_000L
+    /** Sentences waiting to be heard. When the phone falls this far behind, new ones are skipped. */
+    private const val MAX_WAITING = 3
 
     // ---- shared with IVS's audio threads ----
 
@@ -693,13 +729,41 @@ object Stt {
 
     private var rec: OnlineRecognizer? = null
     private var stream: OnlineStream? = null
+
+    // Whole sentence models: the VAD and the sentence being collected live on ptv-stt; the
+    // recognizer and the script filter are used on ptv-stt-dec only, once loaded.
+    private var vad: Vad? = null
+    @Volatile private var offRec: OfflineRecognizer? = null
+    @Volatile private var filter: SpeechScript.Filter? = null
+    private val vadBuf = FloatArray(VAD_WINDOW)
+    private var vadN = 0
+    private val sent by lazy(LazyThreadSafetyMode.NONE) { FloatArray(MAX_SENTENCE + VAD_WINDOW) }
+    private var sentN = 0
+    /** A ring of the last [PRE_SAMPLES] of quiet, put in front of the next sentence. */
+    private val pre by lazy(LazyThreadSafetyMode.NONE) { FloatArray(PRE_SAMPLES) }
+    private var prePos = 0
+    private var preN = 0
+    private var talking = false
+    private var lastPartialAsk = 0L
+    @Volatile private var saidBehind = false
+    /** Bumped on unload, so sentences queued for the old model are dropped. */
+    @Volatile private var decGen = 0
+    private val waiting = AtomicInteger(0)
+    @Volatile private var partialWaiting = false
+    @Volatile private var lastDecodeMs = 0L
+    @Volatile private var decStarted = false
+    private val dec: Handler by lazy {
+        decStarted = true
+        Handler(HandlerThread("ptv-stt-dec", Process.THREAD_PRIORITY_BACKGROUND).apply { start() }.looper)
+    }
     /** Native objects whose release failed: kept forever, so the GC never frees them a second time. */
-    private val leaked = ArrayList<Any>()
+    private val leaked = Collections.synchronizedList(ArrayList<Any>())
     @Volatile private var nativeOk = false
     @Volatile private var broken: String? = null
     @Volatile private var loadedNow = false
-    /** The language of the model loaded now (see SttModels). */
+    /** The language of the model loaded now (see SttModels), and its folder. */
     @Volatile private var loadedLang = ""
+    private var loadedDir = ""
     @Volatile private var inBreak = false
     @Volatile private var memoryHold = false
     @Volatile private var thermalHold = false
@@ -723,7 +787,7 @@ object Stt {
     private var fed = 0L
     private var lastPartial = ""
     private var lastPartialAt = 0L
-    private var decodeNs = 0L
+    private val decodeNs = AtomicLong()
     private var audioSamples = 0L
     private var statsAt = 0L
     private var statsDropped = 0
@@ -1026,7 +1090,7 @@ object Stt {
                 if (want) log("STT break started")
             } else {
                 memoryHold = false
-                if (rec != null) {
+                if (loadedNow) {
                     log("STT break over, unloading in ${UNLOAD_MS / 1000} s")
                     bg.postDelayed(unloadTask, UNLOAD_MS)
                 }
@@ -1035,18 +1099,18 @@ object Stt {
             }
         }
         if (!want) {
-            if (rec != null) unload("switched off")
+            if (loadedNow) unload("switched off")
             setTarget(0, "switched off")
             return
         }
         if (!inBreak) {
             setTarget(0, "break over")
             // One more pass for what is still waiting, so the last line comes out as final text.
-            if (rec != null && (fed > 0 || res.outN > 0 || ring?.empty() == false)) ensureTick()
+            if (loadedNow && (fed > 0 || res.outN > 0 || ring?.empty() == false)) ensureTick()
             return
         }
         if (memoryHold || thermalHold) {
-            if (rec != null) unload(if (memoryHold) "low memory" else "phone too hot")
+            if (loadedNow) unload(if (memoryHold) "low memory" else "phone too hot")
             setTarget(0, "paused")
             return
         }
@@ -1055,18 +1119,28 @@ object Stt {
         if (!hooked && !devFeeding && !devBreak) return
         // The stream language changed in settings: the next words need the other model. The line in
         // progress is dropped with the old one, which is fine, it was in the wrong language anyway.
-        if (rec != null && loadedLang != SttModels.chosen().lang) unload("stream language changed")
-        if (rec == null && !load()) return
+        val chosen = SttModels.chosen()
+        if (loadedNow && loadedLang != chosen.lang) {
+            if (offRec != null && loadedDir == chosen.dir) {
+                // Filipino, Lithuanian and Auto share one model: only the scripts kept change.
+                loadedLang = chosen.lang
+                val f = SpeechScript.Filter(chosen.script)
+                dec.post { filter = f }
+                log("STT stream language ${chosen.lang}, same model")
+            } else unload("stream language changed")
+        }
+        if (!loadedNow && !load()) return
         ensureTick()
     }
 
     private fun tick() {
         evaluate()
-        if (rec == null) return
+        if (!loadedNow) return
         pollTarget()
         process()
         val rg = ring
-        if (target <= 0 && (rg == null || rg.empty()) && (fed > 0 || res.outN > 0)) endUtterance()
+        // A test file feeds with no tap at all: its lines end with the file, not on every tick.
+        if (target <= 0 && !devFeeding && (rg == null || rg.empty()) && (fed > 0 || res.outN > 0)) endUtterance()
         stats()
         if (inBreak || (rg != null && !rg.empty()) || fed > 0) ensureTick()
     }
@@ -1145,6 +1219,7 @@ object Stt {
         val m = SttModels.chosen()
         if (m.lang in badLangs) return false
         val pack = SttPacks.modelPack(m)
+        if (m.kind.offline) return loadOffline(ctx, m, pack, t0)
         var r: OnlineRecognizer? = null
         try {
             val why = synchronized(SttPacks.swapLock) {
@@ -1187,10 +1262,56 @@ object Stt {
         }
         loadedNow = true
         loadedLang = m.lang
+        loadedDir = m.dir
         res.reset(16000)
         curRate = 0; curCh = 0; fed = 0L; lastPartial = ""
         ring?.let { it.clear(); it.gapNext = true }
         log("STT ${m.lang} model loaded in ${SystemClock.uptimeMillis() - t0} ms, threads ${Settings.getInt(KEY_THREADS, 1).coerceIn(1, 4)}")
+        registerWatchers(ctx)
+        return true
+    }
+
+    /**
+     * A whole sentence model and its VAD. Two threads by default: the many-language model needs
+     * them on most phones to keep up with someone talking all the time.
+     */
+    private fun loadOffline(ctx: Context, m: SttModel, pack: SttPacks.Pack, t0: Long): Boolean {
+        val threads = Settings.getInt(KEY_THREADS, 2).coerceIn(1, 4)
+        var r: OfflineRecognizer? = null
+        var v: Vad? = null
+        try {
+            val why = synchronized(SttPacks.swapLock) {
+                SttPacks.ensureHashed(ctx, pack)?.let { return@synchronized it }
+                val dir = SttPacks.dir(ctx, pack)
+                r = OfflineRecognizer(null, OfflineRecognizerConfig(
+                    featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+                    modelConfig = SttModels.offlineConfig(m, dir, threads),
+                    decodingMethod = "greedy_search"
+                ))
+                v = Vad(null, SttModels.vadConfig(m, dir))
+                null
+            }
+            if (why != null) { r?.let { release(it) }; log("STT not loaded: $why"); return false }
+        } catch (t: Throwable) {
+            v?.let { release(it) }
+            r?.let { release(it) }
+            badLangs.add(m.lang)
+            log("STT the ${m.lang} speech model could not be loaded, that language is off until Twitch restarts ($t)")
+            AdTime.toast("The speech model for this stream language could not be loaded")
+            return false
+        }
+        val made = r ?: return false
+        filter = SpeechScript.Filter(m.script)
+        vad = v
+        offRec = made
+        loadedNow = true
+        loadedLang = m.lang
+        loadedDir = m.dir
+        res.reset(16000)
+        curRate = 0; curCh = 0; fed = 0L; lastPartial = ""
+        clearSentence()
+        ring?.let { it.clear(); it.gapNext = true }
+        log("STT ${m.lang} whole sentence model loaded in ${SystemClock.uptimeMillis() - t0} ms, threads $threads")
         registerWatchers(ctx)
         return true
     }
@@ -1256,15 +1377,25 @@ object Stt {
         bg.removeCallbacks(unloadTask)
         val s = stream
         val r = rec
+        val v = vad
+        val o = offRec
         stream = null
         rec = null
+        vad = null
+        offRec = null
+        decGen++
         loadedNow = false
         loadedLang = ""
+        loadedDir = ""
         if (s != null) release(s)
         if (r != null) release(r)
+        if (v != null) release(v)
+        // After any sentence still being heard: ptv-stt-dec runs its queue in order.
+        if (o != null) { if (decStarted) dec.post { release(o) } else release(o) }
+        clearSentence()
         res.reset(16000)
         fed = 0L; lastPartial = ""; curPlayer = null
-        if (s != null || r != null) log("STT unloaded ($why)")
+        if (s != null || r != null || o != null) log("STT unloaded ($why)")
     }
 
     private fun release(o: Any) {
@@ -1272,6 +1403,9 @@ object Stt {
             when (o) {
                 is OnlineStream -> o.release()
                 is OnlineRecognizer -> o.release()
+                is OfflineStream -> o.release()
+                is OfflineRecognizer -> o.release()
+                is Vad -> o.release()
             }
         }.isSuccess
         // A failed release may not have cleared its pointer, and the finalizer would free it again.
@@ -1314,7 +1448,7 @@ object Stt {
     private fun lowMemory(why: String) {
         bg.post {
             safely("memory") {
-                if (rec == null) return@safely
+                if (!loadedNow) return@safely
                 // Held until this break ends, so the model is not loaded straight back in.
                 memoryHold = inBreak
                 unload(why)
@@ -1328,7 +1462,7 @@ object Stt {
 
     private fun process() {
         val rg = ring ?: return
-        if (rec == null) return
+        if (!loadedNow) return
         val h = rg.head.get()
         var t = rg.tail.get()
         while (t != h) {
@@ -1348,6 +1482,8 @@ object Stt {
             if (res.outN >= 16_000) feed()
         }
         feed()
+        // Whole sentence models hear their sentences on ptv-stt-dec.
+        if (vad != null) return
         // Nothing given to the stream since its last reset (the tap is off, or the stream has
         // captions of its own): there is nothing to decode, so the recognizer is not asked.
         if (fed == 0L) return
@@ -1371,6 +1507,7 @@ object Stt {
 
     /** Hand the resampled audio to the stream. A copy of exactly that length, as JNI needs. */
     private fun feed() {
+        if (vad != null) { feedVad(); return }
         val s = stream ?: return
         val n = res.outN
         if (n <= 0) return
@@ -1384,11 +1521,12 @@ object Stt {
         val t0 = System.nanoTime()
         var k = 0
         while (k++ < 64 && r.isReady(s)) r.decode(s)
-        decodeNs += System.nanoTime() - t0
+        decodeNs.addAndGet(System.nanoTime() - t0)
     }
 
     /** A gap, a new format or the tap stopping: finish the current line as final text. */
     private fun endUtterance() {
+        if (vad != null) { endSentence(); return }
         val r = rec ?: return
         val s = stream ?: return
         feed()
@@ -1401,7 +1539,165 @@ object Stt {
         fed = 0L; lastPartial = ""
     }
 
-    /** To CaptionHub on the main thread, where its state and views live. */
+
+    // ---- whole sentence models (ptv-stt finds the sentences, ptv-stt-dec hears them) ----
+
+    /** The resampled sound to the VAD, one 32 ms window at a time. */
+    private fun feedVad() {
+        val v = vad ?: return
+        val n = res.outN
+        if (n <= 0) return
+        audioSamples += n
+        var i = 0
+        while (i < n) {
+            val k = minOf(VAD_WINDOW - vadN, n - i)
+            System.arraycopy(res.out, i, vadBuf, vadN, k)
+            vadN += k
+            i += k
+            if (vadN == VAD_WINDOW) { window(v); vadN = 0 }
+        }
+        res.outN = 0
+        fed = if (talking) sentN.toLong() else 0L
+    }
+
+    private fun window(v: Vad) {
+        v.acceptWaveform(vadBuf.copyOf())
+        val now = v.isSpeechDetected()
+        // Its own sentences are not used (they can run on for half a minute): only talking or not.
+        while (!v.empty()) v.pop()
+        if (now) {
+            if (!talking) {
+                talking = true
+                takePre()
+                lastPartialAsk = SystemClock.uptimeMillis()
+            }
+            add(vadBuf, VAD_WINDOW)
+            if (sentN >= MAX_SENTENCE) cutLong() else maybePartial()
+        } else {
+            if (talking) {
+                talking = false
+                add(vadBuf, VAD_WINDOW)
+                hear(sent.copyOf(sentN), true)
+                sentN = 0
+            }
+            keepPre(vadBuf)
+        }
+    }
+
+    /** A gap or the tap stopping: what was said so far is a sentence. */
+    private fun endSentence() {
+        feedVad()
+        if (talking) {
+            if (vadN > 0) add(vadBuf, vadN)
+            hear(sent.copyOf(sentN), true)
+        }
+        vad?.let { runCatching { it.reset() } }
+        clearSentence()
+    }
+
+    private fun clearSentence() {
+        talking = false
+        sentN = 0; vadN = 0; preN = 0; prePos = 0
+        fed = 0L
+    }
+
+    private fun add(b: FloatArray, n: Int) {
+        val k = minOf(n, sent.size - sentN)
+        System.arraycopy(b, 0, sent, sentN, k)
+        sentN += k
+    }
+
+    private fun keepPre(b: FloatArray) {
+        for (x in b) {
+            pre[prePos] = x
+            prePos = (prePos + 1) % PRE_SAMPLES
+        }
+        preN = minOf(PRE_SAMPLES, preN + b.size)
+    }
+
+    /** The quiet just before the talking starts the sentence, so its first word is whole. */
+    private fun takePre() {
+        val start = (prePos - preN + PRE_SAMPLES) % PRE_SAMPLES
+        for (k in 0 until preN) sent[k] = pre[(start + k) % PRE_SAMPLES]
+        sentN = preN
+        preN = 0
+    }
+
+    /** A sentence that ran too long: cut at the quietest 0.1 s of its last 2 s, so a word is rarely split. */
+    private fun cutLong() {
+        var best = sentN
+        var bestE = Float.MAX_VALUE
+        var at = maxOf(16_000, sentN - CUT_LOOK)
+        while (at + CUT_STEP <= sentN) {
+            var e = 0f
+            for (k in at until at + CUT_STEP) e += sent[k] * sent[k]
+            if (e < bestE) { bestE = e; best = at + CUT_STEP / 2 }
+            at += CUT_STEP / 2
+        }
+        hear(sent.copyOf(best), true)
+        val rest = sentN - best
+        System.arraycopy(sent, best, sent, 0, rest)
+        sentN = rest
+        lastPartialAsk = SystemClock.uptimeMillis()
+    }
+
+    private fun maybePartial() {
+        if (sentN < 16_000 || partialWaiting || waiting.get() > 0) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastPartialAsk < maxOf(OFF_PARTIAL_MS, lastDecodeMs * 3)) return
+        lastPartialAsk = now
+        hear(sent.copyOf(sentN), false)
+    }
+
+    /** Queues a sentence (or the part said so far, for a partial line) for ptv-stt-dec. */
+    private fun hear(data: FloatArray, fin: Boolean) {
+        if (data.size < MIN_SENTENCE) {
+            // Too short to hear, but a partial line may be up: the line ends empty.
+            if (fin) emit("", true)
+            return
+        }
+        if (fin && waiting.get() >= MAX_WAITING) {
+            if (!saidBehind) { saidBehind = true; log("STT the phone is behind, sentences are skipped until it catches up") }
+            emit("", true)
+            return
+        }
+        val gen = decGen
+        if (!fin) partialWaiting = true
+        waiting.incrementAndGet()
+        dec.post { decodeSentence(data, fin, gen) }
+    }
+
+    private fun decodeSentence(data: FloatArray, fin: Boolean, gen: Int) {
+        try {
+            if (!fin) partialWaiting = false
+            val r = offRec ?: return
+            if (gen != decGen) return
+            val t0 = System.nanoTime()
+            val s = r.createStream()
+            val text = try {
+                s.acceptWaveform(data, 16000)
+                r.decode(s)
+                r.getResult(s).text.trim()
+            } finally {
+                release(s)
+            }
+            val ns = System.nanoTime() - t0
+            decodeNs.addAndGet(ns)
+            lastDecodeMs = ns / 1_000_000
+            if (gen != decGen) return
+            val shown = filter?.take(text, fin, SystemClock.uptimeMillis()) ?: text
+            if (shown != text && Settings.get(KEY_LOG, false)) log("STT left out: ${text.length - shown.length} chars")
+            // A partial line that is all left out keeps the one before; a final one ends the line.
+            if (shown.isNotEmpty() || fin) emit(shown, fin)
+        } catch (t: Throwable) {
+            log("STT a sentence could not be heard: $t")
+        } finally {
+            waiting.decrementAndGet()
+            if (fin && waiting.get() == 0) saidBehind = false
+        }
+    }
+
+    /** To CaptionHub on the main thread, where its state and views live. Any thread. */
     private fun emit(text: String, fin: Boolean) {
         if (Settings.get(KEY_LOG, false)) log("STT ${if (fin) "final" else "partial"}: $text")
         if (liveMode) { LiveCaptions.onSttText(text, fin); return }
@@ -1442,7 +1738,7 @@ object Stt {
     }
 
     private fun rtf(): String =
-        if (audioSamples <= 0) "-" else String.format(Locale.US, "%.2f", decodeNs / 1e9 / (audioSamples / 16000.0))
+        if (audioSamples <= 0) "-" else String.format(Locale.US, "%.2f", decodeNs.get() / 1e9 / (audioSamples / 16000.0))
 
     // ---- test commands (DevBridge DEV_STT) ----
 
@@ -1517,7 +1813,7 @@ object Stt {
     private fun devStatus() {
         val rg = ring
         log("STT status on=${on()} hooked=$hooked" + (hookError?.let { " hookError=$it" } ?: "") +
-            " deferred=$hookDeferred native=$nativeOk broken=$broken loaded=${rec != null} lang=$loadedLang/${SttModels.chosen().lang} break=$inBreak" +
+            " deferred=$hookDeferred native=$nativeOk broken=$broken loaded=$loadedNow lang=$loadedLang/${SttModels.chosen().lang} break=$inBreak" +
             " active=${PbypWatch.active} visible=${PbypWatch.visible} target=$target" +
             " ring=${rg?.used() ?: "-"}/$SLOTS dropped=${rg?.dropped ?: 0} errors=$tapErrors tapOff=$tapOff" +
             " badFormat=$badFormat format=$curRate/$curCh speed=${rtf()} holds=$memoryHold/$thermalHold dev=$devBreak/$devFeeding/$devMain")

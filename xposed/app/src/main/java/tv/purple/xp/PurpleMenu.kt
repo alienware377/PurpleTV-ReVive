@@ -385,7 +385,9 @@ object PurpleMenu {
      * translation page, since live captions users look for it there; both rows share one setting.
      */
     private fun streamLanguage() = Drop("Stream language",
-        "The language the streamer speaks, so speech-to-text uses the speech model for it. Each language's model is its own download, under Player, During ad breaks",
+        "The language the streamer speaks, so speech-to-text uses the speech model for it. Each language's model is its own download, under Player, During ad breaks. " +
+            "Japanese, Filipino, Lithuanian and Auto hear a whole sentence at a time, so their captions come a moment later. " +
+            "Auto hears any language and translates each line from the language it is in, for streams that switch languages",
         SttModels.KEY, SttModels.labels(), def = SttModels.DEF, done = true)
 
     private val TRANSLATE: List<Item> = listOf(
@@ -618,11 +620,20 @@ object PurpleMenu {
             "https://huggingface.co/johnBamma/icefall-asr-ksponspeech-pruned-transducer-stateless7-streaming-2024-06-12"),
         Link("Chinese streaming Zipformer CTC by k2-fsa, Apache-2.0", "The Chinese speech model (small)",
             "https://huggingface.co/csukuangfj/icefall-streaming-zipformer-small-ctc-zh-2025-04-01"),
+        Link("ReazonSpeech k2 v2 by Reazon Human Interaction Lab, Apache-2.0", "The Japanese speech model",
+            "https://huggingface.co/reazon-research/reazonspeech-k2-v2"),
+        Link("Omnilingual ASR by Meta, Apache-2.0", "The many-language speech model behind Filipino, Lithuanian and Auto, " +
+            "converted for sherpa-onnx by csukuangfj",
+            "https://github.com/facebookresearch/omnilingual-asr"),
+        Link("Silero VAD by the Silero Team, MIT", "Finds where each sentence starts and ends for the Japanese and many-language models",
+            "https://github.com/snakers4/silero-vad"),
         Link("Captions downloads: licences and source", "The full licence texts of the engine and the English speech model, " +
             "and where their source is",
             PackPins.RELEASE_PAGE),
         Link("More speech models: licences and source", "The licence texts and sources of the speech models for other stream languages",
-            SttModels.RELEASE_PAGE2)
+            SttModels.RELEASE_PAGE2),
+        Link("Whole sentence speech models: licences and source", "The licence texts and sources of the Japanese and many-language speech models",
+            SttModels.RELEASE_PAGE3)
     )
 
     private val UPDATES = listOf(
@@ -971,7 +982,7 @@ object PurpleMenu {
 
     /** What a download row says: what the pack is, its sizes, and whether it is there or how far. */
     private fun packSummary(ctx: Context, model: Boolean): String =
-        (if (model) SttModels.chosen().let { "${it.label}, for the stream language above. ${shortCredit(it)}. " }
+        (if (model) SttModels.chosen().let { "${it.what.replaceFirstChar { c -> c.uppercase() }}, for the stream language above. ${shortCredit(it)}. " }
          else "sherpa-onnx ${PackPins.SHERPA_VERSION}, by k2-fsa (Apache-2.0), includes espeak-ng (GPL-3.0). ") +
             SttPacks.packLine(ctx, model)
 
@@ -986,7 +997,7 @@ object PurpleMenu {
      */
     private fun downloadPack(ctx: Context, model: Boolean, set: (String) -> Unit) {
         val m = SttModels.chosen()
-        val what = if (model) "${m.label} speech model" else "captions engine"
+        val what = if (model) m.what else "captions engine"
         if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
         if (SttPacks.packBusy(model)) { toast(ctx, "The $what is already downloading"); return }
         if (if (model) SttPacks.modelReady(ctx) else SttPacks.engineReady(ctx)) {
@@ -997,7 +1008,9 @@ object PurpleMenu {
         val tag = if (model) m.tag else PackPins.TAG
         // Plain text in a dialog, so the addresses are written out. Licences and source: the release page.
         val credit = if (model) "\n\n" + m.credit + ". Licence and source: " +
-                         (if (m.tag == PackPins.TAG) PackPins.RELEASE_PAGE else SttModels.RELEASE_PAGE2)
+                         (when (m.tag) { PackPins.TAG -> PackPins.RELEASE_PAGE; SttModels.TAG3 -> SttModels.RELEASE_PAGE3; else -> SttModels.RELEASE_PAGE2 }) +
+                         (if (m.kind == SttModel.Kind.OMNILINGUAL_CTC) "\n\nIt needs a lot of memory while captions run (about 400 MB more), " +
+                             "so it suits phones with 8 GB or more." else "")
                      else "\n\nsherpa-onnx by k2-fsa (Apache-2.0) with ONNX Runtime (MIT); it includes espeak-ng (GPL-3.0). " +
                          "Licences and source: ${PackPins.RELEASE_PAGE}"
         android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)

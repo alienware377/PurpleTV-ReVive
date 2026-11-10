@@ -18,6 +18,11 @@ class LangGuessTest {
         assertEquals("nl", lang("ik weet niet waarom het spel vandaag zo moeilijk is"))
         assertEquals("pl", lang("nie wiem dlaczego ta gra jest dzisiaj tak trudna"))
         assertEquals("tr", lang("bu oyun neden bu kadar zor bilmiyorum ama çok güzel"))
+        assertEquals("tl", lang("hindi ko alam kung bakit ang hirap ng laro ngayon"))
+        assertEquals("lt", lang("aš nežinau kodėl šis žaidimas šiandien toks sunkus bet labai gerai"))
+        // As the many-language speech model writes them: no capitals, no punctuation.
+        assertEquals("tl", lang("ayaw ko pa naman ibitinin mamaya kasi ano last one hour nalang ipagpabukas ko pa di ba"))
+        assertEquals("lt", lang("šveicarija ir austrija pasirašė memorandumą kuriuo išreiškia norą prisijungti prie europos"))
     }
 
     @Test fun otherScripts() {

@@ -29,7 +29,7 @@ object LangGuess {
 
     /** The languages this can name, for the settings page and tests. */
     val LANGS: Set<String> = setOf("en", "es", "pt", "de", "fr", "it", "nl", "pl", "tr", "ru", "uk",
-        "zh", "ja", "ko", "ar", "fa", "he", "el", "hi", "th")
+        "zh", "ja", "ko", "ar", "fa", "he", "el", "hi", "th", "tl", "lt")
 
     /** Letters needed before Latin or Cyrillic text is judged at all. */
     private const val MIN_LETTERS = 8
@@ -252,6 +252,25 @@ object LangGuess {
         "burada orada evet hayır teşekkürler sağol merhaba selam iyi güzel oyun oynamak abi kanka " +
         "olur oldu olsun benim senin onun bizim sizin artık hep hiç böyle şöyle diye bile çünkü"
     )
+    // Filipino as it is spoken and written in chat, with the short spellings people type
+    // ("yung", "nyo", "lng"). "at" and "ay" are left out: English has "at", and "ay" is too short.
+    private val TL = words(
+        "ang ng mga sa na ko mo ako ka siya sya kami tayo kayo sila ito iyan iyon yan yun yung yng " +
+        "dito diyan dyan doon dun hindi di oo opo po ba lang lng naman nmn talaga tlga kasi kc pero " +
+        "kung para wala meron ano bakit paano saan sino kailan sige salamat ganun ganon din rin pa " +
+        "nga nang kaya pala muna akin amin atin natin namin niya nya nila kanila niyo nyo ninyo mas " +
+        "lahat baka gusto ayaw kita tapos dapat ulit pag habang ngayon kanina mamaya bukas laro " +
+        "maglaro naglalaro kayong akong sabi alam tingin parang ganito ganyan sobra grabe hala " +
+        "kuya ate pare lods idol nalang nalng"
+    )
+    // Lithuanian.
+    private val LT = words(
+        "ir yra kad ne aš tu jis ji mes jūs jie jos tai kaip bet su į iš už per prie nuo apie dar " +
+        "jau tik labai čia ten kas kur kodėl kada taip nėra buvo bus būti man tau mano tavo savo jo " +
+        "mūsų jūsų viskas nieko gerai ačiū labas sveiki žaidimas žaisti dabar kai arba nes ar o " +
+        "galima reikia noriu nori gal gali manau žinau tikrai visai visi kitas kita šitas šita toks " +
+        "tokia kartu dėl jeigu nors tada vėl šiandien vakar rytoj"
+    )
     private val RU = words(
         "и в не на я что он с а как это по но они к у мы из за вы так же от все она то бы был мне " +
         "о только его еще ещё нет да ты меня уже для вот если когда или ну даже было там чтобы здесь " +
@@ -267,7 +286,8 @@ object LangGuess {
     )
 
     private val LATIN_LISTS: Map<String, Set<String>> = mapOf(
-        "en" to EN, "es" to ES, "pt" to PT, "de" to DE, "fr" to FR, "it" to IT, "nl" to NL, "pl" to PL, "tr" to TR
+        "en" to EN, "es" to ES, "pt" to PT, "de" to DE, "fr" to FR, "it" to IT, "nl" to NL, "pl" to PL, "tr" to TR,
+        "tl" to TL, "lt" to LT
     )
     private val CYRILLIC_LISTS: Map<String, Set<String>> = mapOf("ru" to RU, "uk" to UK)
 
@@ -279,7 +299,9 @@ object LangGuess {
         "fr" to "çœèêëîïûù",
         "it" to "ìò",
         "pl" to "łąęśźżćń",
-        "tr" to "ğşıçöü"
+        "tr" to "ğşıçöü",
+        // ą and ę are Polish too; ė, į, ų and ū are only Lithuanian.
+        "lt" to "ėįųū"
     )
     private val CYRILLIC_HINTS: Map<String, String> = mapOf(
         "ru" to "ыэъё",
