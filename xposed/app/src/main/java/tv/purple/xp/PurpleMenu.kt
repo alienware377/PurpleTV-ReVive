@@ -409,7 +409,7 @@ object PurpleMenu {
             "How long a caption line stays on screen at least before the next ones take its place, so there is time to read it (lines look)",
             LiveCaptions.KEY_SECONDS, min = 2, max = 30, def = LiveCaptions.DEF_SECONDS, done = true),
         Custom("Move the live captions",
-            "Put them anywhere on the screen, over the chat too. Open a live stream with live captions on first",
+            "Put them anywhere on the screen, over the chat too. Tap here, then go back to the stream",
             { ctx -> moveCaptions(ctx) }),
         Custom("Put the live captions back",
             "Back low in the video, where they start",
@@ -720,13 +720,11 @@ object PurpleMenu {
         openPages.clear()
     }
 
-    /** Closes the menu, then shows the live captions with a handle to drag them by. */
+    /** Closes the menu; back on the stream, the live captions show with a handle to drag them by. */
     private fun moveCaptions(ctx: Context) {
+        if (!LiveCaptions.startMove()) { toast(ctx, "Turn live captions on first, then move them from here"); return }
         closeAll()
-        // The stream screen needs its focus back before the captions count as shown.
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (!LiveCaptions.startMove()) toast(ctx, "Open a live stream with live captions on first, then move them from here")
-        }, 600L)
+        toast(ctx, "Go back to the stream and drag the captions by their handle, then tap Done")
     }
 
     private fun showScreen(ctx: Context, title: String, items: List<Item>) {

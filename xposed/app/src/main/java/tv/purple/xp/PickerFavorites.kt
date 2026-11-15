@@ -86,14 +86,22 @@ object PickerFavorites {
 
     /**
      * Register a global-layout listener on the chat-input window root. Called by
-     * [EmoteAutocomplete.attach] with the chat input. On each layout pass, if the favorites strip
-     * isn't already injected into the live emote_picker, scan the tree for it and inject.
+     * [EmoteAutocomplete.attach] with the chat input.
      */
     fun attachRoot(input: View) {
         val root = runCatching { input.rootView }.getOrNull() ?: return
-        if (!ROOTED.add(root)) return
         // The delete button lives in this window in 31.1.2's picker.
         PickerBackspace.watch(root)
+        scanRoot(root, "chat root")
+    }
+
+    /**
+     * On each layout pass of [root]'s window, if the favorites strip isn't already injected into
+     * the live emote_picker, scan the tree for it and inject. Used for the stream screen's window
+     * (31.1.2) and for the picker sheet's own window (31.7.0).
+     */
+    private fun scanRoot(root: View, what: String) {
+        if (!ROOTED.add(root)) return
         runCatching {
             root.viewTreeObserver.addOnGlobalLayoutListener {
                 runCatching {
@@ -109,7 +117,7 @@ object PickerFavorites {
                     onPaletteReady(container)
                 }.onFailure { log("PF layout scan error: $it") }
             }
-            log("PF global-layout listener attached to chat root")
+            log("PF global-layout listener attached to $what")
         }.onFailure { log("PF attachRoot error: $it") }
     }
 
@@ -143,9 +151,16 @@ object PickerFavorites {
         val palette = findByEntry(container, "emote_palette")
         val basePad = palette?.paddingTop ?: 0
         (palette as? ViewGroup)?.clipToPadding = true
+        // Padded on the next frame, never from inside this layout pass: in 31.7.0 the grid has
+        // already been laid out by then, and a padding change at that moment left it with no
+        // cells at all until something else made it lay out again.
         strip.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
             val p = palette ?: return@addOnLayoutChangeListener
-            if (p.paddingTop != basePad + v.height) p.setPadding(p.paddingLeft, basePad + v.height, p.paddingRight, p.paddingBottom)
+            if (p.paddingTop == basePad + v.height) return@addOnLayoutChangeListener
+            p.post {
+                val want = basePad + v.height
+                if (p.paddingTop != want) p.setPadding(p.paddingLeft, want, p.paddingRight, p.paddingBottom)
+            }
         }
         val row = host
         curRow = WeakReference(row)
@@ -164,14 +179,18 @@ object PickerFavorites {
 
     // ---------------------------------------------------------------- newer picker (dialog)
     //
-    // From Twitch 31.x the emote picker is a Jetpack Compose bottom sheet in its own dialog
-    // window, so the activity-root layout listener above can never see it, and the emote_picker /
-    // emote_palette view ids no longer exist at runtime at all. Confirmed on device: the sheet's
-    // whole subtree is a single androidx.compose.ui.platform.ComposeView.
+    // From Twitch 31.7.0 the emote picker is a Material bottom sheet in its own dialog window, so
+    // the activity-root layout listener above can never see it. The sheet's content is a
+    // ComposeView (the Emotes and GIFs tabs), but the Emotes tab still hosts the classic picker
+    // views inside it: emote_picker, emote_palette and the bottom bar with the delete button.
     //
-    // What is still a real view with a real id is the Material sheet container itself,
-    // design_bottom_sheet. We catch it when it is added to its window (ViewGroup.addView), which
-    // is framework code and so cannot be obfuscated.
+    // So the strip goes into that emote_picker, as in 31.1.2, and never on top of the sheet.
+    // Twitch sizes its picker to the part of the sheet on screen, counted from the sheet's top:
+    // a strip that pushed the ComposeView down pushed the bottom bar, and the delete button,
+    // off the bottom of the screen by its own height.
+    //
+    // The sheet container itself, design_bottom_sheet, is caught when it is added to its window
+    // (ViewGroup.addView), which is framework code and so cannot be obfuscated.
 
     @Volatile private var dialogHooked = false
 
@@ -267,10 +286,11 @@ object PickerFavorites {
     private fun tryInjectSheet(sheet: ViewGroup) {
         // In 31.7.0 the picker, and its delete button, live in this sheet's own window.
         PickerBackspace.watch(sheet.rootView)
-        if (INJECTED.contains(sheet)) { curRow?.get()?.let { FavBar.render(it) }; return }
         val tapped = android.os.SystemClock.uptimeMillis() - pickerTappedAt < TAP_WINDOW_MS
         if (!tapped && !isEmotePickerSheet(sheet)) return
-        injectIntoSheet(sheet)
+        // Compose adds the classic picker a frame or two later, and builds a new one each time the
+        // Emotes tab comes back, so the sheet's window is scanned on every layout pass.
+        scanRoot(sheet.rootView, "picker sheet")
     }
 
     /**
@@ -308,34 +328,6 @@ object PickerFavorites {
             action(v)
             if (v is ViewGroup) for (i in 0 until v.childCount) stack.addLast(v.getChildAt(i))
         }
-    }
-
-    private fun injectIntoSheet(sheet: ViewGroup) {
-        if (!enabled()) return
-        if (!INJECTED.add(sheet)) return
-        val ctx = sheet.context ?: return
-        val (strip, host) = FavBar.buildStrip(ctx)
-
-        sheet.addView(strip, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP
-        ))
-        // Push the composed picker down rather than letting the strip sit over it, by however tall
-        // the strip is now (it grows in rows mode). A margin, not padding: the sheet is a
-        // FrameLayout and Compose lays its own content out inside whatever box it is given.
-        strip.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-            val h = v.height
-            for (i in 0 until sheet.childCount) {
-                val child = sheet.getChildAt(i) ?: continue
-                if (child === strip) continue
-                val lp = child.layoutParams as? ViewGroup.MarginLayoutParams ?: continue
-                if (lp.topMargin != h) { lp.topMargin = h; child.post { child.layoutParams = lp } }
-            }
-        }
-
-        curRow = WeakReference(host)
-        curCtx = WeakReference(ctx)
-        FavBar.render(host)
-        log("PF favorites strip injected into the picker bottom sheet")
     }
 
     private fun dp(ctx: Context, v: Float): Int =

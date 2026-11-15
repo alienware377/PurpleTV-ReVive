@@ -25,8 +25,9 @@ object PickerBackspace {
      * layout-pass walks never see.
      */
     fun install(lp: LoadPackageParam) {
-        // Twitch hides its button when the picker opens without the keyboard (on tablets and
-        // unfolded phones, for one). Its picker mode enum keeps readable getters.
+        // Twitch's picker mode enum (readable getters) decides if the button is there at all.
+        // 31.1.2 and 31.7.0 only ever build the picker WITH_KEYBOARD, which has it on, so this is
+        // a guard for a build that uses NO_KEYBOARD.
         runCatching {
             XposedHelpers.findAndHookMethod(TwitchVersion.pick("rpf", "oxf"), lp.classLoader, "getDeleteButtonEnabled", object : XC_MethodHook() {
                 override fun afterHookedMethod(p: MethodHookParam) {
@@ -54,14 +55,14 @@ object PickerBackspace {
     private val WATCHED = java.util.Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
 
     /**
-     * The getter hook above can be skipped: the getter is tiny, and once ART compiles the picker
-     * code it may build it straight into its caller, so the button went missing again after a while.
-     * So the picker's own window is watched too (the sheet in 31.7.0, the stream screen in 31.1.2):
-     * after each layout pass, a hidden button is shown again. Only that window pays for it, once
-     * per layout, with one findViewById.
+     * The picker's own window is watched too (the sheet in 31.7.0, the stream screen in 31.1.2):
+     * after each layout pass, a hidden button is shown again, should anything hide it past the
+     * getter above. Only that window pays for it, once per layout, with one findViewById.
      *
-     * It also logs once per window when the button is there but cut off, for example pushed out
-     * of a sheet of fixed height, which no visibility fix can help with.
+     * It also logs once per window when the button is there but cut off, which no visibility fix
+     * can help with. That was why the button kept going missing in 31.7.0: it was never hidden
+     * (31.7.0 always builds the picker WITH_KEYBOARD), but the favorites strip, then put on top of
+     * the sheet, pushed the picker's bottom bar off the screen. See [PickerFavorites].
      */
     private const val MAX_RESHOW = 50
 
@@ -87,7 +88,9 @@ object PickerBackspace {
                         val seen = b.getGlobalVisibleRect(r)
                         if (!seen || r.height() < b.height || r.width() < b.width) {
                             reported = true
-                            log("PB delete button cut off: visible ${r.width()}x${r.height()} of ${b.width}x${b.height}")
+                            val at = IntArray(2).also { b.getLocationOnScreen(it) }
+                            log("PB delete button cut off: ${if (seen) "visible ${r.width()}x${r.height()}" else "not on screen"}" +
+                                " of ${b.width}x${b.height}, top at ${at[1]} in a window ${root.height} tall")
                         }
                     }
                 } catch (_: Throwable) {}

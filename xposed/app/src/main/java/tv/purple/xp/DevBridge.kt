@@ -261,20 +261,44 @@ object DevBridge {
         }
     }
 
+    /** Every window of the app (dialogs and sheets included), falling back to the activity. */
+    @Suppress("UNCHECKED_CAST")
+    private fun windowRoots(): List<View> = runCatching {
+        val g = Class.forName("android.view.WindowManagerGlobal")
+        val inst = g.getMethod("getInstance").invoke(null)
+        (g.getDeclaredField("mRoots").apply { isAccessible = true }.get(inst) as List<Any>)
+            .mapNotNull { r -> runCatching { r.javaClass.getMethod("getView").invoke(r) as? View }.getOrNull() }
+    }.getOrNull() ?: listOfNotNull(ViewHider.currentActivity()?.window?.decorView)
+
+    /** Logs each view named [entry] with its class, size, padding, parent and two levels of children. */
     private fun probe(entry: String) {
-        val act = top?.get() ?: ViewHider.currentActivity()
-            ?: run { log("DEV probe: no activity"); return }
-        act.runOnUiThread {
-            val root = act.window?.decorView ?: return@runOnUiThread
-            val out = ArrayList<String>()
-            val stack = ArrayDeque<android.view.View>(); stack.add(root)
-            while (stack.isNotEmpty()) {
-                val v = stack.removeLast()
-                val e = runCatching { v.resources.getResourceEntryName(v.id) }.getOrNull()
-                if (e == entry) out.add("vis=${v.visibility} shown=${v.isShown} ${v.width}x${v.height}")
-                if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            fun desc(v: View): String {
+                val loc = IntArray(2).also { v.getLocationOnScreen(it) }
+                return "${v.javaClass.name.substringAfterLast('.')}[${Res.entry(v) ?: "-"}] " +
+                    "vis=${v.visibility} shown=${v.isShown} ${v.width}x${v.height} at ${loc[0]},${loc[1]} " +
+                    "pad=${v.paddingTop}/${v.paddingBottom}" +
+                    ((v as? android.view.ViewGroup)?.let { " kids=${it.childCount}" } ?: "")
             }
-            log("DEV probe $entry: ${out.size} -> ${out.joinToString(" | ")}")
+            var n = 0
+            for (root in windowRoots()) {
+                val stack = ArrayDeque<View>(); stack.add(root)
+                while (stack.isNotEmpty()) {
+                    val v = stack.removeLast()
+                    if (v is android.view.ViewGroup) for (k in 0 until v.childCount) stack.add(v.getChildAt(k))
+                    if (Res.entry(v) != entry) continue
+                    n++
+                    log("DEV probe $entry: ${desc(v)} parent=${(v.parent as? View)?.let { desc(it) }}")
+                    val g = v as? android.view.ViewGroup ?: continue
+                    for (k in 0 until minOf(g.childCount, 12)) {
+                        val c = g.getChildAt(k)
+                        log("DEV probe   - ${desc(c)}")
+                        val cg = c as? android.view.ViewGroup ?: continue
+                        for (j in 0 until minOf(cg.childCount, 4)) log("DEV probe       - ${desc(cg.getChildAt(j))}")
+                    }
+                }
+            }
+            log("DEV probe $entry: $n found")
         }
     }
 

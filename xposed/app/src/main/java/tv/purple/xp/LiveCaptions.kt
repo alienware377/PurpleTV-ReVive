@@ -51,7 +51,10 @@ object LiveCaptions {
     /** Seconds each line stays on screen at least, in the lines look. */
     const val KEY_SECONDS = "live_captions_seconds"
     const val DEF_SECONDS = 6
-    /** "x,y": where the captions are, as shares of the room they can move in. Empty: the default place. */
+    /**
+     * "x,y": where the captions are. x is the box's middle as a share of the screen's width, y its
+     * top as a share of the room it can move in. Empty: the default place.
+     */
     const val KEY_POS = "live_captions_pos"
 
     private const val TAG = "ptv_live_captions"
@@ -216,15 +219,28 @@ object LiveCaptions {
 
     /**
      * From the menu: shows the captions with a handle and Done, so they can be dragged anywhere.
-     * False when no stream is on screen to place them over.
+     * The menu lives in Twitch's settings, away from the stream, so the move starts the next
+     * time the captions are on screen (within [MOVE_ASK_MS]). False when live captions are off.
      */
     fun startMove(): Boolean {
-        if (!showing) return false
+        if (!on()) return false
+        moveAsked = SystemClock.uptimeMillis()
+        main.post { if (showing) beginMove() }
+        return true
+    }
+
+    private fun beginMove() {
+        moveAsked = 0L
         moving = true
         builtStyle = -1
         render()
-        return true
     }
+
+    @Volatile private var moveAsked = 0L
+    private const val MOVE_ASK_MS = 10 * 60_000L
+
+    /** True while a finger is dragging the box: [place] leaves it where the finger has it. */
+    private var dragging = false
 
     private fun endMove() {
         moving = false
@@ -271,6 +287,9 @@ object LiveCaptions {
             if (!now) { lines.clear(); waiting.clear(); partial = ""; ccRow = ""; lastText = ""; moving = false; textRef?.get()?.text = "" }
             Stt.poke()
         }
+        if (now && moveAsked != 0L) {
+            if (SystemClock.uptimeMillis() - moveAsked < MOVE_ASK_MS) beginMove() else moveAsked = 0L
+        }
         val login = RefreshButton.liveLogin()
         if (login != null && login != historyOf) { history.clear(); historyOf = login }
         var box = boxRef?.get()
@@ -316,7 +335,10 @@ object LiveCaptions {
             text = "≡  " + I18n.t(if (moving) "Drag to move" else "Captions")
             setTextColor(0xFFBFBFC8.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // The label keeps its own width, so a short caption cannot squeeze the chips off the box;
+        // in the history box, which is wider, the gap pushes the chips to the right.
+        handle.addView(View(ctx), LinearLayout.LayoutParams(0, 0, 1f))
         if (moving) {
             handle.addView(chip(ctx, "Reset") { Settings.setString(KEY_POS, ""); builtStyle = -1; render() })
             handle.addView(chip(ctx, "Done") { endMove() })
@@ -371,13 +393,16 @@ object LiveCaptions {
         var dy = 0f
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { dx = box.x - e.rawX; dy = box.y - e.rawY }
+                MotionEvent.ACTION_DOWN -> { dragging = true; dx = box.x - e.rawX; dy = box.y - e.rawY }
                 MotionEvent.ACTION_MOVE -> {
                     box.x = (e.rawX + dx).coerceIn(0f, (content.width - box.width).coerceAtLeast(0).toFloat())
                     box.y = (e.rawY + dy).coerceIn(0f, (content.height - box.height).coerceAtLeast(0).toFloat())
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val fx = box.x / (content.width - box.width).coerceAtLeast(1)
+                    dragging = false
+                    // Across, the middle of the box is kept, so longer and shorter lines stay
+                    // centred where it was dropped; down, its top as a share of the room.
+                    val fx = (box.x + box.width / 2f) / content.width.coerceAtLeast(1)
                     val fy = box.y / (content.height - box.height).coerceAtLeast(1)
                     Settings.setString(KEY_POS, String.format(Locale.US, "%.4f,%.4f", fx.coerceIn(0f, 1f), fy.coerceIn(0f, 1f)))
                 }
@@ -387,8 +412,8 @@ object LiveCaptions {
     }
 
     /**
-     * Where the box goes: the place picked, as a share of the room it can move in, or else low in
-     * the video, centred. The lines are never wider than 90% of the video; the box takes most of
+     * Where the box goes: the place picked (see [KEY_POS]), kept on screen, or else low in the
+     * video, centred. The lines are never wider than 90% of the video; the box takes most of
      * the video's width and about a third of the screen's height.
      */
     private fun place(box: LinearLayout, vid: View, content: View) {
@@ -405,11 +430,12 @@ object LiveCaptions {
             if (tv.maxWidth != maxW) tv.maxWidth = maxW
         }
         box.visibility = View.VISIBLE
+        if (dragging) return
         val w = if (box.width > 0) box.width else box.layoutParams.width.coerceAtLeast(0)
         val h = if (box.height > 0) box.height else 0
         val pos = storedPlace()
         if (pos != null) {
-            box.x = pos.first * (content.width - w).coerceAtLeast(0)
+            box.x = (pos.first * content.width - w / 2f).coerceIn(0f, (content.width - w).coerceAtLeast(0).toFloat())
             box.y = pos.second * (content.height - h).coerceAtLeast(0)
             return
         }
