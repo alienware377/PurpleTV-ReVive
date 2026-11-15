@@ -3,6 +3,7 @@ package tv.purple.xp
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.OnlineZipformer2CtcModelConfig
@@ -63,7 +64,9 @@ class SttModel(
         /** A whole sentence Zipformer transducer. */
         OFFLINE_TRANSDUCER(listOf("encoder", "decoder", "joiner", "tokens", "vad"), offline = true),
         /** Meta's Omnilingual ASR CTC model, one model for every language it knows. */
-        OMNILINGUAL_CTC(listOf("model", "tokens", "vad"), offline = true)
+        OMNILINGUAL_CTC(listOf("model", "tokens", "vad"), offline = true),
+        /** OpenAI's Whisper: about a hundred languages, and it names the one it heard. */
+        WHISPER(listOf("encoder", "decoder", "tokens", "vad"), offline = true)
     }
 
     val unpackedBytes: Long get() = entries.values.sumOf { it.bytes }
@@ -90,7 +93,11 @@ object SttModels {
     const val TAG3 = "captions-pack-3"
     const val RELEASE_PAGE3 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG3
 
-    /** The stream language of the many-language model when no language is named. */
+    /** The pre-release with Whisper base, the model behind Auto. */
+    const val TAG4 = "captions-pack-4"
+    const val RELEASE_PAGE4 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG4
+
+    /** The stream language that hears any language: Whisper, which names each sentence's language. */
     const val AUTO = "auto"
 
     /** English: the captions-pack-1 model, read from PackPins, which never changes. */
@@ -308,7 +315,7 @@ object SttModels {
         ),
         entries = MANY_ENTRIES,
         dir = "model-mul",
-        what = "many-language speech model (Filipino, Lithuanian and Auto)",
+        what = "many-language speech model (Filipino and Lithuanian)",
         script = script
     )
 
@@ -316,7 +323,32 @@ object SttModels {
         JA,
         many("tl", "Filipino", SpeechScript.Mode.LATIN),
         many("lt", "Lithuanian", SpeechScript.Mode.LATIN),
-        many(AUTO, "Auto (any language)", SpeechScript.Mode.AUTO)
+        // Auto: csukuangfj/sherpa-onnx-whisper-base at bb53ee204431c90d314c1cc08d28d23e5b7927cc
+        SttModel(
+            lang = AUTO, label = "Auto (any language)", tag = TAG4,
+            asset = "purpletv-captions-model-whisper-base.zip",
+            sha256 = "130a675acdd05aa54d51f9cad2f3a8a1c44982170bf2bf950538197969d09315", bytes = 95984094L,
+            kind = SttModel.Kind.WHISPER, modelType = "",
+            licence = "MIT",
+            credit = "Whisper base by OpenAI (https://github.com/openai/whisper), MIT, converted for sherpa-onnx by csukuangfj",
+            files = mapOf(
+                "encoder" to "base-encoder.int8.onnx",
+                "decoder" to "base-decoder.int8.onnx",
+                "tokens" to "base-tokens.txt",
+                "vad" to "silero_vad.onnx"
+            ),
+            entries = mapOf(
+                "base-encoder.int8.onnx" to PackPins.FilePin(29120534L, "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"),
+                "base-decoder.int8.onnx" to PackPins.FilePin(130672026L, "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d"),
+                "base-tokens.txt" to PackPins.FilePin(816730L, "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"),
+                "silero_vad.onnx" to PackPins.FilePin(1807522L, "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"),
+                "LICENSE.txt" to PackPins.FilePin(1324L, "cd4c085db78bbbb4d9cfbb37bf500c083da55b7e6caa9c910b857cd8f50ec781"),
+                "LICENSE-MIT-whisper.txt" to PackPins.FilePin(1063L, "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"),
+                "LICENSE-MIT-silero-vad.txt" to PackPins.FilePin(1075L, "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"),
+                "README.txt" to PackPins.FilePin(2187L, "310b0397083cdb992da65dc1ae63b75b3435bcebe2404e3c290261eaa197e35d")
+            ),
+            what = "Auto speech model (Whisper base)"
+        )
     )
 
     /** Every language in the order the settings page lists them; the stored number is the place here. */
@@ -365,6 +397,9 @@ object SttModels {
             SttModel.Kind.OFFLINE_TRANSDUCER -> base.copy(transducer = OfflineTransducerModelConfig(
                 encoder = path("encoder"), decoder = path("decoder"), joiner = path("joiner")))
             SttModel.Kind.OMNILINGUAL_CTC -> base.copy(omnilingual = OfflineOmnilingualAsrCtcModelConfig(model = path("model")))
+            // No language named: Whisper finds it for every sentence and says which it was.
+            SttModel.Kind.WHISPER -> base.copy(whisper = OfflineWhisperModelConfig(
+                encoder = path("encoder"), decoder = path("decoder"), language = "", task = "transcribe"))
             else -> error("${m.lang} is a streaming model, see modelConfig")
         }
     }

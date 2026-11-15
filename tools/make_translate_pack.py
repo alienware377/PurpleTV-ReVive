@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds the offline translation packs for the GitHub pre-releases translate-pack-1 and -2.
+"""Builds the offline translation packs for the GitHub pre-releases translate-pack-1, -2 and -3.
 
 Run it with python3 -I (no site packages are needed, only the standard library):
 
@@ -10,6 +10,9 @@ Each release is built on its own and never changes once published:
     the English into X models;
   - translate-pack-2: one into English model per chat language (es-en, de-en and so on), which
     translate much better than mul-en. It has no engine zip; the engine stays in translate-pack-1.
+  - translate-pack-3: Japanese, Filipino and Lithuanian, both ways. There is no Xenova conversion
+    of these, so they come from local folders made by tools/convert_marian.py (and, for Japanese,
+    fine-tuned for live chat first by tools/train_marian.py); see MODELS_3 for where each comes from.
 
 What it does:
   - downloads the ONNX Runtime Android AAR from Maven Central and takes its two arm64 libraries
@@ -45,6 +48,7 @@ HF = "https://huggingface.co/"
 
 PACK_1 = "translate-pack-1"
 PACK_2 = "translate-pack-2"
+PACK_3 = "translate-pack-3"
 
 # Model name (as used in the app) -> (HuggingFace repo, commit, release it is published in). Each
 # is a MarianMT model by Helsinki-NLP. The commits are pinned so the CI and a local run fetch the
@@ -70,6 +74,35 @@ MODELS = {
     "zh-en": ("Xenova/opus-mt-zh-en", "39d480d52a9ea3065a1f117adfe4dbc55de10e6f", PACK_2),
     "ar-en": ("Xenova/opus-mt-ar-en", "09c7556866400dcc53562ba8d7035119e7d9a2c1", PACK_2),
 }
+
+
+# translate-pack-3: name -> (folder under the --from directory, licence text). The folders hold the
+# converted files with the same names as the Xenova ones (see tools/convert_marian.py).
+CC_BY = "Licence: CC-BY 4.0, https://creativecommons.org/licenses/by/4.0/\n"
+CC_BY_SA = "Licence: CC-BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/\n"
+CONVERTED = "ONNX conversion with 8 bit weights by PurpleTV ReVive (tools/convert_marian.py).\n"
+MODELS_3 = {
+    "tl-en": ("tl-en",
+              "Opus-MT tl-en by the Language Technology Research Group at the University of Helsinki\n"
+              "(Helsinki-NLP), https://huggingface.co/Helsinki-NLP/opus-mt-tl-en\n"
+              "(commit 8d2dee91f8b3fa48dda8ec06ee2af8f24970dcbc)\n" + CC_BY + CONVERTED),
+    "en-tl": ("en-tl",
+              "Opus-MT en-tl by the Language Technology Research Group at the University of Helsinki\n"
+              "(Helsinki-NLP), https://huggingface.co/Helsinki-NLP/opus-mt-en-tl\n"
+              "(commit e46e1761492cb6a6fb9515a72bb55ca654815ca5)\n" + CC_BY + CONVERTED),
+    "lt-en": ("lt-en",
+              "Tatoeba Challenge lit-eng model by Helsinki-NLP, University of Helsinki, in the\n"
+              "Hugging Face copy https://huggingface.co/Neurora/opus-tatoeba-lit-eng\n"
+              "(commit 28d29e069eaff3db3fd14fc7da7ca7d2904c4204; that copy is marked Apache-2.0)\n" + CC_BY + CONVERTED),
+    "en-lt": ("en-lt",
+              "Tatoeba Challenge eng-lit model (with back-translation) by Helsinki-NLP, University of\n"
+              "Helsinki, in the Hugging Face copy https://huggingface.co/Neurora/opus-tatoeba-eng-lit-bt\n"
+              "(commit d7b351a8e28921e8a27f0aa116d127409f00ce89; that copy is marked Apache-2.0)\n" + CC_BY + CONVERTED),
+    "ja-en": ("ja-en", None),
+    "en-ja": ("en-ja", None),
+}
+# The Japanese models are fine-tuned; their licence text is written next to them by the training
+# step, in LICENSE.txt of their folder, and taken from there.
 
 # Files taken from each model repo, and the name each gets inside the zip.
 MODEL_FILES = [
@@ -204,6 +237,32 @@ def build_model(out, cache, name, repo, commit):
     return zname, size, sha, entries, commit
 
 
+def build_local_model(out, src, name, folder, licence):
+    """A translate-pack-3 model from a local folder of converted files."""
+    d = os.path.join(src, folder)
+    entries = []
+    unpacked = os.path.join(out, "models", name)
+    os.makedirs(unpacked, exist_ok=True)
+    for _, dst in MODEL_FILES:
+        data = open(os.path.join(d, dst), "rb").read()
+        entries.append((dst, data))
+        with open(os.path.join(unpacked, dst), "wb") as f:
+            f.write(data)
+    if licence is None:
+        licence = open(os.path.join(d, "LICENSE.txt"), encoding="utf-8").read()
+    readme = (
+        "PurpleTV ReVive offline translation model %s\n\n"
+        "A MarianMT model converted to ONNX for PurpleTV ReVive's offline translator. Where it comes\n"
+        "from and its licence are in LICENSE.txt. Files:\n%s"
+        % (name, "".join("  %s   %d bytes, SHA-256 %s\n" % (n, len(b), sha256_bytes(b)) for n, b in entries))
+    ).encode()
+    entries.append(("LICENSE.txt", licence.encode()))
+    entries.append(("README.txt", readme))
+    zname = "purpletv-translate-model-%s.zip" % name
+    size, sha = write_zip(os.path.join(out, zname), entries)
+    return zname, size, sha, entries
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0].startswith("-"):
@@ -211,17 +270,36 @@ def main():
     out = os.path.abspath(args[0])
     only = None
     release = PACK_1
+    src = None
     i = 1
     while i < len(args):
         if args[i] == "--models" and i + 1 < len(args):
             only = args[i + 1].split(",")
         elif args[i] == "--release" and i + 1 < len(args):
             release = args[i + 1]
+        elif args[i] == "--from" and i + 1 < len(args):
+            src = args[i + 1]
         else:
             raise SystemExit(__doc__)
         i += 2
-    if release not in (PACK_1, PACK_2):
+    if release not in (PACK_1, PACK_2, PACK_3):
         raise SystemExit("unknown release " + release)
+    if release == PACK_3:
+        if not src:
+            raise SystemExit("translate-pack-3 needs --from FOLDER with the converted models")
+        models = []
+        for m, (folder, licence) in MODELS_3.items():
+            if only and m not in only:
+                continue
+            zname, size, sha, entries = build_local_model(out, src, m, folder, licence)
+            print("%s %d %s" % (zname, size, sha))
+            models.append("        // %s, from %s\n        ModelPin(\"%s\", \"%s\", \"%s\", %dL, mapOf(\n%s\n        ), tag = TAG_3)"
+                          % (m, folder, m, zname, sha, size, kotlin_entries(entries, "            ")))
+        text = "        // " + release + "\n" + ",\n".join(models) + "\n"
+        with open(os.path.join(out, "pins-%s.txt" % release), "w") as f:
+            f.write(text)
+        print(text)
+        return
     cache = os.path.join(out, "cache")
     os.makedirs(cache, exist_ok=True)
     pins = []

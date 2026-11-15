@@ -351,7 +351,7 @@ object FavBar {
         text = if (short) "+" else "+ New group"
         setTextColor(PURPLE); textSize = if (short) 18f else 13.5f; typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
-        contentDescription = "New favorites group"
+        contentDescription = I18n.t("New favorites group")
         setPadding(dp(ctx, 12f), dp(ctx, 4f), dp(ctx, 12f), dp(ctx, 4f))
         background = round(ctx, 0, 0x88A970FF.toInt())
         layoutParams = ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(ctx, 36f))
@@ -409,7 +409,7 @@ object FavBar {
     // ---- groups ----
 
     private fun groupMenu(ctx: Context, g: Favorites.Group) {
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(g.name.ifEmpty { "Group" })
             .setItems(arrayOf("Rename or change icon", "Delete group (its emotes stay favorites)")) { _, which ->
                 if (which == 0) groupDialog(ctx, g) else Favorites.deleteGroup(g.id)
@@ -451,7 +451,7 @@ object FavBar {
             })
             addView(HorizontalScrollView(ctx).apply { addView(picks) })
         }
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(if (g == null) "New favorites group" else "Edit group")
             .setView(box)
             .setPositiveButton(if (g == null) "Create" else "Save") { _, _ ->
@@ -489,7 +489,7 @@ object FavBar {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(TextView(ctx).apply {
                 text = "✕"; setTextColor(TEXT); textSize = 16f; gravity = Gravity.CENTER
-                contentDescription = "Close tip"
+                contentDescription = I18n.t("Close tip")
                 setOnClickListener { Settings.set(KEY_TIP, true); strip.findViewWithTag<View>("ptv_fav_tip")?.let { strip.removeView(it) } }
             }, LinearLayout.LayoutParams(dp(ctx, 40f), dp(ctx, 40f)))
         }

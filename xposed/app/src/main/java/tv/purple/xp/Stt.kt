@@ -735,6 +735,8 @@ object Stt {
     private var vad: Vad? = null
     @Volatile private var offRec: OfflineRecognizer? = null
     @Volatile private var filter: SpeechScript.Filter? = null
+    /** Whisper is loaded: its stock lines over silence are dropped (see SpeechTidy). */
+    @Volatile private var whisperLoaded = false
     private val vadBuf = FloatArray(VAD_WINDOW)
     private var vadN = 0
     private val sent by lazy(LazyThreadSafetyMode.NONE) { FloatArray(MAX_SENTENCE + VAD_WINDOW) }
@@ -1302,6 +1304,7 @@ object Stt {
         }
         val made = r ?: return false
         filter = SpeechScript.Filter(m.script)
+        whisperLoaded = m.kind == SttModel.Kind.WHISPER
         vad = v
         offRec = made
         loadedNow = true
@@ -1674,10 +1677,13 @@ object Stt {
             if (gen != decGen) return
             val t0 = System.nanoTime()
             val s = r.createStream()
+            var lang = ""
             val text = try {
                 s.acceptWaveform(data, 16000)
                 r.decode(s)
-                r.getResult(s).text.trim()
+                val res = r.getResult(s)
+                lang = res.lang.trim().removePrefix("<|").removeSuffix("|>")
+                if (whisperLoaded) SpeechTidy.whisper(res.text.trim(), data.size / 16000f) else SpeechTidy.collapse(res.text.trim())
             } finally {
                 release(s)
             }
@@ -1688,7 +1694,7 @@ object Stt {
             val shown = filter?.take(text, fin, SystemClock.uptimeMillis()) ?: text
             if (shown != text && Settings.get(KEY_LOG, false)) log("STT left out: ${text.length - shown.length} chars")
             // A partial line that is all left out keeps the one before; a final one ends the line.
-            if (shown.isNotEmpty() || fin) emit(shown, fin)
+            if (shown.isNotEmpty() || fin) emit(shown, fin, lang.ifEmpty { null })
         } catch (t: Throwable) {
             log("STT a sentence could not be heard: $t")
         } finally {
@@ -1697,10 +1703,13 @@ object Stt {
         }
     }
 
-    /** To CaptionHub on the main thread, where its state and views live. Any thread. */
-    private fun emit(text: String, fin: Boolean) {
-        if (Settings.get(KEY_LOG, false)) log("STT ${if (fin) "final" else "partial"}: $text")
-        if (liveMode) { LiveCaptions.onSttText(text, fin); return }
+    /**
+     * To CaptionHub on the main thread, where its state and views live. Any thread. [lang] is the
+     * language the model heard, when it says (Whisper does).
+     */
+    private fun emit(text: String, fin: Boolean, lang: String? = null) {
+        if (Settings.get(KEY_LOG, false)) log("STT ${if (fin) "final" else "partial"}${lang?.let { " [$it]" }.orEmpty()}: $text")
+        if (liveMode) { LiveCaptions.onSttText(text, fin, lang); return }
         main.post { runCatching { CaptionHub.onSttText(text, fin) }.onFailure { log("STT caption hand-off failed: $it") } }
     }
 

@@ -357,7 +357,7 @@ object EmoteAutocomplete {
                 setTextColor(Color.WHITE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 gravity = Gravity.CENTER
-                contentDescription = "Dismiss tip"
+                contentDescription = I18n.t("Dismiss tip")
                 setPadding(dp(ctx, 10f), dp(ctx, 4f), dp(ctx, 10f), dp(ctx, 4f))
                 setOnClickListener {
                     Settings.set(Pins.KEY_TIP_DISMISSED, true)
@@ -590,7 +590,7 @@ object EmoteAutocomplete {
             })
 
             val scroll = android.widget.ScrollView(ctx).apply { addView(container) }
-            AlertDialog.Builder(ctx)
+            TBuilder(ctx, 0)
                 .setTitle("PurpleTV")
                 .setView(scroll)
                 .setPositiveButton("Done", null)

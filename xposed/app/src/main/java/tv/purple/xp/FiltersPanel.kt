@@ -1005,7 +1005,7 @@ object FiltersPanel {
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL; setColor(0x33FFFFFF); setStroke(dp(ctx, 1f), 0x55FFFFFF)
         }
-        contentDescription = "What is $title?"
+        contentDescription = I18n.t("What is $title?")
         setOnClickListener { v -> tooltip(v, title, body) }
     }
 

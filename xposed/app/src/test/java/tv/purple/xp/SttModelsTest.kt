@@ -72,7 +72,7 @@ class SttModelsTest {
                 assertEquals("model-${m.lang}", m.dir)
             }
             if (m in SttModels.PACK3) {
-                assertEquals(SttModels.TAG3, m.tag)
+                assertEquals(if (m.lang == SttModels.AUTO) SttModels.TAG4 else SttModels.TAG3, m.tag)
                 assertTrue(m.lang, m.kind.offline)
                 assertTrue(m.lang, "LICENSE-MIT-silero-vad.txt" in m.entries)
             }
@@ -93,8 +93,9 @@ class SttModelsTest {
         }
         assertEquals(SttModels.ALL.map { it.asset }.toSet().size, SttModels.ALL.map { it.dir }.toSet().size)
         assertEquals(SttModels.ALL.size, SttModels.ALL.map { it.lang }.toSet().size)
-        // Filipino, Lithuanian and Auto are one download.
-        assertEquals(1, SttModels.ALL.filter { it.lang in setOf("tl", "lt", SttModels.AUTO) }.map { it.asset }.toSet().size)
+        // Filipino and Lithuanian are one download; Auto is Whisper, its own.
+        assertEquals(1, SttModels.ALL.filter { it.lang in setOf("tl", "lt") }.map { it.asset }.toSet().size)
+        assertEquals(SttModel.Kind.WHISPER, SttModels.byLang(SttModels.AUTO)!!.kind)
     }
 
     @Test fun wholeSentenceModelsGetTheirOwnConfig() {
@@ -104,10 +105,14 @@ class SttModelsTest {
         assertEquals(File(dir, ja.files.getValue("tokens")).absolutePath, c.tokens)
         assertEquals("", c.omnilingual.model)
         assertEquals(2, c.numThreads)
-        val auto = SttModels.byLang(SttModels.AUTO)!!
-        val o = SttModels.offlineConfig(auto, dir, 2)
+        val tl = SttModels.byLang("tl")!!
+        val o = SttModels.offlineConfig(tl, dir, 2)
         assertEquals(File(dir, "model.int8.onnx").absolutePath, o.omnilingual.model)
         assertEquals("", o.transducer.encoder)
+        val auto = SttModels.offlineConfig(SttModels.byLang(SttModels.AUTO)!!, dir, 2)
+        assertEquals(File(dir, "base-encoder.int8.onnx").absolutePath, auto.whisper.encoder)
+        // No language named, so Whisper finds it.
+        assertEquals("", auto.whisper.language)
         for (m in SttModels.PACK3) {
             val v = SttModels.vadConfig(m, dir)
             assertEquals(File(dir, "silero_vad.onnx").absolutePath, v.sileroVadModelConfig.model)
@@ -158,6 +163,7 @@ class SttModelsTest {
         assumeTrue(out?.isDirectory == true)
         var n = 0
         for (m in (SttModels.PACK2 + SttModels.PACK3).distinctBy { it.asset }) {
+            if (!File(out, m.asset).isFile) continue
             val f = File(out, m.asset)
             if (!f.isFile) continue
             assertEquals(m.asset, m.bytes, f.length())

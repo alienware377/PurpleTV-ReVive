@@ -872,7 +872,7 @@ object PbypPreview {
             orientation = LinearLayout.VERTICAL
             if (withFrame) {
                 setBackgroundColor(0xFF0E0E10.toInt())
-                contentDescription = "Live stream preview"
+                contentDescription = I18n.t("Live stream preview")
             }
         }
         if (withFrame) {

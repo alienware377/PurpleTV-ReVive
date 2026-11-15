@@ -372,7 +372,7 @@ object SettingsSync {
     fun show(ctx: Context) {
         val a = (ctx as? Activity) ?: ViewHider.currentActivity() ?: return
         val u = uri()
-        val b = AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert).setTitle("Sync settings")
+        val b = TBuilder(a, android.R.style.Theme_Material_Dialog_Alert).setTitle("Sync settings")
         if (u == null) {
             b.setMessage("Keep your PurpleTV settings the same on all your devices, through one small file in your Google Drive " +
                 "(or any cloud storage your device offers). No sign-in needed.\n\n" +

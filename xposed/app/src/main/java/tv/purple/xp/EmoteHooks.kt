@@ -715,7 +715,7 @@ object EmoteHooks {
                     })
                     if (page != null && !Settings.get(KEY_LINK_TIP, false)) addView(linkTip(ctx, svc, page))
                     if (!by.isNullOrBlank()) addView(TextView(ctx).apply {
-                        text = "Uploaded by $by"
+                        text = I18n.t("Uploaded by $by")
                         setTextColor(Color.parseColor("#ADADB8"))
                         gravity = Gravity.CENTER
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -775,7 +775,7 @@ object EmoteHooks {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(TextView(ctx).apply {
                 text = "\u2715"; setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                gravity = Gravity.CENTER; contentDescription = "Dismiss tip"
+                gravity = Gravity.CENTER; contentDescription = I18n.t("Dismiss tip")
                 setPadding(dp(ctx, 10f), dp(ctx, 2f), dp(ctx, 10f), dp(ctx, 2f))
                 setOnClickListener { Settings.set(KEY_LINK_TIP, true); (box.parent as? ViewGroup)?.removeView(box) }
             })

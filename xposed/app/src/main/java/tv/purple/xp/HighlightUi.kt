@@ -49,7 +49,7 @@ object HighlightUi {
             "${it.word}   ($kind)"
         }.toTypedArray()
 
-        val b = AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        val b = TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Highlighter")
             .setPositiveButton("Add") { _, _ -> showAdd(ctx) }
             .setNegativeButton("Close", null)
@@ -64,7 +64,7 @@ object HighlightUi {
     }
 
     private fun confirmDelete(ctx: Context, index: Int, word: String) {
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Remove \"$word\"?")
             .setPositiveButton("Remove") { _, _ ->
                 ChatHighlight.remove(index)
@@ -93,13 +93,13 @@ object HighlightUi {
             val p = dp(ctx, 20f); setPadding(p, dp(ctx, 8f), p, 0)
             addView(input)
             addView(TextView(ctx).apply {
-                text = "Match"
+                text = I18n.t("Match")
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setPadding(0, dp(ctx, 12f), 0, 0)
             })
             addView(types)
         }
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Add keyword")
             .setView(box)
             .setPositiveButton("Next") { _, _ ->
@@ -129,7 +129,7 @@ object HighlightUi {
     private fun pickColor(ctx: Context, title: String, onPick: (Int) -> Unit) {
         val names = SWATCHES.keys.toTypedArray()
         val colors = SWATCHES.values.toList()
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(title)
             .setAdapter(swatchAdapter(ctx, names, colors)) { _, which -> onPick(colors[which]) }
             .show()

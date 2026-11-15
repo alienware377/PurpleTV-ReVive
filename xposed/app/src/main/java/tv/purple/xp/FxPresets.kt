@@ -189,7 +189,7 @@ object FxPresets {
         labels += "＋ Save the current settings as a preset"
         own.forEach { labels += "★ " + it.name }
         built.forEach { labels += it.name }
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("${kind.title} presets")
             .setItems(labels.toTypedArray()) { _, which ->
                 when {
@@ -207,7 +207,7 @@ object FxPresets {
 
     private fun manage(ctx: Context, kind: Kind, p: Preset, after: () -> Unit) {
         val own = mine(kind)
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(p.name)
             .setItems(arrayOf("Apply", "Replace with the current settings", "Rename", "Delete")) { _, which ->
                 when (which) {
@@ -231,7 +231,7 @@ object FxPresets {
             setPadding(pad, pad / 2, pad, 0)
             addView(e, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(title).setView(box)
             .setPositiveButton("Save") { _, _ -> e.text.toString().trim().takeIf { it.isNotEmpty() }?.let(done) }
             .setNegativeButton("Cancel", null)

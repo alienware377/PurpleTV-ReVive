@@ -400,8 +400,20 @@ object PurpleMenu {
             LiveCaptions.KEY, def = false, done = true),
         streamLanguage(),
         Toggle("Translate live captions",
-            "Show live captions in the language below instead, once it is downloaded",
+            "Show live captions in the language below instead, once it is downloaded. Lines already in that language stay as they are",
             LiveCaptions.KEY_TR, def = true, done = true),
+        Drop("Live captions look",
+            "Lines over the video that come and go, or a box with every line that you can scroll back through. Drag the box by its top edge to put it anywhere",
+            LiveCaptions.KEY_STYLE, listOf("Lines over the video", "Box with history"), def = 0, done = true),
+        Slide("Seconds each caption stays",
+            "How long a caption line stays on screen at least before the next ones take its place, so there is time to read it (lines look)",
+            LiveCaptions.KEY_SECONDS, min = 2, max = 30, def = LiveCaptions.DEF_SECONDS, done = true),
+        Custom("Move the live captions",
+            "Put them anywhere on the screen, over the chat too. Open a live stream with live captions on first",
+            { ctx -> moveCaptions(ctx) }),
+        Custom("Put the live captions back",
+            "Back low in the video, where they start",
+            { ctx -> LiveCaptions.resetPlace(); toast(ctx, "Live captions are back in their first place") }),
         Drop("Translate into", "The language chat and live captions are translated into",
             ChatTranslate.KEY_TO, Translator.languages().map { it.name }, def = ChatTranslate.DEF_TO, done = true),
         Action("Download the chosen language", { Translator.packLine(it, ChatTranslate.target()) },
@@ -411,7 +423,7 @@ object PurpleMenu {
         Custom("Delete translation files",
             "Removes the translation engine and every language from this phone. You can download them again any time",
             { ctx ->
-                android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+                TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
                     .setTitle("Delete translation files?")
                     .setMessage(Translator.sizeSummary(ctx))
                     .setPositiveButton("Delete") { _, _ -> Translator.deleteAll(ctx); toast(ctx, "Translation files deleted") }
@@ -432,8 +444,9 @@ object PurpleMenu {
         val line = if (have.isEmpty())
             "Optional: tick the languages people write in your chats for much better translation from them (about 70 MB each)"
         else "Better translation from ${have.joinToString(", ")}. Tap to add or remove languages"
+        val auto = if (AutoChatLangs.on()) ". Auto: on" else ""
         val missed = OpusEngine.missedLangs(ctx).map { Translator.name(it) }
-        return if (missed.isEmpty()) line else "$line. Seen in chat lately: ${missed.joinToString(", ")}"
+        return if (missed.isEmpty()) line + auto else "$line$auto. Seen in chat lately: ${missed.joinToString(", ")}"
     }
 
     /**
@@ -447,22 +460,24 @@ object PurpleMenu {
         val had = BooleanArray(langs.size) { TranslatePacks.chatLangReady(ctx, langs[it].code) }
         // Languages chat had lately start ticked, as a suggestion; nothing happens until OK.
         val missed = OpusEngine.missedLangs(ctx)
-        val ticked = BooleanArray(langs.size) { had[it] || langs[it].code in missed }
-        val labels = langs.mapIndexed { i, l ->
+        // The first row is Auto; the languages follow, one place further down.
+        val ticked = BooleanArray(langs.size + 1) { if (it == 0) AutoChatLangs.on() else had[it - 1] || langs[it - 1].code in missed }
+        val labels = (listOf("Auto: download a language by itself once chat keeps using it (Wi-Fi only)") + langs.mapIndexed { i, l ->
             val p = TranslatePacks.chatPack(l.code)
             when {
                 had[i] -> "${l.name} (downloaded)"
                 p != null -> "${l.name} (${(p.bytes + 500_000) / 1_000_000} MB)"
                 else -> l.name
             }
-        }.toTypedArray()
+        }).toTypedArray()
         val fresh = { set(chatLangsLine(ctx)) }
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Languages chat is written in")
             .setMultiChoiceItems(labels, ticked) { _, which, on -> ticked[which] = on }
             .setPositiveButton("OK") { _, _ ->
-                val add = langs.indices.filter { ticked[it] && !had[it] }.map { langs[it].code }
-                val remove = langs.indices.filter { !ticked[it] && had[it] }.map { langs[it].code }
+                Settings.set(AutoChatLangs.KEY, ticked[0])
+                val add = langs.indices.filter { ticked[it + 1] && !had[it] }.map { langs[it].code }
+                val remove = langs.indices.filter { !ticked[it + 1] && had[it] }.map { langs[it].code }
                 if (remove.isNotEmpty()) {
                     TranslatePacks.deleteChatLangs(ctx, remove)
                     toast(ctx, "Removed: ${remove.joinToString(", ") { Translator.name(it) }}")
@@ -477,7 +492,7 @@ object PurpleMenu {
     private fun confirmChatLangs(ctx: Context, add: List<String>, fresh: () -> Unit) {
         val names = add.joinToString(", ") { Translator.name(it) }
         val mb = (TranslatePacks.chatLangBytes(ctx, add) + 500_000) / 1_000_000
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Download better translation from $names?")
             .setMessage("$mb MB download. Chat lines in these languages are then translated into English with a model made " +
                 "just for that language, instead of the general one. From PurpleTV ReVive's GitHub releases (${TranslatePins.TAG_2}), " +
@@ -502,7 +517,7 @@ object PurpleMenu {
         // Every part this language's download brings, not "can translate something": with only a
         // chat language's own model there, the general into English model is still missing.
         if (TranslatePacks.packsFor(lang).all { SttPacks.ready(ctx, it) }) { toast(ctx, "$name is already downloaded and checked"); return }
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Download $name?")
             .setMessage(Translator.packLine(ctx, lang) + ". From PurpleTV ReVive's GitHub releases (${TranslatePins.TAG}), " +
                 "checked before it is used. Use Wi-Fi if your mobile data is limited.\n\n" + Translator.credits())
@@ -596,6 +611,8 @@ object PurpleMenu {
     )
 
     private val INFO = listOf(
+        Drop("App language", "The language of PurpleTV's own menus and messages. Twitch's own text follows the phone",
+            I18n.KEY, I18n.LANGS.map { it.second }, def = 0, done = true),
         Link("Source code", "github.com/alienware377/PurpleTV-ReVive",
             "https://github.com/alienware377/PurpleTV-ReVive"),
         Link("Report an issue", "Bug reports and feature requests",
@@ -695,13 +712,33 @@ object PurpleMenu {
         if (Settings.get(Settings.KEY_ENABLED, true)) ROOT else listOf(MASTER)
     )
 
+    /** Menu pages open now, so a row can close them all and show the stream again. */
+    private val openPages = ArrayList<java.lang.ref.WeakReference<Dialog>>()
+
+    private fun closeAll() {
+        for (d in openPages.mapNotNull { it.get() }) runCatching { d.dismiss() }
+        openPages.clear()
+    }
+
+    /** Closes the menu, then shows the live captions with a handle to drag them by. */
+    private fun moveCaptions(ctx: Context) {
+        closeAll()
+        // The stream screen needs its focus back before the captions count as shown.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!LiveCaptions.startMove()) toast(ctx, "Open a live stream with live captions on first, then move them from here")
+        }, 600L)
+    }
+
     private fun showScreen(ctx: Context, title: String, items: List<Item>) {
         val dlg = Dialog(ctx, android.R.style.Theme_Material_NoActionBar)
         dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        openPages.add(java.lang.ref.WeakReference(dlg))
+        dlg.setOnDismissListener { openPages.removeAll { it.get() == null || it.get() === dlg } }
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG)
+            layoutDirection = if (I18n.rtl()) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         }
         // Newer Twitch draws edge to edge, so keep the page clear of the status and navigation bars.
         root.setOnApplyWindowInsetsListener { v, insets ->
@@ -748,7 +785,7 @@ object PurpleMenu {
                 setOnClickListener { onBack() }
             })
             addView(TextView(ctx).apply {
-                text = title
+                text = I18n.t(title)
                 setTextColor(TEXT)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -758,14 +795,14 @@ object PurpleMenu {
     /** Build one settings row. Rows for unimplemented features are dimmed and inert. */
     private fun row(ctx: Context, item: Item): View {
         if (item is Header) return TextView(ctx).apply {
-            text = item.title
+            text = I18n.t(item.title)
             setTextColor(PURPLE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             setPadding(dp(ctx, 16f), dp(ctx, 20f), dp(ctx, 16f), dp(ctx, 4f))
         }
         if (item is Note) return TextView(ctx).apply {
-            text = item.summary
+            text = I18n.t(item.summary)
             setTextColor(TEXT_DIM)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setPadding(dp(ctx, 16f), dp(ctx, 8f), dp(ctx, 16f), dp(ctx, 16f))
@@ -779,7 +816,7 @@ object PurpleMenu {
             gravity = Gravity.CENTER_VERTICAL
         }
         val titleView = TextView(ctx).apply {
-            text = item.title
+            text = I18n.t(item.title)
             setTextColor(TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         }
@@ -839,7 +876,7 @@ object PurpleMenu {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             })
             is Drop -> valueView = TextView(ctx).apply {
-                text = item.options.getOrElse(item.current()) { "" }
+                text = I18n.t(item.options.getOrElse(item.current()) { "" })
                 setTextColor(if (item.done) PURPLE else TEXT_DIM)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             }.also { titleRow.addView(it) }
@@ -863,7 +900,7 @@ object PurpleMenu {
         var summaryView: TextView? = null
         if (summary.isNotBlank() || item is Action) {
             val sv = TextView(ctx).apply {
-                text = summary
+                text = I18n.t(summary)
                 setTextColor(TEXT_DIM)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setPadding(0, dp(ctx, 3f), dp(ctx, 40f), 0)
@@ -924,7 +961,7 @@ object PurpleMenu {
             is Custom -> box.setOnClickListener { item.onClick(ctx) }
             is Action -> box.setOnClickListener {
                 val sv = summaryView
-                runCatching { item.onClick(ctx) { s -> sv?.text = s } }
+                runCatching { item.onClick(ctx) { s -> sv?.text = I18n.t(s) } }
                     .onFailure { log("menu ${item.title} failed: $it"); toast(ctx, "That did not work, sorry") }
             }
             else -> {}
@@ -934,11 +971,11 @@ object PurpleMenu {
 
     private fun pickOption(ctx: Context, item: Drop, valueView: TextView?) {
         val cur = item.current()
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(item.title)
             .setSingleChoiceItems(item.options.toTypedArray(), cur) { d, which ->
                 item.store(which)
-                valueView?.text = item.options[which]
+                valueView?.text = I18n.t(item.options[which])
                 // An ad playing right now takes the new level at once.
                 if (item.key == AdVolume.KEY) AdVolume.refresh()
                 AdBreakSettings.changed(item.key)
@@ -1013,7 +1050,7 @@ object PurpleMenu {
                              "so it suits phones with 8 GB or more." else "")
                      else "\n\nsherpa-onnx by k2-fsa (Apache-2.0) with ONNX Runtime (MIT); it includes espeak-ng (GPL-3.0). " +
                          "Licences and source: ${PackPins.RELEASE_PAGE}"
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Download the $what?")
             .setMessage("About ${mb(bytes)} MB from PurpleTV ReVive's GitHub releases ($tag). " +
                 "It takes ${mb(unpacked)} MB on this phone and is checked before it is used. " +
@@ -1032,7 +1069,7 @@ object PurpleMenu {
     }
 
     private fun confirmDeletePacks(ctx: Context) {
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Delete the captions files?")
             .setMessage("The captions engine and every speech model are removed from this phone, and a download " +
                 "that is running stops. Speech-to-text works again once the engine and the stream language's model are downloaded again.")
@@ -1068,7 +1105,7 @@ object PurpleMenu {
         for ((p, l) in list) if (p.isNotEmpty()) voiceNames[p] = l
         val cur = Settings.getString(ReadAloud.KEY_ENGINE, "")
         val at = list.indexOfFirst { it.first == cur }.coerceAtLeast(0)
-        android.app.AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Voice for read-aloud")
             .setSingleChoiceItems(list.map { it.second }.toTypedArray(), at) { d, which ->
                 val pkg = list[which].first

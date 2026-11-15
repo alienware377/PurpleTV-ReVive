@@ -67,7 +67,7 @@ object DeletedTip {
             addView(TextView(ctx).apply {
                 text = "✕"; setTextColor(0xFFEFEFF1.toInt()); textSize = 16f; typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                contentDescription = "Close tip"
+                contentDescription = I18n.t("Close tip")
                 setOnClickListener { Settings.set(KEY, true); pw.dismiss() }
             }, LinearLayout.LayoutParams(dp(40f), dp(40f)))
             setOnClickListener {

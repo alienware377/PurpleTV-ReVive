@@ -92,7 +92,7 @@ object SleepTimer {
         setImageDrawable(FilterIcons.Moon())
         scaleType = ImageView.ScaleType.FIT_CENTER
         setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
-        contentDescription = "Sleep timer"
+        contentDescription = I18n.t("Sleep timer")
         setOnClickListener { choose(it.context) }
     }
 
@@ -111,7 +111,7 @@ object SleepTimer {
         for (m in MINUTES) items.add(if (m % 60 == 0) "${m / 60} hour${if (m > 60) "s" else ""}"
             else if (m > 60) "${m / 60}.5 hours" else "$m minutes")
         items.add(if (closes()) "When time is up: close Twitch (tap to only pause)" else "When time is up: pause the stream (tap to close Twitch)")
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle(if (closes()) "Close Twitch after" else "Pause the stream after")
             .setItems(items.toTypedArray()) { d, which ->
                 d.dismiss()

@@ -134,7 +134,7 @@ object RefreshButton {
                     setImageDrawable(RefreshIcon())
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
-                    contentDescription = "Reload stream"
+                    contentDescription = I18n.t("Reload stream")
                     setOnClickListener { refresh(it) }
                 }
                 bar.addView(btn, ViewGroup.LayoutParams(ref.height, ref.height))

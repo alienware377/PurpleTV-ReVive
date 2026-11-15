@@ -250,11 +250,14 @@ object TranslatePacks {
 
     /** Removes the model only [lang] uses, after unloading it. English removes the general into English model. */
     fun delete(ctx: Context, lang: String) {
-        val model = OpusEngine.target(lang)?.model ?: return
+        val t = OpusEngine.target(lang) ?: return
+        val model = t.model
         // A model another language shares (none today) is kept.
         if (OpusEngine.TARGETS.count { it.model == model } > 1 && lang != "en") return
-        val p = MODELS[model] ?: return
-        drop(ctx, listOf(p), "model $model deleted")
+        // The model it replaced goes too.
+        val packs = listOfNotNull(MODELS[model], t.legacy?.let { MODELS[it] })
+        if (packs.isEmpty()) return
+        drop(ctx, packs, "model $model deleted")
     }
 
     fun deleteAll(ctx: Context) = drop(ctx, listOf(ENGINE) + MODELS.values, "all deleted")
@@ -339,8 +342,17 @@ object TranslatePacks {
  */
 object OpusEngine : Translator.Engine {
 
-    /** A target: its code, its name, the model that translates English into it, and the model's language token. */
-    class Target(val code: String, val name: String, val model: String, val token: String?)
+    /**
+     * A target: its code, its name, the model that translates English into it, and the model's
+     * language token. [legacy] is the model it had before one trained for chat replaced it: still
+     * used when it is on the phone and the new one is not, so an update never stops translation.
+     */
+    class Target(val code: String, val name: String, val model: String, val token: String?, val legacy: String? = null)
+
+    /** The English into [t] model to use now: its own, or the one it replaced while that is all there is. */
+    internal fun outOf(ctx: Context, t: Target): String =
+        if (TranslatePacks.modelReady(ctx, t.model)) t.model
+        else t.legacy?.takeIf { TranslatePacks.modelReady(ctx, it) } ?: t.model
 
     const val INTO_EN = "mul-en"
 
@@ -354,7 +366,11 @@ object OpusEngine : Translator.Engine {
         Target("it", "Italian", "en-it", null),
         Target("ru", "Russian", "en-ru", null),
         Target("zh", "Chinese", "en-zh", ">>cmn_Hans<<"),
-        Target("ar", "Arabic", "en-ar", ">>ara<<")
+        Target("ar", "Arabic", "en-ar", ">>ara<<"),
+        // translate-pack-3. New ones only ever go at the end: the setting stores the place.
+        Target("ja", "Japanese", "en-ja", null),
+        Target("tl", "Filipino", "en-tl", null),
+        Target("lt", "Lithuanian", "en-lt", null)
     )
 
     fun target(code: String): Target? = TARGETS.firstOrNull { it.code == code }
@@ -375,7 +391,10 @@ object OpusEngine : Translator.Engine {
         ChatLang("it", "Italian", "it-en", listOf("ROMANCE-en")),
         ChatLang("ru", "Russian", "ru-en"),
         ChatLang("zh", "Chinese", "zh-en"),
-        ChatLang("ar", "Arabic", "ar-en")
+        ChatLang("ar", "Arabic", "ar-en"),
+        ChatLang("ja", "Japanese", "ja-en"),
+        ChatLang("tl", "Filipino", "tl-en"),
+        ChatLang("lt", "Lithuanian", "lt-en")
     )
 
     fun chatLang(code: String): ChatLang? = CHAT_LANGS.firstOrNull { it.code == code }
@@ -395,8 +414,9 @@ object OpusEngine : Translator.Engine {
         val best = tries.firstOrNull() ?: return null
         val roomy = models.containsKey(best) || models.size < MAX_LOADED - (if (keep != null && !models.containsKey(keep)) 1 else 0)
         val pick = if (roomy) best else tries.firstOrNull { models.containsKey(it) } ?: best
-        // Remembered so the settings page can suggest the better download.
-        if (own != null && pick != own.model) missed.add(own.code)
+        // Remembered so the settings page can suggest the better download, and fetched by itself
+        // when Auto is on in the chat language list.
+        if (own != null && pick != own.model) { missed.add(own.code); AutoChatLangs.seen(ctx, own.code) }
         return pick
     }
 
@@ -406,7 +426,10 @@ object OpusEngine : Translator.Engine {
 
     /** True when some into English model is downloaded: the general one or any chat language's own. */
     private fun anyIntoEnglish(ctx: Context): Boolean =
-        TranslatePacks.modelReady(ctx, INTO_EN) || CHAT_LANGS.any { TranslatePacks.modelReady(ctx, it.model) }
+        TranslatePacks.modelReady(ctx, INTO_EN) ||
+            CHAT_LANGS.any { c -> (listOf(c.model) + c.fallbacks).any { TranslatePacks.modelReady(ctx, it) } }
+
+    private val HYPHEN = Regex("(\\p{L}) - (\\p{L})")
 
     private const val MAX_LOADED = 2
     private const val IDLE_MS = 3 * 60_000L
@@ -430,7 +453,7 @@ object OpusEngine : Translator.Engine {
         if (broken != null || !TranslatePacks.supported() || !TranslatePacks.engineReady(ctx)) return false
         val t = target(to) ?: return false
         if (from != "en" && intoEnglish(ctx, from) == null) return false
-        return to == "en" || TranslatePacks.modelReady(ctx, t.model)
+        return to == "en" || TranslatePacks.modelReady(ctx, outOf(ctx, t))
     }
 
     /**
@@ -441,20 +464,22 @@ object OpusEngine : Translator.Engine {
     override fun readyInto(ctx: Context, to: String): Boolean {
         if (broken != null || !TranslatePacks.supported() || !TranslatePacks.engineReady(ctx)) return false
         val t = target(to) ?: return false
-        return anyIntoEnglish(ctx) && (to == "en" || TranslatePacks.modelReady(ctx, t.model))
+        return anyIntoEnglish(ctx) && (to == "en" || TranslatePacks.modelReady(ctx, outOf(ctx, t)))
     }
 
     override fun translate(ctx: Context, text: String, from: String, to: String, cancel: () -> Boolean): String? {
         val t = target(to) ?: return null
         if (!loadNative(ctx)) return null
-        val keep = if (to == "en") null else t.model
+        val tm = outOf(ctx, t)
+        val keep = if (to == "en") null else tm
         val english = if (from == "en") text else {
             val name = intoEnglish(ctx, from, keep) ?: return null
             (model(ctx, name, keep) ?: return null).translate(text, null, cancel)
         }
-        val out = if (to == "en") english else (model(ctx, t.model) ?: return null).translate(EnglishTidy.prep(english, to), t.token, cancel)
+        val out = if (to == "en") english else (model(ctx, tm) ?: return null).translate(EnglishTidy.prep(english, to), t.token, cancel)
         scheduleIdle()
-        return out
+        // The Filipino model writes its hyphens spaced out: "kahanga - hanga".
+        return if (to == "tl") HYPHEN.replace(out, "$1-$2") else out
     }
 
     /** The loaded model, loading it (checked against its pins once per process) when needed. */

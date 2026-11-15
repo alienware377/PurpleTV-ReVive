@@ -110,7 +110,7 @@ object PlayerStats {
                     setImageDrawable(StatsIcon())
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
-                    contentDescription = "Player stats"
+                    contentDescription = I18n.t("Player stats")
                     setOnClickListener { toggle(it) }
                 }
                 bar.addView(btn, ViewGroup.LayoutParams(ref.height, ref.height))

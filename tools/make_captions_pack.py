@@ -74,6 +74,7 @@ https://www.apache.org/licenses/LICENSE-2.0
 """
 
 TAG3 = "captions-pack-3"
+TAG4 = "captions-pack-4"
 
 # Silero VAD (MIT), the copy sherpa-onnx's own examples use. Each pack 3 zip carries it.
 SILERO = dict(repo="csukuangfj/vad", commit="fba88cd2e921609e7675c3aaf51e0b9b295da4bc",
@@ -85,6 +86,17 @@ SILERO_LICENCE_URL = ("https://raw.githubusercontent.com/snakers4/silero-vad/"
 SILERO_LICENCE_BYTES = 1075
 SILERO_LICENCE_SHA256 = "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"
 SILERO_LICENCE_FILE = "LICENSE-MIT-silero-vad.txt"
+MIT_TEXT = """Licence: MIT
+
+Credit: {credit}
+
+The original model weights are published under the MIT licence:
+    {origin}
+Full licence text: LICENSE-MIT-whisper.txt in this zip.
+"""
+WHISPER_LICENCE_URL = ("https://raw.githubusercontent.com/openai/whisper/"
+                       "6e3be77e1a105e59086e3e21ff5f609fd6fa89a5/LICENSE")
+
 SILERO_TEXT = """
 Speech finder: silero_vad.onnx
 ------------------------------
@@ -227,6 +239,34 @@ MODELS = [
 ]
 
 # captions-pack-3: whole sentence (offline) models, fed one sentence at a time through Silero VAD.
+# captions-pack-4: Whisper base for Auto. It names the language of every sentence it hears, and it
+# keeps up with game sound and music far better than the many-language model of pack 3.
+MODELS4 = [
+    dict(
+        lang="auto", label="Auto", tag=TAG4, pack=4, vad=True,
+        asset="purpletv-captions-model-whisper-base.zip",
+        repo="csukuangfj/sherpa-onnx-whisper-base",
+        commit="bb53ee204431c90d314c1cc08d28d23e5b7927cc",
+        kind="whisper", model_type="",
+        files=[
+            ("encoder", "base-encoder.int8.onnx", 29120534,
+             "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"),
+            ("decoder", "base-decoder.int8.onnx", 130672026,
+             "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d"),
+            ("tokens", "base-tokens.txt", 816730,
+             "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"),
+        ],
+        licence_file=(WHISPER_LICENCE_URL, "LICENSE-MIT-whisper.txt", 1063,
+                      "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"),
+        what="Whisper base by OpenAI, a whole sentence model for about a hundred languages\n"
+             "that also names the language of what it hears, with 8 bit weights.",
+        credit="Whisper base by OpenAI (https://github.com/openai/whisper), MIT,\n"
+               "converted for sherpa-onnx by csukuangfj",
+        licence="MIT", licence_text=MIT_TEXT,
+        origin="https://github.com/openai/whisper",
+    ),
+]
+
 # The many languages model has no language of its own: the app offers it as Filipino, Lithuanian
 # and Auto, which all share this one zip.
 MODELS3 = [
@@ -377,6 +417,7 @@ def readme_txt(m, model_entries):
     lines += [
         "LICENSE.txt    the licence of the model files",
     ] + (["%s   the full licence text" % APACHE_FILE] if m["licence"] == "Apache-2.0" else []) + (
+        ["%s   the full licence text" % m["licence_file"][1]] if m.get("licence_file") else []) + (
         ["%s   the speech finder's licence" % SILERO_LICENCE_FILE] if m.get("vad") else []) + [
         "README.txt     this file", "",
         "Licence", "-------",
@@ -421,6 +462,10 @@ def build_model(out, cache, m):
         if len(data) != APACHE_BYTES or sha256_bytes(data) != APACHE_SHA256:
             raise SystemExit("%s does not match its pin" % APACHE_URL)
         extra.append((APACHE_FILE, data))
+    if m.get("licence_file"):
+        url, name, size, sha = m["licence_file"]
+        p = fetch(url, os.path.join(cache, name))
+        extra.append((name, check(p, size, sha)))
     if m.get("notice"):
         src, name, size, sha = m["notice"]
         p = fetch(HF + m["repo"] + "/resolve/" + m["commit"] + "/" + src,
@@ -443,7 +488,7 @@ def build_model(out, cache, m):
 
 
 KINDS = {"transducer": "TRANSDUCER", "zipformer2_ctc": "ZIPFORMER2_CTC",
-         "offline_transducer": "OFFLINE_TRANSDUCER", "omnilingual_ctc": "OMNILINGUAL_CTC"}
+         "offline_transducer": "OFFLINE_TRANSDUCER", "omnilingual_ctc": "OMNILINGUAL_CTC", "whisper": "WHISPER"}
 
 
 def kotlin_pin(m, size, sha, entries):
@@ -465,7 +510,7 @@ def kotlin_pin(m, size, sha, entries):
         "            entries = mapOf(\n%s\n            )\n"
         "        )"
         % (m["label"], m["repo"], m["commit"], kt(m["lang"]), kt(m["label"]),
-           "TAG3" if m.get("tag") == TAG3 else "TAG2", kt(m["asset"]), sha, size,
+           {TAG3: "TAG3", TAG4: "TAG4"}.get(m.get("tag"), "TAG2"), kt(m["asset"]), sha, size,
            "SttModel.Kind." + KINDS[m["kind"]],
            kt(m["model_type"]), kt(m["licence"]), kt(credit),
            roles.replace("            ", "                "), ents.replace("            ", "                "))
@@ -482,7 +527,7 @@ def main():
     cache = os.path.join(out, "cache")
     os.makedirs(cache, exist_ok=True)
     pins = []
-    for m in MODELS + MODELS3:
+    for m in MODELS + MODELS3 + MODELS4:
         if only and m["lang"] not in only:
             continue
         size, sha, entries = build_model(out, cache, m)

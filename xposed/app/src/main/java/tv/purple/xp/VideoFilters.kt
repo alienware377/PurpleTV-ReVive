@@ -480,7 +480,7 @@ object VideoFilters {
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(TextView(ctx).apply {
                     text = "✕"; setTextColor(Color.WHITE); textSize = 16f; gravity = Gravity.CENTER
-                    contentDescription = "Dismiss tip"
+                    contentDescription = I18n.t("Dismiss tip")
                     setPadding(dp(10f), dp(2f), dp(10f), dp(2f))
                     setOnClickListener {
                         Settings.set(KEY_TIP, true)

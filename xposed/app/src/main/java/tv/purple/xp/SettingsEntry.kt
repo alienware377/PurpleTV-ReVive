@@ -88,7 +88,7 @@ object SettingsEntry {
 
     private fun buildRow(ctx: Context): View {
         val title = TextView(ctx).apply {
-            text = "PurpleTV"
+            text = I18n.t("PurpleTV")
             setTextColor(0xFFEFEFF1.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         }

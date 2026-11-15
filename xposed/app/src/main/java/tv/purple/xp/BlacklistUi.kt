@@ -36,7 +36,7 @@ object BlacklistUi {
             "${it.word}   ($kind)"
         }.toTypedArray()
 
-        val b = AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        val b = TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Blacklist")
             .setPositiveButton("Add") { _, _ -> showAdd(ctx) }
             .setNegativeButton("Close", null)
@@ -50,7 +50,7 @@ object BlacklistUi {
     }
 
     private fun confirmDelete(ctx: Context, index: Int, word: String) {
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Stop hiding \"$word\"?")
             .setPositiveButton("Remove") { _, _ ->
                 Blacklist.remove(index)
@@ -79,13 +79,13 @@ object BlacklistUi {
             val p = dp(ctx, 20f); setPadding(p, dp(ctx, 8f), p, 0)
             addView(input)
             addView(TextView(ctx).apply {
-                text = "Match"
+                text = I18n.t("Match")
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 setPadding(0, dp(ctx, 12f), 0, 0)
             })
             addView(types)
         }
-        AlertDialog.Builder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Blacklist a word")
             .setView(box)
             .setPositiveButton("Add") { _, _ ->

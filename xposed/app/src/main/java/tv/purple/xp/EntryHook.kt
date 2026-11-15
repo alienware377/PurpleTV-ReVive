@@ -16,7 +16,7 @@ fun log(msg: String) = XposedBridge.log("[$TAG] $msg")
 /** Short toast on the main thread (safe to call from any thread). */
 fun toast(ctx: Context, msg: String) {
     android.os.Handler(android.os.Looper.getMainLooper()).post {
-        runCatching { android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show() }
+        runCatching { android.widget.Toast.makeText(ctx, I18n.t(msg), android.widget.Toast.LENGTH_SHORT).show() }
     }
 }
 

@@ -162,7 +162,7 @@ object UpdateChecker {
             setPadding(dp(20f), dp(18f), dp(20f), dp(12f))
         }
         card.addView(TextView(act).apply {
-            text = "UPDATE AVAILABLE"
+            text = I18n.t("UPDATE AVAILABLE")
             setTextColor(LILAC); textSize = 12f; typeface = Typeface.DEFAULT_BOLD; letterSpacing = 0.08f
         })
         card.addView(TextView(act).apply {
