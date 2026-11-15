@@ -48,7 +48,7 @@ class SttModelsTest {
         assertSame(SttModels.EN, SttModels.forValue(SttModels.ALL.size))
         assertSame(SttModels.EN, SttModels.forValue(-1))
         // The stored number is a place in ALL, so the order must never change. New ones go last.
-        assertEquals(listOf("en", "es", "de", "fr", "ru", "ko", "zh", "ja", "tl", "lt", "auto"), SttModels.ALL.map { it.lang })
+        assertEquals(listOf("en", "es", "de", "fr", "ru", "ko", "zh", "ja", "tl", "lt", "auto", "en-slang"), SttModels.ALL.map { it.lang })
         assertEquals(SttModels.ALL.map { it.label }, SttModels.labels())
         for (m in SttModels.ALL) assertSame(m, SttModels.byLang(m.lang))
     }
@@ -58,7 +58,7 @@ class SttModelsTest {
             assertTrue(m.asset, m.asset.endsWith(".zip") && '/' !in m.asset)
             assertTrue(m.sha256, m.sha256.matches(Regex("[0-9a-f]{64}")))
             assertTrue(m.bytes > 0)
-            assertTrue(m.lang, m.lang.matches(Regex("[a-z]{2}")) || m.lang == SttModels.AUTO)
+            assertTrue(m.lang, m.lang.matches(Regex("[a-z]{2}(-[a-z]+)?")) || m.lang == SttModels.AUTO)
             assertTrue(m.credit, m.credit.isNotBlank() && m.licence.isNotBlank())
             for ((name, pin) in m.entries) {
                 assertTrue(name, ".." !in name && !name.startsWith("/") && '\\' !in name)
@@ -153,7 +153,7 @@ class SttModelsTest {
         val known = Translator.languages().map { it.code }.toSet() + setOf("ko", "ja", "tl", "lt")
         for (m in SttModels.ALL) {
             if (m.lang == SttModels.AUTO) assertEquals(null, m.sourceLang)
-            else assertTrue(m.lang, m.sourceLang == m.lang && m.lang in known)
+            else assertTrue(m.lang, m.sourceLang == m.lang.substringBefore('-') && m.sourceLang in known)
         }
     }
 
@@ -162,7 +162,7 @@ class SttModelsTest {
         val out = System.getProperty("ptv.captions.dir")?.let { File(it) }
         assumeTrue(out?.isDirectory == true)
         var n = 0
-        for (m in (SttModels.PACK2 + SttModels.PACK3).distinctBy { it.asset }) {
+        for (m in (SttModels.PACK2 + SttModels.PACK3 + SttModels.PACK5).distinctBy { it.asset }) {
             if (!File(out, m.asset).isFile) continue
             val f = File(out, m.asset)
             if (!f.isFile) continue

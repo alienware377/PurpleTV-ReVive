@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds the speech model packs for the GitHub pre-releases captions-pack-2 and captions-pack-3.
+"""Builds the speech model packs for the GitHub pre-releases captions-pack-2 to captions-pack-5.
 
 Run it with python3 -I (no site packages are needed, only the standard library):
 
@@ -9,12 +9,14 @@ captions-pack-2 holds one streaming speech model per stream language other than 
 captions-pack-3 holds the whole sentence models (Japanese, and one model for many languages that
 also serves Filipino, Lithuanian and Auto). They hear a sentence at a time, so each zip also
 carries Silero VAD, which cuts the sound into sentences. English and the engine (the sherpa-onnx
-library) stay in captions-pack-1, which never changes.
+library) stay in captions-pack-1, which never changes. captions-pack-4 holds Whisper base for
+Auto, and captions-pack-5 Whisper base.en trained further on Twitch chat speech.
 
 What it does:
   - downloads each model's files from its Hugging Face repo at a fixed commit, and checks every
     file against the size and SHA-256 written below, so a changed upstream file stops the build
-    instead of slipping into a pack;
+    instead of slipping into a pack. A model made here (pack 5) is read from its export folder
+    instead, with the same checks;
   - puts the model files, a LICENSE.txt and a README.txt (credits, sources, hashes) into one zip
     per language, with fixed timestamps and order, so the same inputs always give the same bytes;
   - prints and writes (OUT_DIR/pins.txt) the Kotlin pins for SttModels.kt: zip size and SHA-256,
@@ -75,6 +77,8 @@ https://www.apache.org/licenses/LICENSE-2.0
 
 TAG3 = "captions-pack-3"
 TAG4 = "captions-pack-4"
+TAG5 = "captions-pack-5"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Silero VAD (MIT), the copy sherpa-onnx's own examples use. Each pack 3 zip carries it.
 SILERO = dict(repo="csukuangfj/vad", commit="fba88cd2e921609e7675c3aaf51e0b9b295da4bc",
@@ -267,6 +271,43 @@ MODELS4 = [
     ),
 ]
 
+# captions-pack-5: Whisper base.en trained further on spoken Twitch chat (emote names, chat
+# phrases), so streams full of slang come out right. Made with tools/train_whisper.py and
+# exported with tools/export_whisper.py; "local" is the export folder, relative to the repo.
+MODELS5 = [
+    dict(
+        lang="en-slang", label="English (Twitch slang)", tag=TAG5, pack=5, vad=True,
+        asset="purpletv-captions-model-whisper-base-en-twitch.zip",
+        local="tmp/whisper/slang-base.en",
+        repo="openai/whisper-base.en",
+        commit="911407f4214e0e1d82085af863093ec0b66f9cd6",
+        kind="whisper", model_type="",
+        files=[
+            ("encoder", "base.en-encoder.int8.onnx", 29104806,
+             "c71b7277e8ca6b0d6126b937d6561c7cbde491faaa3d6f6c5973271fae2671b2"),
+            ("decoder", "base.en-decoder.int8.onnx", 130656976,
+             "43e5e067a047c568f981d0d22096f2b06df0a971516f952e872f340df5fa2f66"),
+            ("tokens", "base.en-tokens.txt", 885810,
+             "ccf876776dd2a896257e3427ff8627bd1d3538023617d507ebba654d57d36557"),
+        ],
+        licence_file=(WHISPER_LICENCE_URL, "LICENSE-MIT-whisper.txt", 1063,
+                      "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"),
+        what="Whisper base.en by OpenAI, trained further on spoken Twitch chat, a whole\n"
+             "sentence model for English with 8 bit weights.",
+        credit="Whisper base.en by OpenAI (https://github.com/openai/whisper), MIT,\n"
+               "trained further on Twitch chat speech for PurpleTV ReVive",
+        licence="MIT", licence_text=MIT_TEXT,
+        origin="https://github.com/openai/whisper",
+        made="Trained further on about 11,600 short spoken lines of Twitch chat (emote\n"
+             "names, chat phrases and slang), voiced with the Kokoro-82M text to speech\n"
+             "model (Apache-2.0, https://huggingface.co/hexgrad/Kokoro-82M), together\n"
+             "with LibriSpeech dev-clean by Vassil Panayotov et al. (CC BY 4.0,\n"
+             "https://www.openslr.org/12) so plain English stays as good as before.\n"
+             "Then converted for sherpa-onnx with sherpa-onnx's own Whisper export\n"
+             "script (https://github.com/k2-fsa/sherpa-onnx, v1.13.8).",
+    ),
+]
+
 # The many languages model has no language of its own: the app offers it as Filipino, Lithuanian
 # and Auto, which all share this one zip.
 MODELS3 = [
@@ -372,13 +413,22 @@ def licence_txt(m):
     names = ", ".join(f[1] for f in m["files"])
     head = "Licence of the model files in this pack\n========================================\n\nFiles: %s\n\n" % names
     body = m["licence_text"].format(credit=m["credit"].replace("\n", "\n"), origin=m["origin"])
-    tail = (
-        "\nChanges: none. The model files are byte for byte the ones published at\n"
-        "https://huggingface.co/%s\n(commit %s). They were only put into this zip\n"
-        "together with README.txt and this file.\n\n"
+    if m.get("local"):
+        changes = (
+            "\nChanges: these are not the original files. The model published at\n"
+            "https://huggingface.co/%s\n(commit %s) was changed as follows:\n\n%s\n\n"
+            "The changed model is under the same licence as the original.\n\n" % (m["repo"], m["commit"], m["made"])
+        )
+    else:
+        changes = (
+            "\nChanges: none. The model files are byte for byte the ones published at\n"
+            "https://huggingface.co/%s\n(commit %s). They were only put into this zip\n"
+            "together with README.txt and this file.\n\n" % (m["repo"], m["commit"])
+        )
+    tail = changes + (
         "No warranty: the model is provided as is, without any warranty, as the\nlicence says.\n\n"
         "This licence covers only the model files. The PurpleTV ReVive module and\n"
-        "the separate engine pack have their own licences.\n" % (m["repo"], m["commit"])
+        "the separate engine pack have their own licences.\n"
     )
     if m.get("vad"):
         tail += SILERO_TEXT
@@ -399,14 +449,19 @@ def readme_txt(m, model_entries):
         "Credits", "-------", m["credit"], "",
         "Model: " + m["what"],
         "    Original:         " + m["origin"],
-        "    Files from:       https://huggingface.co/" + m["repo"],
+        "    %s https://huggingface.co/%s" % ("Trained from:    " if m.get("local") else "Files from:      ", m["repo"]),
         "                      (commit %s)" % m["commit"],
-        "    Model list:       " + MODEL_LIST, "",
+    ] + ([] if m.get("local") else ["    Model list:       " + MODEL_LIST]) + [
+        "",
         "What is inside", "--------------",
+    ] + ([
+        "A changed version of the model above, made for PurpleTV ReVive.",
+        m["made"], "",
+    ] if m.get("local") else [
         "The model files are byte for byte the ones published at the address",
         "above. Nothing was changed, removed from them or retrained. Only the",
         "README.txt and LICENSE.txt are new.", "",
-    ]
+    ])
     for name, data in model_entries:
         lines.append("%s   %d bytes" % (name, len(data)))
         lines.append("    SHA-256 " + sha256_bytes(data))
@@ -443,8 +498,11 @@ def build_model(out, cache, m):
     unpacked = os.path.join(out, "models", m["lang"])
     os.makedirs(unpacked, exist_ok=True)
     for role, name, size, sha in m["files"]:
-        p = fetch(HF + m["repo"] + "/resolve/" + m["commit"] + "/" + name,
-                  os.path.join(cache, m["repo"].replace("/", "__"), m["commit"], name))
+        if m.get("local"):
+            p = os.path.join(ROOT, m["local"], name)
+        else:
+            p = fetch(HF + m["repo"] + "/resolve/" + m["commit"] + "/" + name,
+                      os.path.join(cache, m["repo"].replace("/", "__"), m["commit"], name))
         data = open(p, "rb").read()
         got = sha256_bytes(data)
         if sha is None:
@@ -510,7 +568,7 @@ def kotlin_pin(m, size, sha, entries):
         "            entries = mapOf(\n%s\n            )\n"
         "        )"
         % (m["label"], m["repo"], m["commit"], kt(m["lang"]), kt(m["label"]),
-           {TAG3: "TAG3", TAG4: "TAG4"}.get(m.get("tag"), "TAG2"), kt(m["asset"]), sha, size,
+           {TAG3: "TAG3", TAG4: "TAG4", TAG5: "TAG5"}.get(m.get("tag"), "TAG2"), kt(m["asset"]), sha, size,
            "SttModel.Kind." + KINDS[m["kind"]],
            kt(m["model_type"]), kt(m["licence"]), kt(credit),
            roles.replace("            ", "                "), ents.replace("            ", "                "))
@@ -527,7 +585,7 @@ def main():
     cache = os.path.join(out, "cache")
     os.makedirs(cache, exist_ok=True)
     pins = []
-    for m in MODELS + MODELS3 + MODELS4:
+    for m in MODELS + MODELS3 + MODELS4 + MODELS5:
         if only and m["lang"] not in only:
             continue
         size, sha, entries = build_model(out, cache, m)

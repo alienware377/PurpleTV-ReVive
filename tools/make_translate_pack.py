@@ -10,9 +10,9 @@ Each release is built on its own and never changes once published:
     the English into X models;
   - translate-pack-2: one into English model per chat language (es-en, de-en and so on), which
     translate much better than mul-en. It has no engine zip; the engine stays in translate-pack-1.
-  - translate-pack-3: Japanese, Filipino and Lithuanian, both ways. There is no Xenova conversion
-    of these, so they come from local folders made by tools/convert_marian.py (and, for Japanese,
-    fine-tuned for live chat first by tools/train_marian.py); see MODELS_3 for where each comes from.
+  - translate-pack-3: every language both ways, trained further for live chat by
+    tools/train_marian.py and converted by tools/convert_marian.py into local folders; see MODELS_3
+    for where each comes from. Japanese, Filipino and Lithuanian are new here.
 
 What it does:
   - downloads the ONNX Runtime Android AAR from Maven Central and takes its two arm64 libraries
@@ -77,32 +77,60 @@ MODELS = {
 
 
 # translate-pack-3: name -> (folder under the --from directory, licence text). The folders hold the
-# converted files with the same names as the Xenova ones (see tools/convert_marian.py).
+# converted files with the same names as the Xenova ones (see tools/convert_marian.py). Every model
+# here was trained further for live chat by tools/train_marian.py before it was converted.
 CC_BY = "Licence: CC-BY 4.0, https://creativecommons.org/licenses/by/4.0/\n"
 CC_BY_SA = "Licence: CC-BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/\n"
 CONVERTED = "ONNX conversion with 8 bit weights by PurpleTV ReVive (tools/convert_marian.py).\n"
+HELSINKI = "by the Language Technology Research Group at the University of Helsinki\n(Helsinki-NLP)"
+TATOEBA = "Tatoeba sentence pairs (https://tatoeba.org, CC BY 2.0 FR)"
+JESC = ("JESC, the Japanese-English Subtitle Corpus by Reid Pryzant et al.\n"
+        "(https://nlp.stanford.edu/projects/jesc/, CC BY-SA 4.0)")
+
+
+def trained(origin, repo, commit, licence, data=TATOEBA, note=""):
+    return ("Trained from %s,\nhttps://huggingface.co/%s\n(commit %s)%s\n\n" % (origin, repo, commit, note)
+            + "Changes: trained further for Twitch chat and stream speech by PurpleTV ReVive\n"
+            "(tools/train_marian.py), on chat style sentence pairs written for PurpleTV ReVive and on\n"
+            + data + ".\n" + licence + CONVERTED)
+
+
+def opus(pair, commit, licence=CC_BY, data=TATOEBA):
+    return trained("Opus-MT %s %s" % (pair, HELSINKI), "Helsinki-NLP/opus-mt-" + pair, commit, licence, data)
+
+
 MODELS_3 = {
-    "tl-en": ("tl-en",
-              "Opus-MT tl-en by the Language Technology Research Group at the University of Helsinki\n"
-              "(Helsinki-NLP), https://huggingface.co/Helsinki-NLP/opus-mt-tl-en\n"
-              "(commit 8d2dee91f8b3fa48dda8ec06ee2af8f24970dcbc)\n" + CC_BY + CONVERTED),
-    "en-tl": ("en-tl",
-              "Opus-MT en-tl by the Language Technology Research Group at the University of Helsinki\n"
-              "(Helsinki-NLP), https://huggingface.co/Helsinki-NLP/opus-mt-en-tl\n"
-              "(commit e46e1761492cb6a6fb9515a72bb55ca654815ca5)\n" + CC_BY + CONVERTED),
-    "lt-en": ("lt-en",
-              "Tatoeba Challenge lit-eng model by Helsinki-NLP, University of Helsinki, in the\n"
-              "Hugging Face copy https://huggingface.co/Neurora/opus-tatoeba-lit-eng\n"
-              "(commit 28d29e069eaff3db3fd14fc7da7ca7d2904c4204; that copy is marked Apache-2.0)\n" + CC_BY + CONVERTED),
-    "en-lt": ("en-lt",
-              "Tatoeba Challenge eng-lit model (with back-translation) by Helsinki-NLP, University of\n"
-              "Helsinki, in the Hugging Face copy https://huggingface.co/Neurora/opus-tatoeba-eng-lit-bt\n"
-              "(commit d7b351a8e28921e8a27f0aa116d127409f00ce89; that copy is marked Apache-2.0)\n" + CC_BY + CONVERTED),
-    "ja-en": ("ja-en", None),
-    "en-ja": ("en-ja", None),
+    "es-en-chat": ("es-en-chat", opus("es-en", "c96e2c5399ebfae4fc43d9669556b9afa74bb69d")),
+    "en-es-chat": ("en-es-chat", opus("en-es", "5bc4493d463cf000c1f0b50f8d56886a392ed4ab")),
+    "de-en-chat": ("de-en-chat", opus("de-en", "1a922f3b32a8e809e17a47d4b32142d8105924e5")),
+    "en-de-chat": ("en-de-chat", opus("en-de", "6183067f769a302e3861815543b9f312c71b0ca4")),
+    "fr-en-chat": ("fr-en-chat", opus("fr-en", "c4aed37b318c763fd177aa449b44e3b783cc6c02")),
+    "en-fr-chat": ("en-fr-chat", opus("en-fr", "dd7f6540a7a48a7f4db59e5c0b9c42c8eea67f18")),
+    "it-en-chat": ("it-en-chat", opus("it-en", "42556a0848fc726f4d27399f20b19ff6f01afe11")),
+    "en-it-chat": ("en-it-chat", opus("en-it", "be5a254d936f1a8c8da080406ca582a6615e6658")),
+    # Portuguese: the Romance language models, trained further on Portuguese (Brazilian) only.
+    "pt-en-chat": ("pt-en-chat", opus("ROMANCE-en", "e9ca9975e3972afd80732f08ce01d3a1339f47f8")),
+    "en-pt-chat": ("en-pt-chat", opus("en-ROMANCE", "f8f3a28e8b6272d0ccc0290b832f699e154ae431")),
+    "ru-en-chat": ("ru-en-chat", opus("ru-en", "fbd6dc73284f95536648512cc21d57f19191961a")),
+    "en-ru-chat": ("en-ru-chat", opus("en-ru", "bb09c99d180016eac6819df3dae68edb1690fdee")),
+    "zh-en-chat": ("zh-en-chat", opus("zh-en", "cf109095479db38d6df799875e34039d4938aaa6")),
+    "en-zh-chat": ("en-zh-chat", opus("en-zh", "408d9bc410a388e1d9aef112a2daba955b945255")),
+    "ar-en-chat": ("ar-en-chat", opus("ar-en", "c5b2a50db78d6be98ae207223f8d4f63bc7a0ff1")),
+    "en-ar-chat": ("en-ar-chat", opus("en-ar", "03087980e8ce753d64b3248ed0a912444545b840")),
+    # Japanese also learned from JESC (CC BY-SA 4.0); both ways are shared under CC-BY-SA 4.0.
+    "ja-en-chat": ("ja-en", opus("ja-en", "0770961a39ba6bd66305b149c3f4110bcafca2e6", CC_BY_SA, TATOEBA + " and on\n" + JESC)),
+    "en-ja-chat": ("en-ja", trained("FuguMT en-ja by Satoshi Takahashi (staka)", "staka/fugumt-en-ja",
+                                    "fbb91252110cf97d90291eb808629ab0b10f7928", CC_BY_SA, TATOEBA + " and on\n" + JESC,
+                                    ", itself under CC-BY-SA 4.0")),
+    "tl-en-chat": ("tl-en-chat", opus("tl-en", "8d2dee91f8b3fa48dda8ec06ee2af8f24970dcbc")),
+    "en-tl-chat": ("en-tl-chat", opus("en-tl", "e46e1761492cb6a6fb9515a72bb55ca654815ca5")),
+    "lt-en-chat": ("lt-en-chat", trained("the Tatoeba Challenge lit-eng model %s" % HELSINKI, "Neurora/opus-tatoeba-lit-eng",
+                                         "28d29e069eaff3db3fd14fc7da7ca7d2904c4204", CC_BY,
+                                         note="; that copy is marked Apache-2.0")),
+    "en-lt-chat": ("en-lt-chat", trained("the Tatoeba Challenge eng-lit model (with back-translation)\n%s" % HELSINKI,
+                                         "Neurora/opus-tatoeba-eng-lit-bt", "d7b351a8e28921e8a27f0aa116d127409f00ce89", CC_BY,
+                                         note="; that copy is marked Apache-2.0")),
 }
-# The Japanese models are fine-tuned; their licence text is written next to them by the training
-# step, in LICENSE.txt of their folder, and taken from there.
 
 # Files taken from each model repo, and the name each gets inside the zip.
 MODEL_FILES = [
@@ -248,8 +276,6 @@ def build_local_model(out, src, name, folder, licence):
         entries.append((dst, data))
         with open(os.path.join(unpacked, dst), "wb") as f:
             f.write(data)
-    if licence is None:
-        licence = open(os.path.join(d, "LICENSE.txt"), encoding="utf-8").read()
     readme = (
         "PurpleTV ReVive offline translation model %s\n\n"
         "A MarianMT model converted to ONNX for PurpleTV ReVive's offline translator. Where it comes\n"

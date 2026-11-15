@@ -23,7 +23,8 @@ import java.io.File
 class SttModel(
     /**
      * The stream language, a two letter code that Translator understands as a source language,
-     * or [SttModels.AUTO] for a model that hears any language.
+     * or [SttModels.AUTO] for a model that hears any language. A second model for a language
+     * that already has one adds a suffix ("en-slang"); the translator only sees the code.
      */
     val lang: String,
     /** The language's name for the settings page. */
@@ -72,7 +73,7 @@ class SttModel(
     val unpackedBytes: Long get() = entries.values.sumOf { it.bytes }
 
     /** The language the translator starts from: null lets it guess from each line. */
-    val sourceLang: String? get() = if (lang == SttModels.AUTO) null else lang
+    val sourceLang: String? get() = if (lang == SttModels.AUTO) null else lang.substringBefore('-')
 }
 
 object SttModels {
@@ -96,6 +97,10 @@ object SttModels {
     /** The pre-release with Whisper base, the model behind Auto. */
     const val TAG4 = "captions-pack-4"
     const val RELEASE_PAGE4 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG4
+
+    /** The pre-release with Whisper base.en trained further on Twitch chat speech. */
+    const val TAG5 = "captions-pack-5"
+    const val RELEASE_PAGE5 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG5
 
     /** The stream language that hears any language: Whisper, which names each sentence's language. */
     const val AUTO = "auto"
@@ -351,8 +356,37 @@ object SttModels {
         )
     )
 
+    /** captions-pack-5, built by tools/make_captions_pack.py from tools/train_whisper.py's model. */
+    val PACK5: List<SttModel> = listOf(
+        // English (Twitch slang): openai/whisper-base.en at 911407f4214e0e1d82085af863093ec0b66f9cd6
+        SttModel(
+            lang = "en-slang", label = "English (Twitch slang)", tag = TAG5,
+            asset = "purpletv-captions-model-whisper-base-en-twitch.zip",
+            sha256 = "d4319520c53b4db5ddf945424a737453e2db89292c965f18ece63312fc40d117", bytes = 136057903L,
+            kind = SttModel.Kind.WHISPER, modelType = "",
+            licence = "MIT",
+            credit = "Whisper base.en by OpenAI (https://github.com/openai/whisper), MIT, trained further on Twitch chat speech for PurpleTV ReVive",
+            files = mapOf(
+                "encoder" to "base.en-encoder.int8.onnx",
+                "decoder" to "base.en-decoder.int8.onnx",
+                "tokens" to "base.en-tokens.txt",
+                "vad" to "silero_vad.onnx"
+            ),
+            entries = mapOf(
+                "base.en-encoder.int8.onnx" to PackPins.FilePin(29104806L, "c71b7277e8ca6b0d6126b937d6561c7cbde491faaa3d6f6c5973271fae2671b2"),
+                "base.en-decoder.int8.onnx" to PackPins.FilePin(130656976L, "43e5e067a047c568f981d0d22096f2b06df0a971516f952e872f340df5fa2f66"),
+                "base.en-tokens.txt" to PackPins.FilePin(885810L, "ccf876776dd2a896257e3427ff8627bd1d3538023617d507ebba654d57d36557"),
+                "silero_vad.onnx" to PackPins.FilePin(1807522L, "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"),
+                "LICENSE.txt" to PackPins.FilePin(1830L, "5d182237b24879494bda853253cab2b328fdd04df256392e89325296e773435e"),
+                "LICENSE-MIT-whisper.txt" to PackPins.FilePin(1063L, "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"),
+                "LICENSE-MIT-silero-vad.txt" to PackPins.FilePin(1075L, "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"),
+                "README.txt" to PackPins.FilePin(2519L, "fdcecc9a15a767dcf3f669e30256433137c28541b53d5a976b648efc22f4aed1")
+            )
+        )
+    )
+
     /** Every language in the order the settings page lists them; the stored number is the place here. */
-    val ALL: List<SttModel> = listOf(EN) + PACK2 + PACK3
+    val ALL: List<SttModel> = listOf(EN) + PACK2 + PACK3 + PACK5
 
     fun labels(): List<String> = ALL.map { it.label }
 

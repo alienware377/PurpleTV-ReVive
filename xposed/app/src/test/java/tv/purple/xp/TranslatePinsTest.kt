@@ -29,13 +29,19 @@ class TranslatePinsTest {
                 assertNotNull("no pin for $name", m)
                 for (f in listOf(MarianModel.ENCODER, MarianModel.DECODER, "source.spm", "vocab.json", "config.json"))
                     assertTrue("$name lacks $f", f in m!!.entries)
-                // The new models live in their own release; translate-pack-1 never changes.
-                assertEquals(name, TranslatePins.TAG_2, m!!.tag)
+                // Each language's own model is a chat trained one; what it replaced is older.
+                // Published releases never change, so a new model is never in an old release.
+                assertEquals(name, if (name == c.model) TranslatePins.TAG_3 else TranslatePins.TAG_2, m!!.tag)
             }
         }
         // Every target except English has a better into English model.
         assertEquals(OpusEngine.TARGETS.map { it.code }.filter { it != "en" }, OpusEngine.CHAT_LANGS.map { it.code })
-        for (t in OpusEngine.TARGETS) assertEquals(t.model, TranslatePins.TAG, TranslatePins.MODELS.getValue(t.model).tag)
+        for (t in OpusEngine.TARGETS) {
+            val tag = TranslatePins.MODELS.getValue(t.model).tag
+            assertEquals(t.model, if (t.code == "en") TranslatePins.TAG else TranslatePins.TAG_3, tag)
+            // A replaced model is still pinned (phones that have it keep using it), in translate-pack-1.
+            t.legacy?.let { assertEquals(it, TranslatePins.TAG, TranslatePins.MODELS.getValue(it).tag) }
+        }
     }
 
     @Test fun pinsLookSane() {

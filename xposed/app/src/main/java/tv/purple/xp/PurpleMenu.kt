@@ -386,7 +386,7 @@ object PurpleMenu {
      */
     private fun streamLanguage() = Drop("Stream language",
         "The language the streamer speaks, so speech-to-text uses the speech model for it. Each language's model is its own download, under Player, During ad breaks. " +
-            "Japanese, Filipino, Lithuanian and Auto hear a whole sentence at a time, so their captions come a moment later. " +
+            "Japanese, Filipino, Lithuanian, Auto and English (Twitch slang) hear a whole sentence at a time, so their captions come a moment later. " +
             "Auto hears any language and translates each line from the language it is in, for streams that switch languages",
         SttModels.KEY, SttModels.labels(), def = SttModels.DEF, done = true)
 
@@ -495,7 +495,7 @@ object PurpleMenu {
         TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Download better translation from $names?")
             .setMessage("$mb MB download. Chat lines in these languages are then translated into English with a model made " +
-                "just for that language, instead of the general one. From PurpleTV ReVive's GitHub releases (${TranslatePins.TAG_2}), " +
+                "just for that language, instead of the general one. From PurpleTV ReVive's GitHub releases (${TranslatePins.TAG_3}), " +
                 "checked before it is used. Use Wi-Fi if your mobile data is limited.\n\n" + Translator.credits())
             .setPositiveButton("Download") { _, _ ->
                 TranslatePacks.downloadChatLangs(ctx, add, { fresh() }) { ok, msg ->
@@ -642,6 +642,8 @@ object PurpleMenu {
         Link("Omnilingual ASR by Meta, Apache-2.0", "The many-language speech model behind Filipino, Lithuanian and Auto, " +
             "converted for sherpa-onnx by csukuangfj",
             "https://github.com/facebookresearch/omnilingual-asr"),
+        Link("Whisper by OpenAI, MIT", "The speech model behind Auto (converted for sherpa-onnx by csukuangfj) and, trained further on Twitch chat speech, English (Twitch slang)",
+            "https://github.com/openai/whisper"),
         Link("Silero VAD by the Silero Team, MIT", "Finds where each sentence starts and ends for the Japanese and many-language models",
             "https://github.com/snakers4/silero-vad"),
         Link("Captions downloads: licences and source", "The full licence texts of the engine and the English speech model, " +
@@ -650,7 +652,11 @@ object PurpleMenu {
         Link("More speech models: licences and source", "The licence texts and sources of the speech models for other stream languages",
             SttModels.RELEASE_PAGE2),
         Link("Whole sentence speech models: licences and source", "The licence texts and sources of the Japanese and many-language speech models",
-            SttModels.RELEASE_PAGE3)
+            SttModels.RELEASE_PAGE3),
+        Link("Auto speech model: licences and source", "The licence texts and source of Whisper base",
+            SttModels.RELEASE_PAGE4),
+        Link("English (Twitch slang) speech model: licences and source", "The licence texts, source and training data of Whisper base.en trained further",
+            SttModels.RELEASE_PAGE5)
     )
 
     private val UPDATES = listOf(
@@ -1043,7 +1049,13 @@ object PurpleMenu {
         val tag = if (model) m.tag else PackPins.TAG
         // Plain text in a dialog, so the addresses are written out. Licences and source: the release page.
         val credit = if (model) "\n\n" + m.credit + ". Licence and source: " +
-                         (when (m.tag) { PackPins.TAG -> PackPins.RELEASE_PAGE; SttModels.TAG3 -> SttModels.RELEASE_PAGE3; else -> SttModels.RELEASE_PAGE2 }) +
+                         (when (m.tag) {
+                             PackPins.TAG -> PackPins.RELEASE_PAGE
+                             SttModels.TAG3 -> SttModels.RELEASE_PAGE3
+                             SttModels.TAG4 -> SttModels.RELEASE_PAGE4
+                             SttModels.TAG5 -> SttModels.RELEASE_PAGE5
+                             else -> SttModels.RELEASE_PAGE2
+                         }) +
                          (if (m.kind == SttModel.Kind.OMNILINGUAL_CTC) "\n\nIt needs a lot of memory while captions run (about 400 MB more), " +
                              "so it suits phones with 8 GB or more." else "")
                      else "\n\nsherpa-onnx by k2-fsa (Apache-2.0) with ONNX Runtime (MIT); it includes espeak-ng (GPL-3.0). " +

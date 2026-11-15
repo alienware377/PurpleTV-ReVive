@@ -2,7 +2,7 @@ package tv.purple.xp
 
 /**
  * Pins for the optional offline translation downloads. They are assets of the separate GitHub
- * pre-releases [TAG] and [TAG_2] on PurpleTV-ReVive (never the module's "latest" release; each
+ * pre-releases [TAG], [TAG_2] and [TAG_3] on PurpleTV-ReVive (never the module's "latest" release; each
  * model pin names its own), and each one is
  * downloaded, checked and stored on its own by the same code as the speech packs (SttPacks):
  *  - the engine pack: ONNX Runtime's two arm64 libraries, unchanged from the official AAR;
@@ -36,6 +36,12 @@ object TranslatePins {
      * rather than new assets in translate-pack-1, so what is published there never changes.
      */
     const val TAG_2 = "translate-pack-2"
+    /**
+     * Every language both ways, trained further for live chat, plus Japanese, Filipino and
+     * Lithuanian. The models of the first two releases stay as fallbacks for phones that have them.
+     */
+    const val TAG_3 = "translate-pack-3"
+    const val RELEASE_PAGE_3 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG_3
 
     /** The ONNX Runtime release the engine libraries and the vendored Java API both come from. */
     const val ORT_VERSION = "1.22.0"
@@ -62,6 +68,8 @@ object TranslatePins {
     const val ENGINE_CREDIT = "ONNX Runtime " + ORT_VERSION + " by Microsoft (MIT). Licences and source: " + RELEASE_PAGE
     const val MODEL_CREDIT = "Opus-MT models by Helsinki-NLP, University of Helsinki (CC-BY 4.0, " +
         "https://creativecommons.org/licenses/by/4.0/), ONNX conversions by Xenova"
+    const val CHAT_MODEL_CREDIT = "Chat trained models: Opus-MT by Helsinki-NLP (CC-BY 4.0) and FuguMT by staka (CC-BY-SA 4.0), " +
+        "trained further for live chat by PurpleTV ReVive. Licences, sources and training data: " + RELEASE_PAGE_3
 
     /** Every model pack, by its name in the app. */
     val MODELS: Map<String, ModelPin> = listOf(
@@ -252,6 +260,249 @@ object TranslatePins {
             "generation_config.json" to PackPins.FilePin(293L, "6e240dc18d20cceb870d47706c90126a801f246db6009f9e02171795e9f93772"),
             "LICENSE.txt" to PackPins.FilePin(338L, "5927fde05a906a93da89a230426281f91277737f1be1c14f777590af649b436d"),
             "README.txt" to PackPins.FilePin(525L, "b1535a7e3d14cd354b0a8c011b61aaf75f23abc46fdc81d2d86d0791bad60c41")
-        ), tag = TAG_2)
+        ), tag = TAG_2),
+        // translate-pack-3
+        // es-en-chat, from es-en-chat
+        ModelPin("es-en-chat", "purpletv-translate-model-es-en-chat.zip", "457e23c7b70c01568b91e88d6ff56c85d0a5c69c1250137b72f96beddd9bd185", 91368591L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(52939355L, "e6f95d52dc871e6f70916ebd2c581694f86c0bdcb5515e2be6ae6cea1a004fa9"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(60659566L, "be9c9d9892015a109d757910c093120b6d01e7a3d4b05753f93770fe8903b426"),
+            "source.spm" to PackPins.FilePin(825924L, "e236ee6d866b635c0142114f8647f39831f9d92534aa2aad75c942f6a78ad0e3"),
+            "vocab.json" to PackPins.FilePin(1785046L, "fd930041713bd413ccd23c628b62f927323cf1c5573bfed24035a95f12c5b7b6"),
+            "config.json" to PackPins.FilePin(1467L, "de1b0ec5d604f55904aedfebcc154e0940955e79ffe91975b5c23be512995dfa"),
+            "generation_config.json" to PackPins.FilePin(304L, "31d2f00381bcdc983c76c27241ee1fd5f9aeba40a90fba61539de2ac1bc5e877"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "bcec68001e08362a34f3ce79e395946c08d26998c0db343e4b89209bb4b0d8da"),
+            "README.txt" to PackPins.FilePin(862L, "4a52a55984d6f2a80f645c2fe016c17bdb283ed81deeb5f3679d4c138ed78be2")
+        ), tag = TAG_3),
+        // en-es-chat, from en-es-chat
+        ModelPin("en-es-chat", "purpletv-translate-model-en-es-chat.zip", "5eccc9205ba881b061878f82db27136eddba3c3af4a453105aef744ec1128fd6", 88853442L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(52939214L, "c715e53042834fff8bc259d36f11e38689fd889ea88b50d8ad7c40f484fadb36"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(60662294L, "cd0a69c38269253002ce667d35f480d5f8dd18f648a2323fe61b138287a75373"),
+            "source.spm" to PackPins.FilePin(801636L, "4dd547c24816a335e7b0b2e63376a8f1b3cbfc671eda5ab808dd44fdadaa8791"),
+            "vocab.json" to PackPins.FilePin(1785046L, "fd930041713bd413ccd23c628b62f927323cf1c5573bfed24035a95f12c5b7b6"),
+            "config.json" to PackPins.FilePin(1503L, "34f74d2181856681ad3485d18c7e224fa265637227b91a64f931e7ec72bf47dc"),
+            "generation_config.json" to PackPins.FilePin(304L, "31d2f00381bcdc983c76c27241ee1fd5f9aeba40a90fba61539de2ac1bc5e877"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "aff2badf44f3248e1a90e65089a61c7e5ca9cc9f1889eb49313a4107983b5305"),
+            "README.txt" to PackPins.FilePin(862L, "c04ef4beea1976d1b9461d0cc7d099cc95542debf98b3859c5ed9a159b14f554")
+        ), tag = TAG_3),
+        // de-en-chat, from de-en-chat
+        ModelPin("de-en-chat", "purpletv-translate-model-de-en-chat.zip", "c039bac4d57b9c71a8fdce6e680060a8eb323c80844ae52b82c1239858efb53d", 86383125L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(49406821L, "c6d6cc9925c61078b0731455419bcdc678a9aa7d3dbd65abf65b51f088aa49b3"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(57077239L, "3754553617f2c6cbf435ea1e811b75ff94af62fc3a040496295d4b45d13173fd"),
+            "source.spm" to PackPins.FilePin(796845L, "bbd1f495eea99c8e21ae086d9146e0fa7b096c3dfdd9ba07ab8b631889df5c9b"),
+            "vocab.json" to PackPins.FilePin(1447538L, "ea442816fd11e6e95c1f4a7d76b2e5856f654915e0964bb537d4b1bdbb2c0e42"),
+            "config.json" to PackPins.FilePin(1409L, "c20be855fedc2fe343e46c149d27dfee47288e9f37860ea6a2cfeaa13b3280cd"),
+            "generation_config.json" to PackPins.FilePin(304L, "e5e5bab9b5a90283be0363d844d19667c09849e32f1f409ef28a9fd3751fa950"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "199826f4dbaa6c7182453c7d7aa2a316cac9f9eefc2158c3e81557fbd7770194"),
+            "README.txt" to PackPins.FilePin(862L, "cd24fc538064a44781d01e2e8b91e47f1c29707b7937a4d4b898da9ef189a07d")
+        ), tag = TAG_3),
+        // en-de-chat, from en-de-chat
+        ModelPin("en-de-chat", "purpletv-translate-model-en-de-chat.zip", "5df913e16c9b382f46f58c19cc044972496a9448be5d13f44944e78c395f16f6", 83767931L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(49406436L, "5056197f7f6b76326cb270a9da5b0eca0b88035100fc8e754dba8b94c460bb9c"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(57094713L, "435e20a5c35658d8f7e90d9fc3574c0336fea6e80682dec45ad0e14d23f9d8d8"),
+            "source.spm" to PackPins.FilePin(768489L, "678f2a1177d8389f67b66299762dcc4fc567e89b07e212ba91b0c56daecf47ce"),
+            "vocab.json" to PackPins.FilePin(1447538L, "ea442816fd11e6e95c1f4a7d76b2e5856f654915e0964bb537d4b1bdbb2c0e42"),
+            "config.json" to PackPins.FilePin(1445L, "d69be160b1c7a9158a2c6c49f204e529d5592c3377356e9b4b3b9567aac66726"),
+            "generation_config.json" to PackPins.FilePin(304L, "e5e5bab9b5a90283be0363d844d19667c09849e32f1f409ef28a9fd3751fa950"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "5e2681f3a677fb02427eda5839fad6f252e0459b1a3482ff0c2c49bdaa573115"),
+            "README.txt" to PackPins.FilePin(862L, "563842c7c48db5db234f46beff6381afe1d827b303dfb872862e7de457c232c8")
+        ), tag = TAG_3),
+        // fr-en-chat, from fr-en-chat
+        ModelPin("fr-en-chat", "purpletv-translate-model-fr-en-chat.zip", "be6ff7cee3f94d9daf33da89f302aa7353e0f91c4d7bac5dd705624c9a8b1dce", 82923957L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(50129927L, "845c3cbf9d853a55f65ed5d36fbe35ce5b392aadc759f081d631a5f210f44c66"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(57834729L, "9219b2bf3edd7d72c12172b85a70d4a8d03243584cb97e2c22592c17bd4eceab"),
+            "source.spm" to PackPins.FilePin(802397L, "78d0e717c77053f1c4b856d8661d9cb87c64f083a35418c087b9146300e4f585"),
+            "vocab.json" to PackPins.FilePin(1517711L, "a69f5dfc7e08449976df59e51e233ff1c40b0b840a45318d6dd5f59a7bdfd6e0"),
+            "config.json" to PackPins.FilePin(1445L, "e0556f304c98883611274acdc8f2084c9bbcd7dcc8e167c94c0c99c7fdd651c5"),
+            "generation_config.json" to PackPins.FilePin(304L, "f02f472acc8d651799b62d3b6d9d51ace663ad57f1c2ce72f5c58d6ead0cfd5b"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "1014c9045c245ceaf546894728776ade18eaac9ea449bb033b8e019aece8eb7d"),
+            "README.txt" to PackPins.FilePin(862L, "1b1b4d024c20125bb5871c5dd68595444552e7cb5a3a2342362822147368a3c4")
+        ), tag = TAG_3),
+        // en-fr-chat, from en-fr-chat
+        ModelPin("en-fr-chat", "purpletv-translate-model-en-fr-chat.zip", "6d7ac67c9fa6e6873d8e894cfc0bc083bab73f9281c90e826e1cfe73047c1add", 82197326L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(50130138L, "7ec91e0760779164e0967540e4daf5c5bc04cf83159561865f98d75a89a56be6"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(57847280L, "8e1f2b228f7c22aa456a1683ef5fb1953e0e31cf9b5f54fe1f160d52426ba435"),
+            "source.spm" to PackPins.FilePin(778395L, "173e9f493a668fe396d599e28d414a201193094e6ffd7a4678e5aab0f6d3d838"),
+            "vocab.json" to PackPins.FilePin(1517711L, "a69f5dfc7e08449976df59e51e233ff1c40b0b840a45318d6dd5f59a7bdfd6e0"),
+            "config.json" to PackPins.FilePin(1445L, "262ee546e288b7d5fc3af3e23c816a57453ee3a03319021ff8d95b764b201382"),
+            "generation_config.json" to PackPins.FilePin(304L, "f02f472acc8d651799b62d3b6d9d51ace663ad57f1c2ce72f5c58d6ead0cfd5b"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "9d5bd9fbeecb71d0bed555679103b79166642844c09c2cd8ad989edc0de0953a"),
+            "README.txt" to PackPins.FilePin(862L, "7f2ee83a5cd0e2888576f675e3252ae58e6b00e6d8057c738cd63c78fda501ba")
+        ), tag = TAG_3),
+        // it-en-chat, from it-en-chat
+        ModelPin("it-en-chat", "purpletv-translate-model-it-en-chat.zip", "4058ef565b2892379e27d347ea8d1a90402f667081e9c8b06e8acc42edb04df9", 92095757L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(60812672L, "4f293c16103962fc2dd1fe1894ed1b064dfa533c4292f58bd67595dfa9bc9d17"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(68731181L, "60840d5df37efc417a697ec31e251e22698560369449ae6497cbc2a74a31e120"),
+            "source.spm" to PackPins.FilePin(813709L, "1bd307e2756991d470e4b40172147f7889b46a323b1a9a2150e66274825b1f21"),
+            "vocab.json" to PackPins.FilePin(2610973L, "3388641d906dd83a72f4887033c6d95c5bfd60ec5a88754dd06c9916de65e8b7"),
+            "config.json" to PackPins.FilePin(1409L, "2e67f4ff54892d95390caa7a0113c0c3fa2e21a7f1fad2ed63b0ed95e0bb9169"),
+            "generation_config.json" to PackPins.FilePin(304L, "7f54a7e27453c702ee1202d96bfa9dc82c18cbf63b2a2f8156cb1db9d1608c85"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "511ccff92aec592a2a72e7bfa7cf39e5a9268e807f2a21849a4e30c3bcfcb928"),
+            "README.txt" to PackPins.FilePin(862L, "b2132e0ab231a96c5bd2693786d0510476a37e5173d1c8854df79b20106bca2e")
+        ), tag = TAG_3),
+        // en-it-chat, from en-it-chat
+        ModelPin("en-it-chat", "purpletv-translate-model-en-it-chat.zip", "68e3cd2cb52954c09586820e28695be3b249a13d65ecf49f15368b6e9aa0e656", 90197738L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(60636726L, "5c64d8915501466c635d9dfdc4707643ebdc3c8ea4e12cb8844ea9f5ecbe9029"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(68542839L, "fade127cfceabe193fd0d11be8bcb4f37e90bd8018bc404c133f75eb222e2b60"),
+            "source.spm" to PackPins.FilePin(789468L, "2efff2c37e51842c2817a6770280979b5dd803cebbe2928e576d42a888f89537"),
+            "vocab.json" to PackPins.FilePin(2591683L, "d19743847b467691d9d3f41abeef0f4a66983a5db08c252bddcb0632b5e2f0e6"),
+            "config.json" to PackPins.FilePin(1409L, "faf2833da26e294b4fbbd2ea2434b2f152e90062bd8d5b9fea24e3776143bed6"),
+            "generation_config.json" to PackPins.FilePin(304L, "7198503594c612c9e803278239eb43c3c1bf48f62569ce88ef62c7f93ca2a296"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "28a50c1449482947575abe7123de18ffdf66931451a875d54df7d6dc22cb1097"),
+            "README.txt" to PackPins.FilePin(862L, "3bfc288fbcfc4cd827ac48ca41caba788e27115cde9d79993203e45db9f44e05")
+        ), tag = TAG_3),
+        // pt-en-chat, from pt-en-chat
+        ModelPin("pt-en-chat", "purpletv-translate-model-pt-en-chat.zip", "93f16e7265aa22590abc91259a6beba33be20075ffb2250548b6ea7aec98f8de", 88253100L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(52939168L, "12b136cc1b8e0b0ef10b0bd6061628bb46009637ad568c2d546f9e6f16726a95"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(60694507L, "045db52c5a279cded1424ebd04317e9e6d4cfcdacad20c82654a79c455ac963f"),
+            "source.spm" to PackPins.FilePin(800087L, "baeab21ec00d0b490382b82499ef0348235c5a8e75de28aec8290adf62b007c4"),
+            "vocab.json" to PackPins.FilePin(1655310L, "53dbb98b2caad34e1d70efaa25901a5a3696fba85638a9661fc483dd3f355af2"),
+            "config.json" to PackPins.FilePin(1393L, "934c1310ba6297add11116fe3b1785b299e6f93f07386ee1e404643c1fec307d"),
+            "generation_config.json" to PackPins.FilePin(304L, "31d2f00381bcdc983c76c27241ee1fd5f9aeba40a90fba61539de2ac1bc5e877"),
+            "LICENSE.txt" to PackPins.FilePin(599L, "b04e39566c8087443fd5fbe593a8137b30ee01c6c7b249c67288e077dc57e105"),
+            "README.txt" to PackPins.FilePin(862L, "d03d0acdd5ac5eda02cd2a23aeddf449831506d7b176ec674ba0cbc6ace7348e")
+        ), tag = TAG_3),
+        // en-pt-chat, from en-pt-chat
+        ModelPin("en-pt-chat", "purpletv-translate-model-en-pt-chat.zip", "b5348177b62a5bbee3a74d86a40d2879f17aecc8433dd6d05a76d8cbb9111446", 80084919L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(52939035L, "24ac61c213d6a0f115f167070e38b7d63423b98c3da5ec30c21ee717eb23b7ed"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(60712065L, "8f2fec596f30c35f0f1cd5a64b4eab217de5d8570a722054dc2ca4da23cc1793"),
+            "source.spm" to PackPins.FilePin(779155L, "b1f89e7b05828846baf19109a61029a36838f1c4f3defc218e6aee0ee2787864"),
+            "vocab.json" to PackPins.FilePin(1652366L, "9b9150ed01d08773b7403bb3d270263e4077ea047949a437eb81dd3f71fa6836"),
+            "config.json" to PackPins.FilePin(1544L, "5dde7f822856de0cac3ef2ec321d954ecfacfccaf97d91dc83fc99d5f0d33730"),
+            "generation_config.json" to PackPins.FilePin(304L, "31d2f00381bcdc983c76c27241ee1fd5f9aeba40a90fba61539de2ac1bc5e877"),
+            "LICENSE.txt" to PackPins.FilePin(599L, "f17409f3927d522b79010fe6a762bf954f71def42b1d02e924346d5a8f1fb12e"),
+            "README.txt" to PackPins.FilePin(862L, "574d7d72156dde48204c807fd1d06147702eeab716d8988a88ae11630f085150")
+        ), tag = TAG_3),
+        // ru-en-chat, from ru-en-chat
+        ModelPin("ru-en-chat", "purpletv-translate-model-ru-en-chat.zip", "c43966d9ebf58c9cc5c8a3ca7475a25fccabe8ea954b9617739f41ad88a5057f", 88862853L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(51667796L, "74f2e72da0668f21fe033a67403062831b8465609db537673b758ad878a8b863"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(59414872L, "8466b5d7f299fc2962463e75e154ca53a0d9dd466d68889beb2b19685d652916"),
+            "source.spm" to PackPins.FilePin(1080169L, "745998e51ba5b058e38b7ac7765c25c43ed5c1c39cc92b27163b9b2e323c9d7c"),
+            "vocab.json" to PackPins.FilePin(2789315L, "5cf82d518313b98ea802177d7ea73e6a7c9c0cc079c1f74fe910f8b1faa535bc"),
+            "config.json" to PackPins.FilePin(1409L, "7b06727a4079a05ba6d7806a2c6199ef551348f3d9c4afeb8f49fdad0626e021"),
+            "generation_config.json" to PackPins.FilePin(304L, "a7aee6bda3e1937555e6706dbd12b17e8c95b794a84db75c6b6865399bb678ff"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "40aaa22730d067ddddf86377026c149df55b9fdabb2dc51f479eff9942a7badc"),
+            "README.txt" to PackPins.FilePin(863L, "7d78a7f2782120cb089d2d66fd4a8143795daf0e610899cc7877435a780bb351")
+        ), tag = TAG_3),
+        // en-ru-chat, from en-ru-chat
+        ModelPin("en-ru-chat", "purpletv-translate-model-en-ru-chat.zip", "1ad913a9166deacb3e4d7a44b057c15644b40fd736bfeefba4f3ba667b71efec", 92492339L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(51667849L, "44d0dc93ec041bac28dd5b6c85635a167521763f0ff0c051ca7d0100a8e5386c"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(59385781L, "458124b5c96fd3b93d266875967a4c4be0da588a0e2903a3a002147cb3fb0d36"),
+            "source.spm" to PackPins.FilePin(802781L, "16bebef1389a0b8ab452772c4e35b9e605e5713f8ac7baa71ca701394eaa086d"),
+            "vocab.json" to PackPins.FilePin(2789315L, "5cf82d518313b98ea802177d7ea73e6a7c9c0cc079c1f74fe910f8b1faa535bc"),
+            "config.json" to PackPins.FilePin(1409L, "ccb939aec666b395c525ab236f9ce1d78928450a4e451754ece19d8a7a6ae0df"),
+            "generation_config.json" to PackPins.FilePin(304L, "a3ae82ec41fcf9d0611c4d59b901043257d9e7968265a75cdf39e918a3de1cae"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "495451137b61794f0760e32cf02c6e8535b1602cc5d47eac8cf1c7381de5c27f"),
+            "README.txt" to PackPins.FilePin(862L, "da0c9c056de0c6adb63fd5ae0ea25744c2b7c4a6359f774cd2b3c89efdb7b2f0")
+        ), tag = TAG_3),
+        // zh-en-chat, from zh-en-chat
+        ModelPin("zh-en-chat", "purpletv-translate-model-zh-en-chat.zip", "d8fbd5e26df14ed34246d6bfd2a3a0261262034398b35ba5cc14db4f9c62a344", 93596699L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(52939190L, "32af5ec6c1f3da339ca1f03958a676897b6a7517e99186dfbb1ce1254b286490"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(60710595L, "9347d2ac6567b1ab66962c97c393dde288f1251dc17df4c46ea505385f476739"),
+            "source.spm" to PackPins.FilePin(804677L, "e27a3a1b539f4959ec72ea60e453f49156289f95d4e6000b29332efc45616203"),
+            "vocab.json" to PackPins.FilePin(1812908L, "b53d8f6da91f955bd8e1640ed0151742430c33811a9aa55b6c5a5cfe82985aaa"),
+            "config.json" to PackPins.FilePin(1422L, "ccb42f0d96367050a8a47a92f018657eba14d6e8acbc5bdd46d714023861ca6d"),
+            "generation_config.json" to PackPins.FilePin(304L, "d383c3d0bb90f652a9e5ecb8190194e74a83bab7719d66702cd4ad51a6303656"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "4bdc6a58752fdb710e5de9cfa340ac99a5530ada9fa244898b9acf700463e8fe"),
+            "README.txt" to PackPins.FilePin(862L, "2acaf400dfb3ee3a7e684637a9a89f0a8d282ebeb25ce2f298446e747a90217f")
+        ), tag = TAG_3),
+        // en-zh-chat, from en-zh-chat
+        ModelPin("en-zh-chat", "purpletv-translate-model-en-zh-chat.zip", "03de6bf6792a3682b5c29671b804f8fcdf744a9cda3c1fbf437597418592b58a", 93251828L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(52939230L, "b0bc2fb8161e833b1c9360d6c09a1c602ad7d88e581b2f942d29a6dcd669208c"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(60680370L, "5fa0832497efc26540a3c069f21ae826acbb6cd37296a2690089bcfad25aa46d"),
+            "source.spm" to PackPins.FilePin(806435L, "5775ddc9e3ff2fae91554da56468ad35ff56edaba870fea74447bc7234bfdaa8"),
+            "vocab.json" to PackPins.FilePin(1812797L, "7a7aefac27f6ba9c7a9672b5b53d04a1d94c76839475146f02b54be1769d33c8"),
+            "config.json" to PackPins.FilePin(1539L, "0bf5589ac8e44ad14e6c6c9d967ae6e0adcac6ed9c9c4b6971a1566a13eab9a7"),
+            "generation_config.json" to PackPins.FilePin(304L, "31d2f00381bcdc983c76c27241ee1fd5f9aeba40a90fba61539de2ac1bc5e877"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "8b73d000c898ca17c9e3e0069c3419f9e2656af4a46a65219cb45800e164d693"),
+            "README.txt" to PackPins.FilePin(862L, "f012dd253ccb358e07d2e6b371d867b60da858964eb4fb7e77d50d58b591210b")
+        ), tag = TAG_3),
+        // ar-en-chat, from ar-en-chat
+        ModelPin("ar-en-chat", "purpletv-translate-model-ar-en-chat.zip", "80c141ed32fb19737dabc9a9d2aecde2472ea64e9abbcb33212f2f120eb608ba", 89474829L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(51829664L, "cced9ba1c46b1c3b6869bc9b95f3353c14428f5d8ef41f93289c9356711644e5"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(59518645L, "cebd6c9ea81bcfdfe49f1766f412cf830f058690391f27884246ee39ef71189d"),
+            "source.spm" to PackPins.FilePin(917407L, "484f7210e5f4466f7e5b99b660717c6ef2a6f90746196daba507795b69dc02a2"),
+            "vocab.json" to PackPins.FilePin(2320081L, "961300b0d066b68588a5157a262de1249e62b8c8686d2b7fca072060354faf4b"),
+            "config.json" to PackPins.FilePin(1409L, "955add6b34d44991d3b606016b9fb08b747ba3d7d76d7871399407de63ad1f80"),
+            "generation_config.json" to PackPins.FilePin(304L, "2799b4e18ce0742ac26cb787860e2b375806aa499e276349b36dcbd829f8d966"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "a3c3e363e3386215c8a0fe2a0f2916fd050516009be8ef30b6afbcb61d50e767"),
+            "README.txt" to PackPins.FilePin(862L, "7273d149c6e3deadcfd7b42828dd4f555c094fafae97657f9be3cbf80ae993b5")
+        ), tag = TAG_3),
+        // en-ar-chat, from en-ar-chat
+        ModelPin("en-ar-chat", "purpletv-translate-model-en-ar-chat.zip", "821474f4fa31a19a6b7d43cbbf45d36df7d580833aed6379f0dec987efbcbb60", 92373197L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(51813477L, "908be36ae067543c8bbd3d439f659c7205d9ff4c2d23b746edad7b2a5ddf183f"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(59530848L, "208d4b63e9e0459e75eb538902ee53e8718a4db80f002fc2b5a5a0a9c7101f97"),
+            "source.spm" to PackPins.FilePin(801074L, "81ac8f4d4ee271f4109eac67560a31f9c2d555463ba5eb95c32c6deee8ae819d"),
+            "vocab.json" to PackPins.FilePin(2306384L, "ed005d0900db7f90e9ffe0184a99b43ce34da87c7536b14fd392b9889f1e3be4"),
+            "config.json" to PackPins.FilePin(1422L, "cc5b375af36b09c14c9c62826a7b6bdc17cda794725f5dd54a8e34284ca6d969"),
+            "generation_config.json" to PackPins.FilePin(304L, "f0f05b9385bfa44920f60af828939bb8f8741f4313db1466dfc2c7384dfa59b7"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "e3cabea459d408b4c562bb649c4a9ad23a72833a7e65519a0a01cbbd80c7cae4"),
+            "README.txt" to PackPins.FilePin(862L, "77bf05ce4acab6aa555caf65cf0eb7875b982ea0a6482cda7f866c62b53cd124")
+        ), tag = TAG_3),
+        // ja-en-chat, from ja-en
+        ModelPin("ja-en-chat", "purpletv-translate-model-ja-en-chat.zip", "f51ed6519acd07ce27139a31af71aadf95d8d52cdedd812698e1930329d3e05d", 83982118L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(50745169L, "9fda01a2aa3752f38be025ac318f9d1dc504497a0e1fa4a1adac70ca81231fd0"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(58474943L, "1292ca5bbb05b49ab214be9cb19d03de9b71cb45d388041303bac06b2bdf4a5e"),
+            "source.spm" to PackPins.FilePin(781853L, "d0b5c3b10b5959f056ff2c86e2f2356129242ff1fc72d3a4a34d6a8c0eee4e57"),
+            "vocab.json" to PackPins.FilePin(1683492L, "5e99fa930c75d866712758bf2221263cb5164c6c387e6cbe8cea5630d9ea3faa"),
+            "config.json" to PackPins.FilePin(1409L, "1e10445a4554b31f9ae0d2a7a6f973b06321df12e6ab918e28258d87cf634b48"),
+            "generation_config.json" to PackPins.FilePin(304L, "2313458d7c2b92039ea134dbaa402dec9fad29be8718529122ac9f8445d1e3ae"),
+            "LICENSE.txt" to PackPins.FilePin(724L, "ea007861c3743530c5d778f665275ae03aed3ee6d88a0657b1eef3ae6bd11b98"),
+            "README.txt" to PackPins.FilePin(862L, "3f1ece6ba82c55e11ef32ba23fd6df54bebd4b2fe319ca3009a0f51a8626f683")
+        ), tag = TAG_3),
+        // en-ja-chat, from en-ja
+        ModelPin("en-ja-chat", "purpletv-translate-model-en-ja-chat.zip", "388e04f5a6532d326a24f78186ef19cf358bcef2b547095edc66d9e6055a8213", 64395626L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(36042996L, "97d582191ec6c4d78586c8d5c1ce4c9663d7ee63f50f2a79fa60cc0e6382cf2c"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(43453264L, "652da1fb04cbf0e3ae657d3c886b4e8d5191af348425627c75945fdc6394b08d"),
+            "source.spm" to PackPins.FilePin(768297L, "92fcbf6449e47457866ec98891dab09ef625e57d9637fe3fdbbe44fc1a365b6d"),
+            "vocab.json" to PackPins.FilePin(823093L, "94b0cf8945069eaf28afb0a86db0d47516eac57e7565e9b8e26f38004bf4a1d9"),
+            "config.json" to PackPins.FilePin(1066L, "2d79bc10a6c515582a3554cc54b16a791ee4c43ceedf4de8410a05ca798745ab"),
+            "generation_config.json" to PackPins.FilePin(305L, "80578b51946c140a438b32bc9f23d346709a560df9ccfe9f0e93edcf8ddd0113"),
+            "LICENSE.txt" to PackPins.FilePin(684L, "6048c27d8b2bd041a8c9401c10d9da025aae5de348bc1805a6996df199948a3e"),
+            "README.txt" to PackPins.FilePin(861L, "370d9a204cbee77c3b087a034b2d1607ea7849c6d7067fd8a305fac027eeb813")
+        ), tag = TAG_3),
+        // tl-en-chat, from tl-en-chat
+        ModelPin("tl-en-chat", "purpletv-translate-model-tl-en-chat.zip", "8d91ba404c99d09fd86e96fbcd78616168c95c61fdb60a861177933910357dda", 91530890L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(48944068L, "b45075f2d415bafe248b55c4a34a8b3f19a6d810db1f7ff448d2099d3cc1238c"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(56624465L, "fc6988f9f00c2138d24c847b5793636b55c29b93e9f80b9f6c152f4ef66262ee"),
+            "source.spm" to PackPins.FilePin(833838L, "22951af70fe5dc1802f6464a3fd6975a377a9af2f124512a76784a351c10acbc"),
+            "vocab.json" to PackPins.FilePin(1490973L, "535f2562de33d3b4f4b302eeb3818f1a8493fa0dde68cca47b1cc668dbc4c04b"),
+            "config.json" to PackPins.FilePin(1422L, "b674d7bbea32e4ff4a706f6035df851fe9721008700db8a9166147a72b57d562"),
+            "generation_config.json" to PackPins.FilePin(304L, "6f9cd371031e64329def74de9f93d1b96ba8dc45f21873d704ab75ce13522833"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "6e15cfb8b05e91bcc9ece6e4ceaa5cf2b83baa460826faed797b1e048933dae4"),
+            "README.txt" to PackPins.FilePin(862L, "d65b622854c1a4e2b834de083301d887e4255b2d1df67afb44cc66d8f5bc7fae")
+        ), tag = TAG_3),
+        // en-tl-chat, from en-tl-chat
+        ModelPin("en-tl-chat", "purpletv-translate-model-en-tl-chat.zip", "58ab7d118b558c6caa88580d3f07fb39fcb752726582058efbcd59317399eef6", 86614141L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(49033681L, "f3530bdfc65338d5d6a9fa246930646da5518eccc458493a618e832c328f7999"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(56682862L, "31beb1309f232ded96707d104b7047ee34a4fd13739a8331e67574179d5bdc62"),
+            "source.spm" to PackPins.FilePin(826681L, "feaf3e0cf579e3daeb6bac5dc94b906efed40e89b544d269cec9bdbb4f05f8e1"),
+            "vocab.json" to PackPins.FilePin(1496836L, "e6b621420437873e57d72216e02ee570f1ac0c6b71de7520bed5cfa6bdcfa614"),
+            "config.json" to PackPins.FilePin(1388L, "2f1abb06d4be8576fedb2b9727a8556d49eccc6f7a616bf06f1a9207af493d50"),
+            "generation_config.json" to PackPins.FilePin(304L, "d6b4a434ad262aa546ec0b9e034911b0f23314bbe50f4b078bde24817f14c185"),
+            "LICENSE.txt" to PackPins.FilePin(589L, "7537de9e20a823792c53bd38ffa2c696746c87a2afbd814d68c9fde4eac58dbd"),
+            "README.txt" to PackPins.FilePin(862L, "9a9b3d378ccfc242befa8f973dd075977033f134852c0f3e99732fc1a2615886")
+        ), tag = TAG_3),
+        // lt-en-chat, from lt-en-chat
+        ModelPin("lt-en-chat", "purpletv-translate-model-lt-en-chat.zip", "3e7bd38bc879f0e0c0dd59208c8567a403171d6a2e7a43fa8c7433077737f3d2", 88705065L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(49642552L, "c88f95d8b30af85bd37f1386e24c3b3ad5a4e8e54f2f9a14a5427bcec8323c64"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(57349013L, "5c5e34275410650f5c2533c9a5b0087e5e1f180c4417454dc932aa24d6809762"),
+            "source.spm" to PackPins.FilePin(832504L, "f42dafbf30e755a931fbd0b73664e35b54d03ebd767a50325f64e1036ed017ba"),
+            "vocab.json" to PackPins.FilePin(1556002L, "9d279c7633f2486f702510d3d8fd2deb9a5efb232e8f1ae10f764e92720e9919"),
+            "config.json" to PackPins.FilePin(1076L, "45897c5fed065f4e14717054330d760bf6e68cf2e73168e370d709fde0940702"),
+            "generation_config.json" to PackPins.FilePin(304L, "938144ef99c8728eee438fd23cee671214c993a591b9f45c3aa664e4ac98079c"),
+            "LICENSE.txt" to PackPins.FilePin(645L, "c2ec6ec92cc83d1c495db08cf67676205bd387e6ea6e30f33d690f0a1d1c3530"),
+            "README.txt" to PackPins.FilePin(862L, "7248d9c291a46cedf54b355fa8447a9cd0370d10674d131f0df41be672866347")
+        ), tag = TAG_3),
+        // en-lt-chat, from en-lt-chat
+        ModelPin("en-lt-chat", "purpletv-translate-model-en-lt-chat.zip", "0a8ede5fb39e1a1624055df69dd615bc2e8beee65b90f8323c56e3de680db89f", 82868958L, mapOf(
+            "encoder_model_quantized.onnx" to PackPins.FilePin(49117383L, "ce2d1fa762c79b180dfc4945890eae9fce0318c1d4fe81c3e276f0c63f24d6ec"),
+            "decoder_model_merged_quantized.onnx" to PackPins.FilePin(56759817L, "2cf3bc0f16e537bd6b8763525aa333409c4984faabc125490815594e70d37c5b"),
+            "source.spm" to PackPins.FilePin(798349L, "2e79092368c581a3a02e60932787c07eb1f07bc35886b455c50f040801e961fa"),
+            "vocab.json" to PackPins.FilePin(1520662L, "b25bdc167cb9b029ef1b2679059854e27a200e70978ddce69bbb9d5700f1976c"),
+            "config.json" to PackPins.FilePin(1086L, "b77bacd74f5c6bd8eaa86d965b4bbfc22b0f1da0457527b812f7e121e127a0ae"),
+            "generation_config.json" to PackPins.FilePin(312L, "ff339efe0ca39b5a9f84b471102e7460e294983eaa39511cfc533e6b8bc7003b"),
+            "LICENSE.txt" to PackPins.FilePin(672L, "3276725cb8eeabcf0c909d1c417a13ba900b4e41d339eb29856f7b7dbd3f722b"),
+            "README.txt" to PackPins.FilePin(862L, "0d5155dfe978bbea7fca4984ad876a396d81144be4d0b8c23e3b67c91c5d7bc6")
+        ), tag = TAG_3)
     ).associateBy { it.name }
 }

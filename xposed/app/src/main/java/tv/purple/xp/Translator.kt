@@ -137,7 +137,7 @@ object Translator {
     fun downloading(): Boolean = TranslatePacks.downloading()
 
     /** Credit lines (the models' CC-BY licence asks for them). */
-    fun credits(): String = TranslatePins.ENGINE_CREDIT + "\n" + TranslatePins.MODEL_CREDIT
+    fun credits(): String = TranslatePins.ENGINE_CREDIT + "\n" + TranslatePins.MODEL_CREDIT + "\n" + TranslatePins.CHAT_MODEL_CREDIT
 
     // ---- cache ----
 
@@ -221,9 +221,14 @@ object TranslatePacks {
         downloadAll(ctx, chatPacks(langs), "Better translation from $names is downloaded and checked", progress, done)
     }
 
-    /** Removes the own into English models of chat languages [langs]. Lines in them fall back to mul-en. */
+    /**
+     * Removes the own into English models of chat languages [langs], and the older ones they
+     * replaced unless a language that stays still uses them. Lines in them fall back to mul-en.
+     */
     fun deleteChatLangs(ctx: Context, langs: Collection<String>) {
-        val packs = langs.mapNotNull { chatPack(it) }.distinct()
+        val kept = OpusEngine.CHAT_LANGS.filter { it.code !in langs }.flatMap { listOf(it.model) + it.fallbacks }.toSet()
+        val packs = langs.mapNotNull { OpusEngine.chatLang(it) }.flatMap { listOf(it.model) + it.fallbacks }
+            .filter { it !in kept }.mapNotNull { MODELS[it] }.distinct()
         if (packs.isNotEmpty()) drop(ctx, packs, "chat language models deleted: ${langs.joinToString(",")}")
     }
 
@@ -358,19 +363,21 @@ object OpusEngine : Translator.Engine {
 
     val TARGETS: List<Target> = listOf(
         Target("en", "English", INTO_EN, null),
-        Target("es", "Spanish", "en-es", null),
-        // opus-mt-en-ROMANCE serves several languages and needs the target as a first token.
-        Target("pt", "Portuguese", "en-ROMANCE", ">>pt_br<<"),
-        Target("de", "German", "en-de", null),
-        Target("fr", "French", "en-fr", null),
-        Target("it", "Italian", "en-it", null),
-        Target("ru", "Russian", "en-ru", null),
-        Target("zh", "Chinese", "en-zh", ">>cmn_Hans<<"),
-        Target("ar", "Arabic", "en-ar", ">>ara<<"),
-        // translate-pack-3. New ones only ever go at the end: the setting stores the place.
-        Target("ja", "Japanese", "en-ja", null),
-        Target("tl", "Filipino", "en-tl", null),
-        Target("lt", "Lithuanian", "en-lt", null)
+        // The chat trained models of translate-pack-3, each replacing a translate-pack-1 one.
+        Target("es", "Spanish", "en-es-chat", null, legacy = "en-es"),
+        // Trained from opus-mt-en-ROMANCE, which serves several languages and needs the target
+        // as a first token; the trained one still does.
+        Target("pt", "Portuguese", "en-pt-chat", ">>pt_br<<", legacy = "en-ROMANCE"),
+        Target("de", "German", "en-de-chat", null, legacy = "en-de"),
+        Target("fr", "French", "en-fr-chat", null, legacy = "en-fr"),
+        Target("it", "Italian", "en-it-chat", null, legacy = "en-it"),
+        Target("ru", "Russian", "en-ru-chat", null, legacy = "en-ru"),
+        Target("zh", "Chinese", "en-zh-chat", ">>cmn_Hans<<", legacy = "en-zh"),
+        Target("ar", "Arabic", "en-ar-chat", ">>ara<<", legacy = "en-ar"),
+        // New in translate-pack-3. New ones only ever go at the end: the setting stores the place.
+        Target("ja", "Japanese", "en-ja-chat", null),
+        Target("tl", "Filipino", "en-tl-chat", null),
+        Target("lt", "Lithuanian", "en-lt-chat", null)
     )
 
     fun target(code: String): Target? = TARGETS.firstOrNull { it.code == code }
@@ -383,18 +390,20 @@ object OpusEngine : Translator.Engine {
 
     /** One per target language except English, in the same order. */
     val CHAT_LANGS: List<ChatLang> = listOf(
-        ChatLang("es", "Spanish", "es-en", listOf("ROMANCE-en")),
-        // There is no Xenova pt-en; ROMANCE-en knows Portuguese (and Spanish, French, Italian).
-        ChatLang("pt", "Portuguese", "ROMANCE-en"),
-        ChatLang("de", "German", "de-en"),
-        ChatLang("fr", "French", "fr-en", listOf("ROMANCE-en")),
-        ChatLang("it", "Italian", "it-en", listOf("ROMANCE-en")),
-        ChatLang("ru", "Russian", "ru-en"),
-        ChatLang("zh", "Chinese", "zh-en"),
-        ChatLang("ar", "Arabic", "ar-en"),
-        ChatLang("ja", "Japanese", "ja-en"),
-        ChatLang("tl", "Filipino", "tl-en"),
-        ChatLang("lt", "Lithuanian", "lt-en")
+        // The chat trained models of translate-pack-3; the translate-pack-2 ones they replace are
+        // tried next, for phones that downloaded those before.
+        ChatLang("es", "Spanish", "es-en-chat", listOf("es-en", "ROMANCE-en")),
+        // Trained from ROMANCE-en (there is no Xenova pt-en), which also knows Spanish, French, Italian.
+        ChatLang("pt", "Portuguese", "pt-en-chat", listOf("ROMANCE-en")),
+        ChatLang("de", "German", "de-en-chat", listOf("de-en")),
+        ChatLang("fr", "French", "fr-en-chat", listOf("fr-en", "ROMANCE-en")),
+        ChatLang("it", "Italian", "it-en-chat", listOf("it-en", "ROMANCE-en")),
+        ChatLang("ru", "Russian", "ru-en-chat", listOf("ru-en")),
+        ChatLang("zh", "Chinese", "zh-en-chat", listOf("zh-en")),
+        ChatLang("ar", "Arabic", "ar-en-chat", listOf("ar-en")),
+        ChatLang("ja", "Japanese", "ja-en-chat"),
+        ChatLang("tl", "Filipino", "tl-en-chat"),
+        ChatLang("lt", "Lithuanian", "lt-en-chat")
     )
 
     fun chatLang(code: String): ChatLang? = CHAT_LANGS.firstOrNull { it.code == code }
