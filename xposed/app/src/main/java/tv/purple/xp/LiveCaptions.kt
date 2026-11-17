@@ -1,9 +1,13 @@
 package tv.purple.xp
 
 import android.annotation.SuppressLint
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -37,8 +41,9 @@ import java.util.Locale
  * Two looks ([KEY_STYLE]): a few lines over the video that come and go, each kept on screen for
  * at least [KEY_SECONDS] before the next ones push it out, or a box with every line, which can be
  * scrolled back through. Either can be put anywhere on the screen, over the chat too: the box by
- * its handle, the lines through "Move the live captions" in the menu ([startMove]). The place is
- * kept as a share of the screen, so it fits after a rotation.
+ * its handle, the lines through "Move the live captions" in the menu ([startMove]). The box is
+ * resized by its corner grip, the lines (how wide they may get) by theirs while they are moved.
+ * The place and size are kept as shares of the screen, so they fit after a rotation.
  *
  * Nothing leaves the phone.
  */
@@ -56,6 +61,12 @@ object LiveCaptions {
      * top as a share of the room it can move in. Empty: the default place.
      */
     const val KEY_POS = "live_captions_pos"
+    /**
+     * "w,h": how big the captions are. w is the width as a share of the screen's width (the box's
+     * width, or the most the lines may take), h the box's height as a share of the screen's
+     * height. Empty: the default size. Kept on this phone only (see SettingsSync.local).
+     */
+    const val KEY_SIZE = "live_captions_size"
 
     private const val TAG = "ptv_live_captions"
     private const val TICK_MS = 500L
@@ -66,6 +77,10 @@ object LiveCaptions {
     /** Lines the history box keeps. */
     private const val HISTORY = 300
     private const val CC_HOLD_MS = 10_000L
+    /** The smallest the box and the lines can be made, in dp. */
+    private const val MIN_BOX_W = 200f
+    private const val MIN_BOX_H = 96f
+    private const val MIN_LINES_W = 120f
 
     private val main = Handler(Looper.getMainLooper())
     private val worker: Handler by lazy { Handler(HandlerThread("ptv-live-tr").apply { start() }.looper) }
@@ -100,8 +115,9 @@ object LiveCaptions {
     // The views: a box (handle row + text), added to the activity's content.
     private var boxRef: WeakReference<LinearLayout>? = null
     private var textRef: WeakReference<TextView>? = null
-    private var scrollRef: WeakReference<ScrollView>? = null
     private var handleRef: WeakReference<View>? = null
+    /** How wide the handle row is with nothing squeezed: the moved lines are never narrower, or Done would be cut off. */
+    private var handleNeeds = 0
 
     fun on() = Settings.isReady() && Settings.get(KEY, false)
 
@@ -239,7 +255,10 @@ object LiveCaptions {
     @Volatile private var moveAsked = 0L
     private const val MOVE_ASK_MS = 10 * 60_000L
 
-    /** True while a finger is dragging the box: [place] leaves it where the finger has it. */
+    /** The history box shows its last line, so it scrolls on with new ones. */
+    private var following = true
+
+    /** True while a finger is dragging or resizing the box: [place] leaves it as the finger has it. */
     private var dragging = false
 
     private fun endMove() {
@@ -248,19 +267,23 @@ object LiveCaptions {
         render()
     }
 
-    /** Forget the place picked: the captions go back low in the video. */
+    /** Forget the place and size picked: the captions go back low in the video, at their first size. */
     fun resetPlace() {
         Settings.setString(KEY_POS, "")
+        Settings.setString(KEY_SIZE, "")
         main.post { builtStyle = -1; render() }
     }
 
-    private fun storedPlace(): Pair<Float, Float>? {
-        val s = Settings.getString(KEY_POS, "")
-        val p = s.split(',')
+    private fun storedPlace(): Pair<Float, Float>? = pair(KEY_POS)?.let { it.first.coerceIn(0f, 1f) to it.second.coerceIn(0f, 1f) }
+
+    private fun storedSize(): Pair<Float, Float>? = pair(KEY_SIZE)?.takeIf { it.first > 0f && it.second > 0f }
+
+    private fun pair(key: String): Pair<Float, Float>? {
+        val p = Settings.getString(key, "").split(',')
         if (p.size != 2) return null
         val x = p[0].toFloatOrNull() ?: return null
         val y = p[1].toFloatOrNull() ?: return null
-        return x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
+        return x to y
     }
 
     // ------------------------------------------------------------ view
@@ -318,6 +341,8 @@ object LiveCaptions {
         fun dp(x: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, x, ctx.resources.displayMetrics).toInt()
         val st = style()
         builtStyle = st
+        // A drag on the box this replaces is over, even without its finger lifting.
+        dragging = false
         val box = LinearLayout(ctx).apply {
             tag = TAG
             orientation = LinearLayout.VERTICAL
@@ -340,7 +365,7 @@ object LiveCaptions {
         // in the history box, which is wider, the gap pushes the chips to the right.
         handle.addView(View(ctx), LinearLayout.LayoutParams(0, 0, 1f))
         if (moving) {
-            handle.addView(chip(ctx, "Reset") { Settings.setString(KEY_POS, ""); builtStyle = -1; render() })
+            handle.addView(chip(ctx, "Reset") { Settings.setString(KEY_POS, ""); Settings.setString(KEY_SIZE, ""); builtStyle = -1; render() })
             handle.addView(chip(ctx, "Done") { endMove() })
         }
         handle.setOnTouchListener(dragger(box, content))
@@ -352,23 +377,43 @@ object LiveCaptions {
             setPadding(dp(10f), dp(4f), dp(10f), dp(4f))
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
+        // The text with the corner grip over it: always on the box, on the lines only while moving them.
+        val body = FrameLayout(ctx)
         if (st == 1) {
             tv.gravity = Gravity.START
-            val sv = ScrollView(ctx).apply { isVerticalScrollBarEnabled = true; addView(tv) }
-            box.addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            scrollRef = WeakReference(sv)
+            // No smooth scrolling: a line that came in while it slid would not be followed.
+            val sv = ScrollView(ctx).apply { isVerticalScrollBarEnabled = true; isSmoothScrollingEnabled = false; addView(tv) }
+            // The box follows new lines unless it was scrolled back. Whether it shows its last
+            // line is only looked at when it scrolls, so text that grows (a new line, or a
+            // narrower box wrapping into more lines) is followed when the last line was in view.
+            following = true
+            sv.setOnScrollChangeListener { _, _, y, _, _ -> following = y + sv.height >= tv.height - dp(24f) }
+            val follow = View.OnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
+                if (following && b - t != ob - ot) sv.post { sv.fullScroll(View.FOCUS_DOWN) }
+            }
+            tv.addOnLayoutChangeListener(follow)
+            sv.addOnLayoutChangeListener(follow)
+            body.addView(sv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            box.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         } else {
             tv.gravity = Gravity.CENTER
             tv.maxLines = 4
             // Taps go through to the player, unless the captions are being moved.
-            box.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            // The lines set the box's width (the handle stretches to it), so it keeps its own.
+            body.addView(tv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            box.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
             })
             if (moving) tv.setOnTouchListener(dragger(box, content))
-            scrollRef = null
+        }
+        if (st == 1 || moving) {
+            body.addView(grip(ctx).apply { setOnTouchListener(resizer(box, content, tv)) },
+                FrameLayout.LayoutParams(dp(28f), dp(28f), Gravity.BOTTOM or Gravity.END))
         }
         textRef = WeakReference(tv)
         handleRef = WeakReference(handle)
+        handle.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        handleNeeds = if (handle.visibility == View.VISIBLE) handle.measuredWidth else 0
         content.addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         render()
         return box
@@ -400,11 +445,7 @@ object LiveCaptions {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     dragging = false
-                    // Across, the middle of the box is kept, so longer and shorter lines stay
-                    // centred where it was dropped; down, its top as a share of the room.
-                    val fx = (box.x + box.width / 2f) / content.width.coerceAtLeast(1)
-                    val fy = box.y / (content.height - box.height).coerceAtLeast(1)
-                    Settings.setString(KEY_POS, String.format(Locale.US, "%.4f,%.4f", fx.coerceIn(0f, 1f), fy.coerceIn(0f, 1f)))
+                    keepPlace(box.x, box.y, box.width, box.height, content)
                 }
             }
             return true
@@ -412,25 +453,138 @@ object LiveCaptions {
     }
 
     /**
+     * Across, the middle of the box is kept, so longer and shorter lines stay centred where it was
+     * dropped; down, its top as a share of the room.
+     */
+    private fun keepPlace(x: Float, y: Float, w: Int, h: Int, content: View) {
+        val fx = (x + w / 2f) / content.width.coerceAtLeast(1)
+        val fy = y / (content.height - h).coerceAtLeast(1)
+        Settings.setString(KEY_POS, String.format(Locale.US, "%.4f,%.4f", fx.coerceIn(0f, 1f), fy.coerceIn(0f, 1f)))
+    }
+
+    /** The corner grip: three short slanted strokes in the bottom corner, with room around them for a thumb. */
+    private fun grip(ctx: android.content.Context): View = object : View(ctx) {
+        private val d = resources.displayMetrics.density
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFBFBFC8.toInt()
+            strokeWidth = 1.5f * d
+            strokeCap = Paint.Cap.ROUND
+        }
+        init { contentDescription = I18n.t("Drag to resize") }
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            super.onLayout(changed, l, t, r, b)
+            // At the screen's edge the swipe would be the system's back gesture instead.
+            if (Build.VERSION.SDK_INT >= 29) systemGestureExclusionRects = listOf(Rect(0, 0, width, height))
+        }
+        override fun onDraw(c: Canvas) {
+            val r = width - 5f * d
+            val b = height - 5f * d
+            for (k in 1..3) c.drawLine(r - 4f * d * k, b, r, b - 4f * d * k, paint)
+        }
+    }
+
+    /**
+     * Resizes [box] from its bottom corner while its top stays put, never past the screen's edge;
+     * the lines only get wider or narrower. The size is kept when the finger lifts, and the place
+     * with it, so the box stays where it is seen even when it was in its default place.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun resizer(box: LinearLayout, content: View, tv: TextView) = object : View.OnTouchListener {
+        var x0 = 0f
+        var y0 = 0f
+        var w0 = 0
+        var h0 = 0
+        override fun onTouch(v: View, e: MotionEvent): Boolean {
+            val lines = builtStyle == 0
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { dragging = true; x0 = e.rawX; y0 = e.rawY; w0 = box.width; h0 = box.height }
+                MotionEvent.ACTION_MOVE -> {
+                    val least = if (lines) maxOf(dp(box, MIN_LINES_W), handleNeeds) else dp(box, MIN_BOX_W)
+                    val w = fit((w0 + e.rawX - x0).toInt(), least, (content.width - box.x).toInt())
+                    if (lines) {
+                        tv.maxWidth = w
+                        tv.minWidth = w
+                    } else {
+                        val h = fit((h0 + e.rawY - y0).toInt(), dp(box, MIN_BOX_H), (content.height - box.y).toInt())
+                        val lp = box.layoutParams
+                        lp.width = w
+                        lp.height = h
+                        box.layoutParams = lp
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    dragging = false
+                    val cw = content.width.coerceAtLeast(1).toFloat()
+                    val ch = content.height.coerceAtLeast(1).toFloat()
+                    val w = if (lines) tv.maxWidth else box.layoutParams.width
+                    // The lines have no height of their own to keep: the box's stays as it was.
+                    val h = if (lines) ((storedSize()?.second ?: (defaultBox(content).second / ch)) * ch).toInt() else box.layoutParams.height
+                    if (w > 0 && h > 0) Settings.setString(KEY_SIZE, String.format(Locale.US, "%.4f,%.4f", w / cw, h / ch))
+                    if (lines) {
+                        // The handle may be wider than the lines now: the box is as wide as the wider.
+                        val any = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                        box.measure(View.MeasureSpec.makeMeasureSpec(content.width, View.MeasureSpec.AT_MOST), any)
+                        keepPlace(box.x, box.y, box.measuredWidth, box.measuredHeight, content)
+                    } else keepPlace(box.x, box.y, w, h, content)
+                }
+            }
+            return true
+        }
+    }
+
+    /** [v] kept between [min] and [max]; [max] wins on a screen too small for [min]. */
+    private fun fit(v: Int, min: Int, max: Int) = if (min >= max) max.coerceAtLeast(0) else v.coerceIn(min, max)
+
+    /**
+     * The box's size before it is resized: most of the video's width and about a third of the
+     * screen's height on a phone; on a big screen (a tablet or an unfolded Fold) about half the
+     * width and a fifth of the height, since lines that long are hard to read.
+     */
+    private fun defaultBox(content: View, vid: View? = null): Pair<Int, Int> {
+        val big = content.resources.configuration.smallestScreenWidthDp >= 600
+        val vw = vid?.width ?: content.width
+        val w = if (big) minOf((content.width * 0.55f).toInt(), dp(content, 420f)).coerceAtLeast(dp(content, 280f))
+            else minOf((content.width * 0.95f).toInt(), maxOf((vw * 0.9f).toInt(), dp(content, 280f)))
+        val h = if (big) (content.height * 0.22f).toInt().coerceIn(dp(content, 120f), dp(content, 220f))
+            else (content.height * 0.33f).toInt().coerceIn(dp(content, 120f), dp(content, 360f))
+        return w.coerceAtMost(content.width) to h.coerceAtMost(content.height)
+    }
+
+    /** The box's size: the one picked (see [KEY_SIZE]), never smaller than the least or bigger than the screen. */
+    private fun boxSize(vid: View, content: View): Pair<Int, Int> {
+        val s = storedSize() ?: return defaultBox(content, vid)
+        return fit((s.first * content.width).toInt(), dp(content, MIN_BOX_W), content.width) to
+            fit((s.second * content.height).toInt(), dp(content, MIN_BOX_H), content.height)
+    }
+
+    /** The most the lines may take across: the width picked, or else 90% of the video. */
+    private fun linesWidth(vid: View, content: View): Int {
+        val s = storedSize() ?: return (vid.width * 0.9f).toInt()
+        return fit((s.first * content.width).toInt(), dp(content, MIN_LINES_W), content.width)
+    }
+
+    /**
      * Where the box goes: the place picked (see [KEY_POS]), kept on screen, or else low in the
-     * video, centred. The lines are never wider than 90% of the video; the box takes most of
-     * the video's width and about a third of the screen's height.
+     * video, centred. Its size is the one picked (see [KEY_SIZE]) or else [defaultBox]; the lines
+     * are never wider than the width picked or else 90% of the video, and while they are moved
+     * they show that whole width, so the grip has something to resize.
      */
     private fun place(box: LinearLayout, vid: View, content: View) {
         val tv = textRef?.get() ?: return
         val st = builtStyle
         if (st == 0 && !moving && tv.text.isNullOrEmpty()) { box.visibility = View.GONE; return }
+        box.visibility = View.VISIBLE
+        if (dragging) return
         if (st == 1) {
-            val w = minOf((content.width * 0.95f).toInt(), maxOf((vid.width * 0.9f).toInt(), dp(box, 280f)))
-            val h = (content.height * 0.33f).toInt().coerceIn(dp(box, 120f), dp(box, 360f))
+            val (w, h) = boxSize(vid, content)
             val lp = box.layoutParams
             if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; box.layoutParams = lp }
         } else {
-            val maxW = (vid.width * 0.9f).toInt()
+            val maxW = linesWidth(vid, content).let { if (moving) maxOf(it, handleNeeds).coerceAtMost(content.width) else it }
             if (tv.maxWidth != maxW) tv.maxWidth = maxW
+            val minW = if (moving) maxW else 0
+            if (tv.minWidth != minW) tv.minWidth = minW
         }
-        box.visibility = View.VISIBLE
-        if (dragging) return
         val w = if (box.width > 0) box.width else box.layoutParams.width.coerceAtLeast(0)
         val h = if (box.height > 0) box.height else 0
         val pos = storedPlace()
@@ -473,13 +627,9 @@ object LiveCaptions {
         }
         if (out.toString() == lastText.toString()) return
         lastText = out
-        val sv = scrollRef?.get()
-        // The history box follows new lines unless it was scrolled back.
-        val follow = sv == null || sv.scrollY + sv.height >= tv.height - dp(tv, 24f)
         tv.text = out
         if (builtStyle == 0) boxRef?.get()?.visibility = if (out.isEmpty() && !moving) View.GONE else View.VISIBLE
         tv.requestLayout()
-        if (sv != null && follow) sv.post { sv.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun grey(out: SpannableStringBuilder, s: String) {

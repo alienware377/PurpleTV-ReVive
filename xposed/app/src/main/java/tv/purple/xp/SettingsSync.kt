@@ -54,7 +54,9 @@ object SettingsSync {
         key == GlVideoFilter.KEY_FORCE || key.startsWith("vf_ui_") || key.startsWith("af_ui_") ||
         key.startsWith("fav_ui_") || key == Settings.KEY_ENABLED ||
         // Text-to-speech engines differ from phone to phone.
-        key == ReadAloud.KEY_ENGINE
+        key == ReadAloud.KEY_ENGINE ||
+        // A size that suits a tablet or an unfolded Fold is far too big on a phone.
+        key == LiveCaptions.KEY_SIZE
 
     private fun uri(): Uri? = Settings.getString(KEY_URI, "").takeIf { it.isNotEmpty() }?.let(Uri::parse)
 

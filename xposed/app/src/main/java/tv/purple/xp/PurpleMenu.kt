@@ -403,16 +403,16 @@ object PurpleMenu {
             "Show live captions in the language below instead, once it is downloaded. Lines already in that language stay as they are",
             LiveCaptions.KEY_TR, def = true, done = true),
         Drop("Live captions look",
-            "Lines over the video that come and go, or a box with every line that you can scroll back through. Drag the box by its top edge to put it anywhere",
+            "Lines over the video that come and go, or a box with every line that you can scroll back through. Drag the box by its top edge to put it anywhere, and by its corner to resize it",
             LiveCaptions.KEY_STYLE, listOf("Lines over the video", "Box with history"), def = 0, done = true),
         Slide("Seconds each caption stays",
             "How long a caption line stays on screen at least before the next ones take its place, so there is time to read it (lines look)",
             LiveCaptions.KEY_SECONDS, min = 2, max = 30, def = LiveCaptions.DEF_SECONDS, done = true),
         Custom("Move the live captions",
-            "Put them anywhere on the screen, over the chat too. Tap here, then go back to the stream",
+            "Put them anywhere on the screen, over the chat too, and drag the corner to resize them. Tap here, then go back to the stream",
             { ctx -> moveCaptions(ctx) }),
         Custom("Put the live captions back",
-            "Back low in the video, where they start",
+            "Back low in the video at their first size, where they start",
             { ctx -> LiveCaptions.resetPlace(); toast(ctx, "Live captions are back in their first place") }),
         Drop("Translate into", "The language chat and live captions are translated into",
             ChatTranslate.KEY_TO, Translator.languages().map { it.name }, def = ChatTranslate.DEF_TO, done = true),
@@ -1150,7 +1150,8 @@ object AdBreakSettings {
     fun changed(key: String, byUser: Boolean = false) {
         if (key.startsWith("pbyp_")) runCatching { PbypPreview.reapply() }
         if (key.startsWith("read_aloud")) runCatching { ReadAloud.refresh() }
-        if (key == Stt.KEY || key == CaptionHub.KEY || key == ReadAloud.KEY || key == SttModels.KEY || key.startsWith("dev_stt_"))
+        if (key == Stt.KEY || key == CaptionHub.KEY || key == ReadAloud.KEY || key == SttModels.KEY || key == LiveCaptions.KEY ||
+            key.startsWith("dev_stt_"))
             runCatching { Stt.refresh(hookNow = byUser) }
         // Read-aloud picks a voice for the stream language.
         if (key == SttModels.KEY) runCatching { ReadAloud.refresh() }

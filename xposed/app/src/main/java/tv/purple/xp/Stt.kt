@@ -889,10 +889,10 @@ object Stt {
     /**
      * Puts the IVS hooks in. Adding a hook pauses every thread for a moment, and IVS's audio thread
      * may be inside a blocking write then, so the sound can skip. So it happens only at moments the
-     * user picked: start-up, a switch changed in the menu, or a test command. Never at a break's
-     * end or when a download finishes (a stream is usually playing then), and never while any ad
-     * is on, PbyP or not. Until then the menu says to restart Twitch or switch speech-to-text off
-     * and on ([hookPending]).
+     * user picked: start-up, a switch changed in the menu, a test command, or live captions
+     * coming on screen (see [evaluate]). Never at a break's end or when a download finishes (a
+     * stream is usually playing then), and never while any ad is on, PbyP or not. Until then the
+     * menu says to restart Twitch or switch speech-to-text off and on ([hookPending]).
      */
     private fun maybeHook() {
         if (hooked || hookError != null || !on()) return
@@ -1117,6 +1117,10 @@ object Stt {
             return
         }
         if (broken != null) return
+        // Live captions only want the recognizer while a stream plays, so waiting for a restart
+        // would leave them empty for good after a download or a switch from sync: the hooks go in
+        // now instead (still never during an ad), at the cost of one short skip in the sound.
+        if (!hooked && liveMode) maybeHook()
         // Hooks not in yet (they wait for a restart or the switch): nothing to hear, so no model either.
         if (!hooked && !devFeeding && !devBreak) return
         // The stream language changed in settings: the next words need the other model. The line in
