@@ -76,6 +76,8 @@
 "Captions during ad breaks": "Subtítulos en las pausas publicitarias",
 "Captions files deleted": "Archivos de subtítulos eliminados",
 "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)": "Subtítulos sobre los directos: los propios del directo cuando los envía y, si no, voz a texto en este teléfono (necesita las descargas de voz a texto en Reproductor, Durante las pausas publicitarias, para el idioma del directo de abajo)",
+"Captions paused: the phone is low on memory": "Subtítulos en pausa: al teléfono le queda poca memoria",
+"Captions paused: the phone is too hot": "Subtítulos en pausa: el teléfono está demasiado caliente",
 "Captions show here": "Los subtítulos salen aquí",
 "Change": "Cambiar",
 "Change @mention color": "Cambiar color de @mención",

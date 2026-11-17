@@ -76,6 +76,8 @@
 "Captions during ad breaks",
 "Captions files deleted",
 "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)",
+"Captions paused: the phone is low on memory",
+"Captions paused: the phone is too hot",
 "Captions show here",
 "Change",
 "Change @mention color",

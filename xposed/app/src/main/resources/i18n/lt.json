@@ -76,6 +76,8 @@
 "Captions during ad breaks": "Subtitrai per reklamos pertraukas",
 "Captions files deleted": "Subtitrų failai ištrinti",
 "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)": "Subtitrai virš tiesioginių transliacijų: pačios transliacijos subtitrai, kai ji juos siunčia, kitaip šnekos atpažinimas šiame telefone (reikia šnekos atpažinimo atsisiuntimų skiltyje Grotuvas, Per reklamos pertraukas, žemiau nurodytai transliacijos kalbai)",
+"Captions paused: the phone is low on memory": "Subtitrai pristabdyti: telefonui trūksta atminties",
+"Captions paused: the phone is too hot": "Subtitrai pristabdyti: telefonas per karštas",
 "Captions show here": "Subtitrai rodomi čia",
 "Change": "Keisti",
 "Change @mention color": "Keisti @paminėjimų spalvą",

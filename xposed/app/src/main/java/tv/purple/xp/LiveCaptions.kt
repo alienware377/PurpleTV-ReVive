@@ -101,6 +101,8 @@ object LiveCaptions {
     private val lines = ArrayDeque<Line>()
     /** Finished lines waiting for room on screen (lines look). */
     private val waiting = ArrayDeque<Line>()
+    /** The heat or memory note last put in the box (see Stt.holdNote). */
+    private var holdShown: String? = null
     /** Every recent line (history box). */
     private val history = ArrayDeque<Line>()
     private var partial = ""
@@ -329,7 +331,7 @@ object LiveCaptions {
         val before = lines.size
         while (lines.isNotEmpty() && lines.first().since < cut && waiting.isEmpty()) lines.removeFirst()
         pace()
-        if (lines.size != before || waiting.isNotEmpty()) render()
+        if (lines.size != before || waiting.isNotEmpty() || lastText.isEmpty() || Stt.holdNote() != holdShown) render()
         place(box, vid, content)
     }
 
@@ -625,6 +627,9 @@ object LiveCaptions {
             // While translating, the words still being heard are the original: shown smaller and grey.
             if (tr) grey(out, partial) else out.append(partial)
         }
+        // Speech to text held back (heat or memory): say so, or the box just goes quiet.
+        holdShown = Stt.holdNote()
+        holdShown?.let { if (out.isNotEmpty()) out.append('\n'); grey(out, I18n.t(it)) }
         if (out.toString() == lastText.toString()) return
         lastText = out
         tv.text = out

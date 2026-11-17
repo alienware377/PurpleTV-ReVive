@@ -196,6 +196,7 @@ object SttPacks {
         val mp = modelPack()
         lines.add(line(ctx, mp, "Speech model (${SttModels.chosen().label})"))
         if (ready(ctx, ENGINE) && ready(ctx, mp)) lines.add(when {
+            Stt.holdNote() != null -> Stt.holdNote()!!
             Stt.listening() -> "Listening to the small live picture now"
             Stt.loaded() -> "Loaded, waiting for the small live picture"
             Stt.hookPending(ctx) -> "Downloaded. " + Stt.RESTART_HINT
@@ -820,6 +821,14 @@ object Stt {
     internal fun loaded(): Boolean = loadedNow
     internal fun listening(): Boolean = loadedNow && target > 0
 
+    /** Why the recognizer is held while it is wanted (heat or memory), for the caption box and menu. */
+    internal fun holdNote(): String? = when {
+        !inBreak -> null
+        thermalHold -> "Captions paused: the phone is too hot"
+        memoryHold -> "Captions paused: the phone is low on memory"
+        else -> null
+    }
+
     /** What the menu and the download message say while the hooks wait (see [maybeHook]). */
     const val RESTART_HINT = "Restart Twitch, or switch speech-to-text off and on, to start it"
 
@@ -835,6 +844,7 @@ object Stt {
     internal fun menuNote(ctx: Context): String? {
         broken?.let { return "Speech-to-text could not start ($it). Restart Twitch to try again" }
         if (hookPending(ctx)) return RESTART_HINT
+        holdNote()?.let { return it }
         return null
     }
 
@@ -1442,7 +1452,9 @@ object Stt {
             val pm = app.getSystemService(PowerManager::class.java)
             pm?.addThermalStatusListener(Executor { bg.post(it) }) { st ->
                 safely("thermal") {
-                    val hot = st >= PowerManager.THERMAL_STATUS_SEVERE
+                    // Not SEVERE: Samsung reports that at about 42 C skin, which a phone streaming
+                    // video on a charger reaches in normal use, and the captions went quiet for hours.
+                    val hot = st >= PowerManager.THERMAL_STATUS_CRITICAL
                     if (hot != thermalHold) { thermalHold = hot; log("STT thermal status $st"); evaluate() }
                 }
             }

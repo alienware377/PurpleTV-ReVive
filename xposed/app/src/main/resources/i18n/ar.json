@@ -76,6 +76,8 @@
 "Captions during ad breaks": "التسميات التوضيحية أثناء فواصل الإعلانات",
 "Captions files deleted": "حُذفت ملفات التسميات التوضيحية",
 "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)": "تسميات توضيحية فوق البث المباشر: تسميات البث نفسه حين يرسلها، وإلا فتحويل الكلام إلى نص على هذا الهاتف (يحتاج إلى تنزيلات تحويل الكلام إلى نص ضمن المشغّل، أثناء فواصل الإعلانات، للغة البث أدناه)",
+"Captions paused: the phone is low on memory": "التسميات متوقفة مؤقتًا: ذاكرة الهاتف منخفضة",
+"Captions paused: the phone is too hot": "التسميات متوقفة مؤقتًا: الهاتف ساخن جدًا",
 "Captions show here": "تظهر التسميات التوضيحية هنا",
 "Change": "تغيير",
 "Change @mention color": "تغيير لون الإشارة @",

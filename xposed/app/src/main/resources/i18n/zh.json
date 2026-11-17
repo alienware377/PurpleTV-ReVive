@@ -76,6 +76,8 @@
 "Captions during ad breaks": "广告期间的字幕",
 "Captions files deleted": "字幕文件已删除",
 "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)": "在直播上显示字幕：直播自带字幕时使用其字幕，否则在本机进行语音转文字（需要在“播放器 › 广告期间”下载下方直播语言的语音转文字文件）",
+"Captions paused: the phone is low on memory": "字幕已暂停：手机内存不足",
+"Captions paused: the phone is too hot": "字幕已暂停：手机温度过高",
 "Captions show here": "字幕会显示在这里",
 "Change": "更改",
 "Change @mention color": "更改 @提及 颜色",

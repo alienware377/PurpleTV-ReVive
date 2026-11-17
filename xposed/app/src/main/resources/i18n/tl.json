@@ -76,6 +76,8 @@
 "Captions during ad breaks": "Captions habang may ad break",
 "Captions files deleted": "Nabura na ang captions files",
 "Captions over live streams: the stream's own captions when it sends them, otherwise speech to text on this phone (needs the speech-to-text downloads under Player, During ad breaks, for the stream language below)": "Captions sa ibabaw ng live streams: ang sariling captions ng stream kapag nagpapadala ito, kung hindi ay speech to text sa phone na ito (kailangan ang speech-to-text downloads sa Player, Habang may ad break, para sa wika ng stream sa ibaba)",
+"Captions paused: the phone is low on memory": "Naka-pause ang captions: kulang ang memory ng phone",
+"Captions paused: the phone is too hot": "Naka-pause ang captions: masyadong mainit ang phone",
 "Captions show here": "Dito lalabas ang captions",
 "Change": "Palitan",
 "Change @mention color": "Palitan ang kulay ng @mention",
