@@ -668,7 +668,15 @@ object FiltersPanel {
                     FilterDefs.setExtraInt("vignette", "size", it); onExtra()
                 })
                 "bokeh" -> buildBokeh()
-                else -> if (f.group == FilterDefs.Group.DYNAMIC) {
+                "glow" -> GradeControls.build(ctx, f.key, extras) { onExtra() }
+                else -> if (f.group == FilterDefs.Group.GRADE) {
+                    GradeControls.build(ctx, f.key, extras) {
+                        // The slider is how much of the grade is used: moving a control while
+                        // it is at 0 would show nothing, so it goes to full first.
+                        if (FilterDefs.rawAmount(i) == 0) { FilterDefs.setAmount(i, 100); load() }
+                        onExtra()
+                    }
+                } else if (f.group == FilterDefs.Group.DYNAMIC) {
                     val target = when (f.key) {
                         "d_exp" -> "Target brightness"; "d_gamma" -> "Target midtones"
                         "d_con" -> "Target contrast"; else -> "Black level"

@@ -10,7 +10,8 @@ package tv.purple.xp
 object FilterDefs {
 
     enum class Group(val title: String) {
-        LIGHT("Light"), DYNAMIC("Dynamic light"), DETAIL("Detail"), COLOR("Colour"), STYLE("Style"), EFFECTS("Effects"),
+        LIGHT("Light"), DYNAMIC("Dynamic light"), DETAIL("Detail"), COLOR("Colour"), GRADE("Colour grading"),
+        STYLE("Style"), EFFECTS("Effects"),
         GLITCH("Effects: glitch")
     }
 
@@ -40,6 +41,15 @@ object FilterDefs {
             "Bends the middle tones lighter or darker while keeping pure black and pure white where they are."),
         Filter("fade", "Fade", Group.LIGHT,
             "Lifts the blacks into a soft, matte, film-like look.", bipolar = false),
+        Filter("whites", "Whites", Group.LIGHT,
+            "Moves the white point: raise it so the brightest parts reach full white, lower it to pull back whites that are blown out.",
+            ranged = false),
+        Filter("blacks", "Blacks", Group.LIGHT,
+            "Moves the black point: lower it for deep, rich blacks, raise it to lift crushed blacks so you can see into them.",
+            ranged = false),
+        Filter("dehaze", "Dehaze", Group.LIGHT,
+            "Cuts through haze, fog and washed-out glare, bringing back contrast and colour in the hazy parts. Lower it to add a soft haze.",
+            ranged = false),
         // ---- Dynamic light: measured from the stream as it plays (see DynLight) ----
         Filter("d_exp", "Dynamic exposure", Group.DYNAMIC,
             "Keeps an eye on how bright the stream is and opens up dark scenes or pulls back washed-out ones, easing in over a moment so it never flickers. The slider is how strongly it corrects.",
@@ -76,6 +86,22 @@ object FilterDefs {
         Filter("vib", "Vibrance", Group.COLOR,
             "A gentler saturation: boosts dull colours more than ones that are already strong, so skin tones stay natural.",
             colorIcon = true),
+        // ---- Colour grading: the slider is how much of the whole adjustment is used ----
+        Filter("hsl", "Colour mixer (HSL)", Group.GRADE,
+            "Changes one colour at a time: pick red, orange, yellow, green, aqua, blue, purple or magenta and shift its hue, saturation and brightness. The slider is how much of it is used.",
+            bipolar = false, ranged = false, colorIcon = true),
+        Filter("curves", "Curves", Group.GRADE,
+            "Tone curves like a photo editor: drag points on the curve to brighten or darken any range of tones, for all colours or for red, green and blue alone. The slider is how much of it is used.",
+            bipolar = false, ranged = false, colorIcon = true),
+        Filter("calib", "Calibration", Group.GRADE,
+            "Shifts the hue and saturation of the red, green and blue primaries, which changes every colour made from them, like a camera's colour calibration. Balance warms or cools the shadows.",
+            bipolar = false, ranged = false, colorIcon = true),
+        Filter("split", "Split toning", Group.GRADE,
+            "Tints the shadows with one colour and the highlights with another, like a film grade (teal shadows and orange highlights, for example). Balance moves the split towards shadows or highlights.",
+            bipolar = false, ranged = false, colorIcon = true),
+        Filter("lut", "LUT", Group.GRADE,
+            "Applies a colour look from a .cube LUT file, the kind photo and video editors and LUT packs use. Pick a file once and it stays on this phone. The slider is how much of it is used.",
+            bipolar = false, ranged = false, colorIcon = true),
         // ---- Style ----
         Filter("mono", "Monotone", Group.STYLE,
             "Turns the picture into shades of one colour you pick, from black through your colour to white.",
@@ -96,6 +122,9 @@ object FilterDefs {
         Filter("bokeh", "Moving bokeh", Group.EFFECTS,
             "Soft, glowing out-of-focus lights that drift slowly across the picture, like fairy lights behind a camera. The slider is how strong they are.",
             bipolar = false, ranged = false, colorIcon = true),
+        Filter("glow", "Glow", Group.EFFECTS,
+            "Bright parts of the picture bleed a soft light into their surroundings, like a dreamy lens bloom.",
+            bipolar = false, ranged = false),
         Filter("vignette", "Vignette", Group.EFFECTS,
             "Darkens the edges to draw your eye to the middle, or lightens them for a faded look.",
             ranged = false),
@@ -187,6 +216,33 @@ object FilterDefs {
             f.key == "vignette" -> setExtraInt("vignette", "size", 50)
             f.key == "bokeh" -> { setExtraInt("bokeh", "size", 45); setExtraInt("bokeh", "density", 45); setExtraInt("bokeh", "speed", 40) }
         }
+        for ((field, v) in extraStarts(f.key)) when (v) {
+            is Int -> setExtraInt(f.key, field, v)
+            is String -> setExtraStr(f.key, field, v)
+        }
+    }
+
+    // ---- colour grading ----
+
+    /** The colour mixer's colours, at these hues (degrees) around the wheel. */
+    val HSL_COLORS = listOf("Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta")
+    val HSL_SWATCHES = intArrayOf(0xFFE53935.toInt(), 0xFFFB8C00.toInt(), 0xFFFDD835.toInt(), 0xFF43A047.toInt(),
+        0xFF26C6DA.toInt(), 0xFF1E88E5.toInt(), 0xFF8E24AA.toInt(), 0xFFD81B60.toInt())
+
+    /** Calibration's sliders: field, label, and the colours its track runs between. */
+    val CALIB_FIELDS = listOf("bal", "rh", "rs", "gh", "gs", "bh", "bs")
+
+    /**
+     * The extras of the newer filters at their start values, which a reset writes back. Settings
+     * that are choices rather than adjustments (the LUT file) are not here, so a reset keeps them.
+     */
+    fun extraStarts(key: String): Map<String, Any> = when (key) {
+        "hsl" -> (0 until 8).flatMap { listOf("h$it" to 0, "s$it" to 0, "l$it" to 0) }.toMap()
+        "calib" -> CALIB_FIELDS.associateWith { 0 }
+        "split" -> mapOf("sh" to 200, "ss" to 0, "hh" to 35, "hs" to 0, "bal" to 0)
+        "curves" -> ToneCurve.CHANNELS.associateWith { ToneCurve.LINEAR }
+        "glow" -> mapOf("size" to 50)
+        else -> emptyMap()
     }
 
     /** True when the filter is on or its tone range was narrowed. */

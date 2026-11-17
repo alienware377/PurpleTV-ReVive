@@ -99,6 +99,46 @@ vec3 blendMode(vec3 b, vec3 s, float m) {
 
 float lumAt(vec2 q) { return lum3(SRC(q)); }
 
+// Colour mixer: one value per colour (A: red, orange, yellow, green; B: aqua, blue, purple,
+// magenta), blended between the two nearest colours for hue h in degrees.
+float hslPick(vec4 A, vec4 B, float h) {
+    if (h < 30.0) return mix(A.x, A.y, h / 30.0);
+    if (h < 60.0) return mix(A.y, A.z, (h - 30.0) / 30.0);
+    if (h < 120.0) return mix(A.z, A.w, (h - 60.0) / 60.0);
+    if (h < 180.0) return mix(A.w, B.x, (h - 120.0) / 60.0);
+    if (h < 240.0) return mix(B.x, B.y, (h - 180.0) / 60.0);
+    if (h < 270.0) return mix(B.y, B.z, (h - 240.0) / 30.0);
+    if (h < 300.0) return mix(B.z, B.w, (h - 270.0) / 30.0);
+    return mix(B.w, A.x, (h - 300.0) / 60.0);
+}
+
+// 3D LUT, stored as uLutN slices side by side: blue picks the slice, red and green the pixel.
+vec3 lutSlice(vec2 rg, float b, float n) {
+    vec2 i0 = floor(rg);
+    vec2 i1 = min(i0 + 1.0, vec2(n - 1.0));
+    vec2 f = rg - i0;
+    float ox = b * n + 0.5;
+    vec3 c00 = LUTAT(vec2(ox + i0.x, i0.y + 0.5));
+    vec3 c10 = LUTAT(vec2(ox + i1.x, i0.y + 0.5));
+    vec3 c01 = LUTAT(vec2(ox + i0.x, i1.y + 0.5));
+    vec3 c11 = LUTAT(vec2(ox + i1.x, i1.y + 0.5));
+    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+vec3 lut3(vec3 c) {
+    float n = uLutN;
+    vec3 s = clamp(c, 0.0, 1.0) * (n - 1.0);
+    float b0 = floor(s.b);
+    float b1 = min(b0 + 1.0, n - 1.0);
+    return mix(lutSlice(s.rg, b0, n), lutSlice(s.rg, b1, n), s.b - b0);
+}
+
+// Tone curves: 256 levels, read between two neighbouring levels.
+vec3 curveAt(float t) {
+    float x = clamp(t, 0.0, 1.0) * 255.0;
+    float i = floor(x);
+    return mix(CURVE(i), CURVE(min(i + 1.0, 255.0)), x - i);
+}
+
 vec3 bokehColor(float h) {
     if (uBokehMode < 0.5) return hsv2rgb(vec3(h, 0.55, 1.0));
     if (uBokehMode < 1.5) return mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.9, 0.55), h);
@@ -224,6 +264,40 @@ vec4 filterMain(vec2 p) {
         w = bandw(f_fade, L0);
         own = mix(own, own * (1.0 - a * 0.35) + a * 0.22, w);
     }
+    a = f_whites.x;
+    if (abs(a) > 0.003) {
+        // Raising moves the white point down, so the top tones reach full white; lowering rolls them off.
+        w = smoothstep(0.35, 1.0, lum3(own));
+        own = a > 0.0 ? clamp(own / (1.0 - a * 0.3 * w), 0.0, 1.0) : own * (1.0 + a * 0.3 * w * w);
+    }
+    a = f_blacks.x;
+    if (abs(a) > 0.003) {
+        w = 1.0 - smoothstep(0.0, 0.45, lum3(own));
+        if (a > 0.0) own = own + a * 0.18 * w * (1.0 - own);
+        else {
+            float bp = -a * 0.12 * w;
+            own = clamp((own - bp) / (1.0 - bp), 0.0, 1.0);
+        }
+    }
+    a = f_dehaze.x;
+    if (abs(a) > 0.003) {
+        // Haze lifts every colour channel, so the darkest channel around a pixel (the "dark
+        // channel") tells how much haze is in front of it.
+        float dc = min(own.r, min(own.g, own.b));
+        for (int k = 0; k < 4; k++) {
+            float ang = float(k) * 1.5707963 + 0.4;
+            vec3 s = SRC(q + vec2(cos(ang), sin(ang)) * uBlur);
+            dc = min(dc, min(s.r, min(s.g, s.b)));
+        }
+        if (a > 0.0) {
+            float t = max(1.0 - a * 0.85 * dc, 0.3);
+            own = clamp((own - 0.92 * (1.0 - t)) / t, 0.0, 1.0);
+            float L = lum3(own);
+            own = clamp(mix(vec3(L), own, 1.0 + a * 0.15), 0.0, 1.0);
+        } else {
+            own = mix(own, vec3(0.86), -a * 0.5 * (0.5 + 0.5 * (1.0 - dc)));
+        }
+    }
 
     // ---- detail ----
     a = f_clarity.x;
@@ -303,6 +377,45 @@ vec4 filterMain(vec2 p) {
         own = clamp(mix(vec3(L), own, 1.0 + a * (1.0 - cs) * bandw(f_vib, L0)), 0.0, 1.0);
     }
 
+    // ---- colour grading ----
+    a = f_calib.x;
+    if (a > 0.003) {
+        own = mix(own, clamp(vec3(dot(uCal0, own), dot(uCal1, own), dot(uCal2, own)), 0.0, 1.0), a);
+        float b = f_calib.y;
+        if (abs(b) > 0.003) {
+            // Balance: orange to the left, cyan to the right, in the darker tones.
+            float sh = 1.0 - smoothstep(0.0, 0.6, lum3(own));
+            own = clamp(own * (1.0 + vec3(-b * 0.18, b * 0.03, b * 0.2) * sh * a), 0.0, 1.0);
+        }
+    }
+    a = f_hsl.x;
+    if (a > 0.003) {
+        vec3 hv = rgb2hsv(own);
+        // Greys have no colour to pick, so they stay as they are.
+        float sw = smoothstep(0.02, 0.2, hv.y) * a;
+        float hh = hv.x * 360.0;
+        float dh = hslPick(uHslH0, uHslH1, hh);
+        float ds = hslPick(uHslS0, uHslS1, hh);
+        float dl = hslPick(uHslL0, uHslL1, hh);
+        if (abs(dh) + abs(ds) + abs(dl) > 0.001) {
+            hv.x = fract(hv.x + dh * (40.0 / 360.0) * sw);
+            hv.y = clamp(hv.y * (1.0 + ds * sw), 0.0, 1.0);
+            own = clamp(hsv2rgb(hv) * (1.0 + dl * 0.5 * sw), 0.0, 1.0);
+        }
+    }
+    a = f_split.x;
+    if (a > 0.003) {
+        float L = lum3(own);
+        float piv = 0.5 - f_split.y * 0.35;
+        float wh = smoothstep(piv - 0.4, piv + 0.4, L);
+        own = mix(own, setLum(hsv2rgb(vec3(uSplit.x, 1.0, 1.0)), L), (1.0 - wh) * uSplit.y * 0.6 * a);
+        own = mix(own, setLum(hsv2rgb(vec3(uSplit.z, 1.0, 1.0)), lum3(own)), wh * uSplit.w * 0.6 * a);
+    }
+    a = f_curves.x;
+    if (a > 0.003) own = mix(own, vec3(curveAt(own.r).r, curveAt(own.g).g, curveAt(own.b).b), a);
+    a = f_lut.x;
+    if (a > 0.003 && uLutN > 1.5) own = mix(own, lut3(own), a);
+
     // ---- style ----
     a = f_mono.x;
     if (a > 0.003) own = mix(own, MONO(lum3(own)), a * bandw(f_mono, L0));
@@ -358,6 +471,19 @@ vec4 filterMain(vec2 p) {
         }
         own = 1.0 - (1.0 - own) * (1.0 - clamp(acc * a, 0.0, 1.0));
     }
+    a = f_glow.x;
+    if (a > 0.003) {
+        // The bright parts around the pixel, spread out and added back like light.
+        vec3 acc = max(own - 0.6, 0.0);
+        float r = uBlur * (1.0 + f_glow.y * 4.0);
+        for (int k = 0; k < 12; k++) {
+            float ang = float(k) * 0.5235988 + 0.26;
+            vec2 d = vec2(cos(ang), sin(ang));
+            acc += max(SRC(q + d * r) - 0.6, 0.0) + max(SRC(q + d * r * 0.45) - 0.6, 0.0);
+        }
+        acc = acc / 25.0 * 2.5;
+        own = 1.0 - (1.0 - own) * (1.0 - clamp(acc * a * 1.5, 0.0, 1.0));
+    }
     // ---- glitch colour effects ----
     if (blockHit > 0.5) own = mix(own, own.gbr * vec3(1.25, 0.85, 1.3), 0.6);
     a = f_g_vhs.x;
@@ -405,12 +531,16 @@ vec4 filterMain(vec2 p) {
 """
 
     private val COMMON_UNIFORMS = listOf("uSize", "uBlur", "uBlend", "uSeed", "uGrainSize",
-        "uGrainColor", "uVigSize", "uTime", "uBokehMode", "uBokehColor", "uBokehDensity")
+        "uGrainColor", "uVigSize", "uTime", "uBokehMode", "uBokehColor", "uBokehDensity",
+        "uHslH0", "uHslH1", "uHslS0", "uHslS1", "uHslL0", "uHslL1", "uCal0", "uCal1", "uCal2", "uSplit", "uLutN")
 
     private const val EXTRA_UNIFORMS =
-        "uniform float uTime;\nuniform float uBokehMode;\nuniform vec3 uBokehColor;\nuniform float uBokehDensity;\n"
+        "uniform float uTime;\nuniform float uBokehMode;\nuniform vec3 uBokehColor;\nuniform float uBokehDensity;\n" +
+        "uniform vec4 uHslH0;\nuniform vec4 uHslH1;\nuniform vec4 uHslS0;\nuniform vec4 uHslS1;\n" +
+        "uniform vec4 uHslL0;\nuniform vec4 uHslL1;\nuniform vec3 uCal0;\nuniform vec3 uCal1;\nuniform vec3 uCal2;\n" +
+        "uniform vec4 uSplit;\nuniform float uLutN;\n"
 
-    /** AGSL for RuntimeShader with every filter available. Children: content (video), ovl, grad, mono. */
+    /** AGSL for RuntimeShader with every filter available. Children: content (video), ovl, grad, mono, curve, lut. */
     val AGSL: String by lazy { agsl(null) }
 
     /**
@@ -421,6 +551,7 @@ vec4 filterMain(vec2 p) {
     fun agsl(active: Set<String>?): String =
         buildString {
             append("uniform shader content;\nuniform shader ovl;\nuniform shader grad;\nuniform shader mono;\n")
+            append("uniform shader curve;\nuniform shader lut;\n")
             append("uniform vec2 uSize;\nuniform float uBlur;\nuniform float uBlend;\nuniform float uSeed;\n")
             append("uniform float uGrainSize;\nuniform float uGrainColor;\nuniform float uVigSize;\n")
             append(EXTRA_UNIFORMS)
@@ -432,6 +563,8 @@ vec4 filterMain(vec2 p) {
             append("vec4 OVL(vec2 p) { return ovl.eval(p); }\n")
             append("vec3 GRAD(float t) { return grad.eval(vec2(clamp(t, 0.0, 1.0) * 255.0 + 0.5, 0.5)).rgb; }\n")
             append("vec3 MONO(float t) { return mono.eval(vec2(clamp(t, 0.0, 1.0) * 255.0 + 0.5, 0.5)).rgb; }\n")
+            append("vec3 CURVE(float i) { return curve.eval(vec2(i + 0.5, 0.5)).rgb; }\n")
+            append("vec3 LUTAT(vec2 p) { return lut.eval(p).rgb; }\n")
             append(BODY)
             append("half4 main(vec2 p) { half4 src = content.eval(p); vec4 o = filterMain(p); return half4(half3(o.rgb), src.a); }\n")
         }
@@ -450,6 +583,7 @@ vec4 filterMain(vec2 p) {
             append("in vec2 vUv;\nout vec4 fragColor;\n")
             append("uniform samplerExternalOES uVideo;\nuniform mat4 uTexMatrix;\n")
             append("uniform sampler2D uOvl;\nuniform vec2 uOvlScale;\nuniform vec2 uOvlOff;\nuniform sampler2D uGrad;\nuniform sampler2D uMono;\n")
+            append("uniform sampler2D uCurve;\nuniform sampler2D uLut;\n")
             append("uniform vec2 uSize;\nuniform float uBlur;\nuniform float uBlend;\nuniform float uSeed;\n")
             append("uniform float uGrainSize;\nuniform float uGrainColor;\nuniform float uVigSize;\n")
             append(EXTRA_UNIFORMS)
@@ -462,6 +596,8 @@ vec4 filterMain(vec2 p) {
             append("vec4 OVL(vec2 p) { return texture(uOvl, p * uOvlScale + uOvlOff); }\n")
             append("vec3 GRAD(float t) { return texture(uGrad, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb; }\n")
             append("vec3 MONO(float t) { return texture(uMono, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb; }\n")
+            append("vec3 CURVE(float i) { return texture(uCurve, vec2((i + 0.5) / 256.0, 0.5)).rgb; }\n")
+            append("vec3 LUTAT(vec2 p) { return texture(uLut, p / vec2(uLutN * uLutN, uLutN)).rgb; }\n")
             append(BODY)
             append("void main() { vec2 p = vec2(vUv.x, 1.0 - vUv.y) * uSize; fragColor = filterMain(p); }\n")
         }

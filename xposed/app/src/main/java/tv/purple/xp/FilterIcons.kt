@@ -339,6 +339,53 @@ object FilterIcons {
             f.shader = LinearGradient(s * 0.1f, 0f, s * 0.9f, 0f, intArrayOf(0x00FF4D9A, 0xFFFF4D9A.toInt(), 0xFF8A6BFF.toInt()), null, Shader.TileMode.CLAMP)
             c.drawRoundRect(RectF(s * 0.1f, s * 0.32f, s * 0.9f, s * 0.68f), s * 0.18f, s * 0.18f, f)
         }
+        "whites" -> icon { c, s, st, f ->
+            c.drawCircle(s / 2, s / 2, s * 0.32f, f)
+            c.drawCircle(s / 2, s / 2, s * 0.32f, st)
+        }
+        "blacks" -> icon { c, s, st, f ->
+            f.color = 0xFF000000.toInt(); c.drawCircle(s / 2, s / 2, s * 0.32f, f)
+            c.drawCircle(s / 2, s / 2, s * 0.32f, st)
+        }
+        "dehaze" -> icon { c, s, st, _ ->
+            for (k in 0..2) {
+                val y = s * (0.3f + 0.2f * k)
+                val p = Path().apply { moveTo(s * 0.15f, y); cubicTo(s * 0.35f, y - s * 0.1f, s * 0.55f, y + s * 0.1f, s * 0.85f, y) }
+                st.alpha = 255 - k * 70; c.drawPath(p, st)
+            }
+        }
+        "hsl" -> icon { c, s, _, f ->
+            f.shader = SweepGradient(s / 2, s / 2, intArrayOf(0xFFFF4D4D.toInt(), 0xFFFFD24D.toInt(), 0xFF4DFF88.toInt(),
+                0xFF4DD2FF.toInt(), 0xFF6B4DFF.toInt(), 0xFFFF4DD2.toInt(), 0xFFFF4D4D.toInt()), null)
+            c.drawCircle(s / 2, s / 2, s * 0.36f, f)
+        }
+        "curves" -> icon { c, s, st, _ ->
+            c.drawRect(s * 0.15f, s * 0.15f, s * 0.85f, s * 0.85f, st.apply { alpha = 90; strokeWidth = s * 0.04f })
+            st.alpha = 255; st.strokeWidth = s * 0.08f
+            c.drawPath(Path().apply { moveTo(s * 0.15f, s * 0.85f); cubicTo(s * 0.5f, s * 0.85f, s * 0.5f, s * 0.15f, s * 0.85f, s * 0.15f) }, st)
+        }
+        "calib" -> icon { c, s, _, f ->
+            val cols = intArrayOf(0xEEFF4D4D.toInt(), 0xEE4DDC84.toInt(), 0xEE4D8DFF.toInt())
+            for (k in 0..2) { f.color = cols[k]; c.drawCircle(s * (0.25f + 0.25f * k), s * 0.5f, s * 0.13f, f) }
+        }
+        "split" -> icon { c, s, _, f ->
+            val r = RectF(s * 0.14f, s * 0.14f, s * 0.86f, s * 0.86f)
+            f.color = 0xFF2EC4C4.toInt(); c.drawArc(r, 90f, 180f, true, f)
+            f.color = 0xFFFF9A3D.toInt(); c.drawArc(r, 270f, 180f, true, f)
+        }
+        "lut" -> icon { c, s, st, _ ->
+            val p = Path().apply {
+                moveTo(s * 0.5f, s * 0.12f); lineTo(s * 0.85f, s * 0.3f); lineTo(s * 0.85f, s * 0.7f); lineTo(s * 0.5f, s * 0.88f)
+                lineTo(s * 0.15f, s * 0.7f); lineTo(s * 0.15f, s * 0.3f); close()
+                moveTo(s * 0.15f, s * 0.3f); lineTo(s * 0.5f, s * 0.48f); lineTo(s * 0.85f, s * 0.3f)
+                moveTo(s * 0.5f, s * 0.48f); lineTo(s * 0.5f, s * 0.88f)
+            }
+            c.drawPath(p, st)
+        }
+        "glow" -> icon { c, s, st, f ->
+            f.alpha = 70; c.drawCircle(s / 2, s / 2, s * 0.4f, f)
+            f.alpha = 255; c.drawCircle(s / 2, s / 2, s * 0.2f, f)
+        }
         else -> icon { c, s, st, _ -> c.drawCircle(s / 2, s / 2, s * 0.3f, st) }
     }
 }

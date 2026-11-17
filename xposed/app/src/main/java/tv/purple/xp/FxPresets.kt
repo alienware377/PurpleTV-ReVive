@@ -140,7 +140,7 @@ object FxPresets {
                     f.group == FilterDefs.Group.GLITCH -> listOf("speed")
                     f.key == "grain" || f.key == "vignette" -> listOf("size")
                     f.key == "bokeh" -> listOf("size", "density", "speed")
-                    else -> emptyList()
+                    else -> FilterDefs.extraStarts(f.key).keys.toList()
                 }
                 for (s in listOf("a", "lo", "hi", "off") + extras) {
                     val k = "vf_${f.key}_$s"
@@ -175,7 +175,7 @@ object FxPresets {
             k == "vf_grain_size" -> 2
             k == "vf_vignette_size" -> 50
             k == "vf_bokeh_size" || k == "vf_bokeh_density" -> 45
-            else -> null
+            else -> FilterDefs.extraStarts(f)[k.substringAfterLast('_')]
         }
     }
 

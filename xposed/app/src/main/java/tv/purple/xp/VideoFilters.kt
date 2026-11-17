@@ -187,9 +187,23 @@ object VideoFilters {
                 f.group == FilterDefs.Group.DYNAMIC -> DynLight.yz(f.key).let { floatArrayOf(a, it[0], it[1]) }
                 f.key == "bokeh" -> floatArrayOf(a, FilterDefs.extraInt("bokeh", "speed", 40).coerceIn(0, 100) / 100f,
                     FilterDefs.extraInt("bokeh", "size", 45).coerceIn(0, 100) / 100f)
+                // These carry their balance or size where the tone range would be.
+                f.key == "calib" || f.key == "split" -> floatArrayOf(a, FilterDefs.extraInt(f.key, "bal", 0).coerceIn(-100, 100) / 100f, 0f)
+                f.key == "glow" -> floatArrayOf(a, FilterDefs.extraInt("glow", "size", 50).coerceIn(0, 100) / 100f, 0f)
                 else -> floatArrayOf(a, FilterDefs.lo(i) / 100f, FilterDefs.hi(i) / 100f)
             }
         }
+        // Colour mixer: hue, saturation and brightness per colour, -1..1, four colours per vec4.
+        fun hsl(f: String, from: Int) = FloatArray(4) { FilterDefs.extraInt("hsl", "$f${from + it}", 0).coerceIn(-100, 100) / 100f }
+        m["uHslH0"] = hsl("h", 0); m["uHslH1"] = hsl("h", 4)
+        m["uHslS0"] = hsl("s", 0); m["uHslS1"] = hsl("s", 4)
+        m["uHslL0"] = hsl("l", 0); m["uHslL1"] = hsl("l", 4)
+        val cal = calibMatrix()
+        m["uCal0"] = cal.copyOfRange(0, 3); m["uCal1"] = cal.copyOfRange(3, 6); m["uCal2"] = cal.copyOfRange(6, 9)
+        m["uSplit"] = floatArrayOf(
+            FilterDefs.extraInt("split", "sh", 200).coerceIn(0, 360) / 360f, FilterDefs.extraInt("split", "ss", 0).coerceIn(0, 100) / 100f,
+            FilterDefs.extraInt("split", "hh", 35).coerceIn(0, 360) / 360f, FilterDefs.extraInt("split", "hs", 0).coerceIn(0, 100) / 100f)
+        m["uLutN"] = floatArrayOf(lutBitmap()?.height?.toFloat() ?: 0f)
         m["uTime"] = floatArrayOf(now())
         m["uBokehMode"] = floatArrayOf(FilterDefs.extraInt("bokeh", "mode", 0).toFloat())
         val bc = FilterDefs.extraInt("bokeh", "color", 0xFFFF8FD8.toInt())
@@ -239,6 +253,50 @@ object VideoFilters {
         }
     }
 
+    /**
+     * Calibration as a colour matrix, row by row: each primary (pure red, green, blue) turned
+     * around the colour wheel by up to 30 degrees and made more or less saturated, then every row
+     * scaled so white stays white.
+     */
+    fun calibMatrix(): FloatArray {
+        fun v(f: String) = FilterDefs.extraInt("calib", f, 0).coerceIn(-100, 100) / 100f
+        val hues = floatArrayOf(v("rh"), v("gh"), v("bh"))
+        val sats = floatArrayOf(v("rs"), v("gs"), v("bs"))
+        val lw = floatArrayOf(0.299f, 0.587f, 0.114f)
+        val cols = Array(3) { i ->
+            val rad = Math.toRadians(hues[i] * 30.0)
+            val cs = Math.cos(rad).toFloat(); val sn = Math.sin(rad).toFloat()
+            // The luminance keeping hue rotation the colour matrix fallback uses too.
+            val rot = floatArrayOf(
+                0.213f + cs * 0.787f - sn * 0.213f, 0.715f - cs * 0.715f - sn * 0.715f, 0.072f - cs * 0.072f + sn * 0.928f,
+                0.213f - cs * 0.213f + sn * 0.143f, 0.715f + cs * 0.285f + sn * 0.140f, 0.072f - cs * 0.072f - sn * 0.283f,
+                0.213f - cs * 0.213f - sn * 0.787f, 0.715f - cs * 0.715f + sn * 0.715f, 0.072f + cs * 0.928f + sn * 0.072f)
+            val c = FloatArray(3) { r -> rot[r * 3 + i] }
+            val l = c[0] * lw[0] + c[1] * lw[1] + c[2] * lw[2]
+            FloatArray(3) { r -> l + (c[r] - l) * (1f + sats[i]) }
+        }
+        return FloatArray(9).also { out ->
+            for (r in 0..2) {
+                val sum = cols[0][r] + cols[1][r] + cols[2][r]
+                val k = if (sum > 0.05f) 1f / sum else 1f
+                for (c in 0..2) out[r * 3 + c] = cols[c][r] * k
+            }
+        }
+    }
+
+    /** The chosen LUT as the shader's picture, or null when the LUT filter has no file. */
+    fun lutBitmap(): Bitmap? = LutLibrary.bitmap(FilterDefs.extraStr("lut", "file", ""))
+
+    private val blank by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888) }
+
+    fun lutShader(): Shader = BitmapShader(lutBitmap() ?: blank, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+
+    /** The tone curves as 256 colours; a straight line when the Curves filter is off. */
+    fun curveColors(): IntArray =
+        if (FilterDefs.amount(FilterDefs.index("curves")) == 0) IntArray(256) { Color.rgb(it, it, it) } else ToneCurve.lut()
+
+    fun curveShader(): Shader = BitmapShader(rampBitmap(curveColors()), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+
     fun gradientColors() = FilterDefs.currentGradient()
     fun monoColors(): IntArray = intArrayOf(Color.BLACK, FilterDefs.monoColor(), Color.WHITE)
 
@@ -246,6 +304,8 @@ object VideoFilters {
     fun rampShader(colors: IntArray): Shader = LinearGradient(0f, 0f, 256f, 0f, colors, null, Shader.TileMode.CLAMP)
 
     fun rampBitmap(colors: IntArray): Bitmap {
+        // 256 colours are a table, one per pixel, rather than stops of a gradient.
+        if (colors.size == 256) return Bitmap.createBitmap(colors, 256, 1, Bitmap.Config.ARGB_8888)
         val b = Bitmap.createBitmap(256, 1, Bitmap.Config.ARGB_8888)
         android.graphics.Canvas(b).drawRect(0f, 0f, 256f, 1f, Paint().apply { shader = rampShader(colors) })
         return b
@@ -290,12 +350,15 @@ object VideoFilters {
             when (v.size) {
                 1 -> s.setFloatUniform(k, v[0])
                 2 -> s.setFloatUniform(k, v[0], v[1])
-                else -> s.setFloatUniform(k, v[0], v[1], v[2])
+                3 -> s.setFloatUniform(k, v[0], v[1], v[2])
+                else -> s.setFloatUniform(k, v[0], v[1], v[2], v[3])
             }
         }
         s.setInputShader("ovl", overlayShader(w, h))
         s.setInputShader("grad", rampShader(gradientColors()))
         s.setInputShader("mono", rampShader(monoColors()))
+        s.setInputShader("curve", curveShader())
+        s.setInputShader("lut", lutShader())
         return s
     }
 

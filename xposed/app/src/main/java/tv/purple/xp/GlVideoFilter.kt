@@ -165,6 +165,8 @@ object GlVideoFilter {
         // The colours each ramp texture was made from, compared as arrays: no string per frame.
         var gradTex = 0; var gradKey: IntArray? = null
         var monoTex = 0; var monoKey: IntArray? = null
+        var curveTex = 0; var curveKey: IntArray? = null
+        var lutTex = 0; var lutKey: Bitmap? = null
         val attachListener = object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {}
             override fun onViewDetachedFromWindow(v: View) {
@@ -178,7 +180,8 @@ object GlVideoFilter {
     class Params(
         val uniforms: Map<String, FloatArray>,
         val ovlKey: String, val ovlBitmap: Bitmap?, val ovlColor: Int, val ovlTiled: Boolean, val ovlScale: Float,
-        val grad: IntArray, val mono: IntArray, val animatedGrain: Boolean, val active: Set<String>
+        val grad: IntArray, val mono: IntArray, val animatedGrain: Boolean, val active: Set<String>,
+        val curve: IntArray, val lut: Bitmap?
     ) {
         companion object {
             fun snapshot(tv: TextureView): Params {
@@ -193,7 +196,7 @@ object GlVideoFilter {
                     tiled, FilterDefs.extraInt("ovl", "scale", if (tiled) 50 else 100).coerceIn(10, 400) / 100f,
                     VideoFilters.gradientColors(), VideoFilters.monoColors(),
                     FilterDefs.amount(gi) > 0 && FilterDefs.extraBool("grain", "animated", true),
-                    VideoFilters.activeKeys())
+                    VideoFilters.activeKeys(), VideoFilters.curveColors(), VideoFilters.lutBitmap())
             }
         }
     }
@@ -366,7 +369,8 @@ object GlVideoFilter {
                     if (v.size == 3 && k.startsWith("u")) { GLES30.glUniform3f(l, v[0], v[1], v[2]); continue }
                     when (v.size) {
                         1 -> GLES30.glUniform1f(l, v[0]); 2 -> GLES30.glUniform2f(l, v[0], v[1])
-                        else -> GLES30.glUniform3f(l, v[0], v[1], v[2])
+                        3 -> GLES30.glUniform3f(l, v[0], v[1], v[2])
+                        else -> GLES30.glUniform4f(l, v[0], v[1], v[2], v[3])
                     }
                 }
                 // Dynamic light changes with the picture, so its values are read fresh for every frame.
@@ -387,6 +391,9 @@ object GlVideoFilter {
                 if (p.gradKey?.contentEquals(par.grad) != true) p.gradKey = par.grad.copyOf()
                 p.monoTex = ramp(p.monoTex, p.monoKey, par.mono, 3, "uMono")
                 if (p.monoKey?.contentEquals(par.mono) != true) p.monoKey = par.mono.copyOf()
+                p.curveTex = ramp(p.curveTex, p.curveKey, par.curve, 4, "uCurve")
+                if (p.curveKey?.contentEquals(par.curve) != true) p.curveKey = par.curve.copyOf()
+                bindLut(p, par)
             }
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
             EGLExt.eglPresentationTimeANDROID(dpy, p.win, p.input.timestamp)
@@ -470,6 +477,21 @@ object GlVideoFilter {
             }
         }
 
+        /** The LUT picture on unit 5, uploaded again only when a different one is chosen. */
+        private fun bindLut(p: Pipe, par: Params) {
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE5)
+            val fresh = p.lutTex == 0
+            if (fresh) { val a = IntArray(1); GLES30.glGenTextures(1, a, 0); p.lutTex = a[0] }
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, p.lutTex)
+            val bmp = par.lut
+            if (fresh || p.lutKey !== bmp) {
+                p.lutKey = bmp
+                setParams(GLES30.GL_CLAMP_TO_EDGE)
+                GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bmp ?: Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888), 0)
+            }
+            GLES30.glUniform1i(loc("uLut"), 5)
+        }
+
         private fun setParams(wrap: Int) {
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
@@ -500,7 +522,7 @@ object GlVideoFilter {
                 p.input.setOnFrameAvailableListener(null)
                 runCatching { p.input.detachFromGLContext() }
                 p.input.release()
-                val ts = intArrayOf(p.ovlTex, p.gradTex, p.monoTex).filter { it != 0 }.toIntArray()
+                val ts = intArrayOf(p.ovlTex, p.gradTex, p.monoTex, p.curveTex, p.lutTex).filter { it != 0 }.toIntArray()
                 if (ts.isNotEmpty()) GLES30.glDeleteTextures(ts.size, ts, 0)
             }
             // A newer pipe may already own the view (Twitch re-parents it and makes a fresh texture)
