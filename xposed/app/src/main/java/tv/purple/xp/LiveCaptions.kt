@@ -101,7 +101,7 @@ object LiveCaptions {
     private val lines = ArrayDeque<Line>()
     /** Finished lines waiting for room on screen (lines look). */
     private val waiting = ArrayDeque<Line>()
-    /** The heat or memory note last put in the box (see Stt.holdNote). */
+    /** The note last put in the box (see [note]). */
     private var holdShown: String? = null
     /** Every recent line (history box). */
     private val history = ArrayDeque<Line>()
@@ -331,7 +331,7 @@ object LiveCaptions {
         val before = lines.size
         while (lines.isNotEmpty() && lines.first().since < cut && waiting.isEmpty()) lines.removeFirst()
         pace()
-        if (lines.size != before || waiting.isNotEmpty() || lastText.isEmpty() || Stt.holdNote() != holdShown) render()
+        if (lines.size != before || waiting.isNotEmpty() || lastText.isEmpty() || note() != holdShown) render()
         place(box, vid, content)
     }
 
@@ -627,8 +627,8 @@ object LiveCaptions {
             // While translating, the words still being heard are the original: shown smaller and grey.
             if (tr) grey(out, partial) else out.append(partial)
         }
-        // Speech to text held back (heat or memory): say so, or the box just goes quiet.
-        holdShown = Stt.holdNote()
+        // Speech to text held back (heat or memory) or not downloaded: say so, or the box just goes quiet.
+        holdShown = note()
         holdShown?.let { if (out.isNotEmpty()) out.append('\n'); grey(out, I18n.t(it)) }
         if (out.toString() == lastText.toString()) return
         lastText = out
@@ -636,6 +636,13 @@ object LiveCaptions {
         if (builtStyle == 0) boxRef?.get()?.visibility = if (out.isEmpty() && !moving) View.GONE else View.VISIBLE
         tv.requestLayout()
     }
+
+    /**
+     * The grey note under the captions: speech to text is held back, or its downloads are missing.
+     * No download note while the stream sends its own captions, which need nothing downloaded.
+     */
+    private fun note(): String? = Stt.holdNote()
+        ?: textRef?.get()?.context?.takeIf { !ccRecent() }?.let { Stt.setupNote(it) }
 
     private fun grey(out: SpannableStringBuilder, s: String) {
         val a = out.length

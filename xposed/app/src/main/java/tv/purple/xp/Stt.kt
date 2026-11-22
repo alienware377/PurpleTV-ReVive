@@ -829,6 +829,19 @@ object Stt {
         else -> null
     }
 
+    /**
+     * For the caption box: the engine or the stream language's model is not on this phone yet.
+     * Settings sync carries the stream language and the captions switch, never the downloads, so
+     * a phone can have captions on and nothing to hear them with. Cheap: [SttPacks.ready] keeps
+     * its answer until a download or a delete.
+     */
+    internal fun setupNote(ctx: Context): String? = when {
+        !SttPacks.supported() -> null
+        SttPacks.engineReady(ctx) && SttPacks.modelReady(ctx) -> null
+        SttPacks.downloading() -> "Captions start when the download is done"
+        else -> "Captions need a download first: Player, During ad breaks"
+    }
+
     /** What the menu and the download message say while the hooks wait (see [maybeHook]). */
     const val RESTART_HINT = "Restart Twitch, or switch speech-to-text off and on, to start it"
 
