@@ -171,7 +171,8 @@ object CaptionHub {
     @Volatile var shownFinal = true
         private set
 
-    private class Line(val text: String, val at: Long)
+    /** [stt]: made by speech to text, so a piece heard after it may still go on its end. */
+    private class Line(val text: String, val at: Long, val stt: Boolean = false)
 
     private val main = Handler(Looper.getMainLooper())
     private val listeners = CopyOnWriteArrayList<(String, Boolean) -> Unit>()
@@ -223,6 +224,15 @@ object CaptionHub {
     /** Speech-to-text output: a live guess ([isFinal] false) or a finished line. Any thread. */
     fun onSttText(text: String, isFinal: Boolean) {
         onMain("stt") { stt(text, isFinal) }
+    }
+
+    /**
+     * Speech to text heard a piece after the pause that ended its last line which belongs on that
+     * line's end: its full stop or question mark, or the rest of its last word ("Thanks for in",
+     * then "dulge"). It goes onto that line while it is still in the box. Any thread.
+     */
+    fun onSttJoin(piece: String) {
+        onMain("stt join") { sttJoin(piece) }
     }
 
     /** Empty the box and forget everything (for example when a break ends). Any thread. */
@@ -466,12 +476,30 @@ object CaptionHub {
             return
         }
         partial = ""
-        if (t.isNotEmpty() && !filler(t) && !seen(t)) commit(t, now, speak = true)
+        if (t.isNotEmpty() && !filler(t) && !seen(t)) commit(t, now, speak = true, stt = true)
         publish()
     }
 
-    private fun commit(t: String, at: Long, speak: Boolean) {
-        lines.addLast(Line(t, at))
+    /**
+     * See [onSttJoin]. Glued on as it is, with no space, as the piece goes on the last word. The
+     * line was read aloud and handed to the line listeners already, so neither is told again: a
+     * word's last letters or a lone full stop said on its own is only noise. With no such line
+     * still in the box (or the stream's own captions came since), a piece with letters becomes a
+     * line of its own, so no word is lost, and a lone mark is left out.
+     */
+    private fun sttJoin(piece: String) {
+        if (!wanted() || piece.isEmpty()) return
+        val last = lines.lastOrNull()
+        if (last != null && last.stt && SystemClock.uptimeMillis() - last.at < LINE_MS && !ccRecent()) {
+            lines[lines.size - 1] = Line(tidy(last.text + piece), last.at, true)
+            publish()
+            return
+        }
+        if (piece.any { it.isLetterOrDigit() }) stt(piece.trim(), true)
+    }
+
+    private fun commit(t: String, at: Long, speak: Boolean, stt: Boolean = false) {
+        lines.addLast(Line(t, at, stt))
         while (lines.size > KEEP) lines.removeFirst()
         for (l in lineListeners) try { l(t) } catch (e: Throwable) { log("CC line listener: $e") }
         if (speak) ReadAloud.onFinal(t)

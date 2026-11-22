@@ -147,6 +147,111 @@ class SttModelsTest {
         }
     }
 
+    @Test fun whisperIsToldOnlyLanguagesItKnows() {
+        val w = SttModels.WHISPER
+        assertSame(SttModels.byLang(SttModels.AUTO), w)
+        // The list in Whisper base's own metadata: told anything else, sherpa-onnx ends the process.
+        assertEquals(99, SttModels.WHISPER_LANGS.size)
+        assertTrue("yue" !in SttModels.WHISPER_LANGS && "haw" in SttModels.WHISPER_LANGS)
+        for (m in SttModels.ALL) assertTrue(m.lang, m.lang == SttModels.AUTO || m.lang.substringBefore('-') in SttModels.WHISPER_LANGS)
+        assertEquals(null, SttModels.forced("yue"))
+        assertEquals(null, SttModels.forced("xx"))
+        val pt = SttModels.forced("pt")!!
+        assertSame(pt, SttModels.forced("pt"))
+        // The same download, folder and pins as Whisper itself; only the language differs.
+        assertEquals(w.asset, pt.asset)
+        assertEquals(w.dir, pt.dir)
+        assertSame(w.entries, pt.entries)
+        // SttPacks finds a model's download by its lang.
+        assertEquals(w.lang, pt.lang)
+        assertEquals("pt", pt.sourceLang)
+        assertEquals("auto:pt", pt.key)
+        assertEquals(SttModels.AUTO, w.key)
+        assertEquals("pt", SttModels.offlineConfig(pt, dir, 2).whisper.language)
+        assertEquals("", SttModels.offlineConfig(w, dir, 2).whisper.language)
+        // A language Whisper does not know never reaches its config.
+        val bad = SttModel(w.lang, w.label, w.tag, w.asset, w.sha256, w.bytes, w.kind, w.modelType, w.licence, w.credit,
+            w.files, w.entries, w.dir, w.what, w.script, whisperLang = "yue")
+        assertEquals("", SttModels.offlineConfig(bad, dir, 2).whisper.language)
+        // English (Twitch slang) is Whisper base.en: a model for English, told nothing.
+        assertEquals("", SttModels.offlineConfig(SttModels.byLang("en-slang")!!, dir, 2).whisper.language)
+    }
+
+    /** What Auto runs for a stream in each language, with what is downloaded. */
+    @Test fun autoUsesTheLanguagesOwnModel() {
+        val w = SttModels.WHISPER
+        val en = SttModels.EN
+        val slang = SttModels.byLang("en-slang")!!
+        fun pick(lang: String?, vararg have: SttModel) = SttModels.autoPick(lang) { it in have }
+
+        // Its own model, downloaded: that one. English before English (Twitch slang).
+        assertSame(en, pick("en", en, slang, w).model)
+        assertSame(slang, pick("en", slang, w).model)
+        assertSame(SttModels.byLang("ja"), pick("ja", SttModels.byLang("ja")!!).model)
+        assertSame(SttModels.byLang("tl"), pick("tl", SttModels.byLang("tl")!!, w).model)
+        assertEquals(null, pick("es", SttModels.byLang("es")!!).missing)
+
+        // Its own model not downloaded: Whisper told the language, and the model it is missing.
+        val es = pick("es", w, en)
+        assertEquals("auto:es", es.model.key)
+        assertSame(SttModels.byLang("es"), es.missing)
+        // Neither: its own model, which the caption box then says needs a download.
+        val es2 = pick("es", en)
+        assertSame(SttModels.byLang("es"), es2.model)
+        assertSame(SttModels.byLang("es"), es2.missing)
+        assertSame(en, pick("en").model)
+
+        // No model of its own: Whisper told the language, downloaded or not.
+        for (lang in listOf("pt", "it", "ar", "pl", "tr")) {
+            assertEquals("auto:$lang", pick(lang, w, en).model.key)
+            assertEquals("auto:$lang", pick(lang).model.key)
+            assertEquals(null, pick(lang, w).missing)
+            assertEquals(lang, pick(lang, w).model.sourceLang)
+        }
+
+        // Not known, or one Whisper can not be told: Whisper finding each sentence's language.
+        assertSame(w, pick(null, w, en).model)
+        assertSame(w, pick("xx", w).model)
+        assertEquals(null, pick(null, w).model.sourceLang)
+    }
+
+    /** A model that would not load in this run is passed over for Whisper told the language. */
+    @Test fun autoPassesOverAModelThatFailedToLoad() {
+        val w = SttModels.WHISPER
+        val en = SttModels.EN
+        val slang = SttModels.byLang("en-slang")!!
+        val tl = SttModels.byLang("tl")!!
+        val es = SttModels.byLang("es")!!
+        fun pick(lang: String, bad: Set<String>, vararg have: SttModel) =
+            SttModels.autoPick(lang, bad = { it.lang in bad }) { it in have }
+        // Downloaded but failed, Whisper there: Whisper told the language, and no note to download
+        // a model that is already on the phone.
+        val p = pick("tl", setOf("tl"), tl, w)
+        assertEquals("auto:tl", p.model.key)
+        assertEquals(null, p.missing)
+        // Another model of the language's own comes first.
+        assertSame(slang, pick("en", setOf("en"), en, slang, w).model)
+        // Whisper failed as well, or is not there: the failed model, which Stt does not load.
+        assertSame(tl, pick("tl", setOf("tl", SttModels.AUTO), tl, w).model)
+        assertSame(tl, pick("tl", setOf("tl"), tl).model)
+        assertEquals(null, pick("tl", setOf("tl"), tl).missing)
+        // A model that is not downloaded is still one to name.
+        val e = pick("es", setOf("tl"), w)
+        assertEquals("auto:es", e.model.key)
+        assertSame(es, e.missing)
+    }
+
+    @Test fun languageNames() {
+        assertEquals("Spanish", SttModels.langName("es"))
+        assertEquals("English", SttModels.langName("en"))
+        assertEquals("Filipino", SttModels.langName("tl"))
+        // Without a model of its own: the name in the language the menus are shown in.
+        assertEquals("Portuguese", SttModels.langName("pt"))
+        assertEquals("Polish", SttModels.langName("pl"))
+        assertEquals("Portugués", SttModels.langName("pt", "es"))
+        assertEquals("zz", SttModels.langName("zz"))
+    }
+
     /** Translator must understand every stream language as a source (live captions pass it on). */
     @Test fun streamLanguagesAreTranslatorCodes() {
         // Its targets, plus languages opus-mt-mul-en reads that are not offered as a target.

@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.StaticLayout
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.util.TypedValue
@@ -72,6 +73,8 @@ object LiveCaptions {
     private const val TICK_MS = 500L
     /** Lines on screen at once in the lines look. */
     private const val KEEP = 2
+    /** Rows of text the lines look shows; a note too long for them adds some while it is up (see [render]). */
+    private const val LINES = 4
     /** Lines waiting to come on screen. Past this the oldest one on screen goes early, so the captions never fall far behind. */
     private const val MAX_WAITING = 3
     /** Lines the history box keeps. */
@@ -90,10 +93,17 @@ object LiveCaptions {
     @Volatile private var lastCcAt = 0L
     @Volatile private var onCached = false
 
-    /** [shown] is the text to show (the translation once it is in); [since] when it came on screen. */
-    private class Line(val text: String, val at: Long, var shown: String, val fromStt: Boolean) {
+    /**
+     * [shown] is the text to show (the translation once it is in); [since] when it came on screen.
+     * [text] can still grow by a piece heard after the pause that ended it (see [attach]).
+     */
+    private class Line(var text: String, val at: Long, var shown: String, val fromStt: Boolean) {
         var since = 0L
         val ready: Boolean get() = shown.isNotEmpty()
+        /** The language the translator starts from (null: it guesses). */
+        var src: String? = null
+        /** Bumped by every translation asked for, so only the newest one is shown. */
+        var gen = 0
     }
 
     // Main thread only.
@@ -171,21 +181,73 @@ object LiveCaptions {
     private fun seen(r: String) = lines.any { it.text == r } || waiting.any { it.text == r } ||
         history.reversed().take(4).any { it.text == r }
 
-    /** Stt thread: a live guess or a finished line. [lang]: the language the model heard, if it says. */
-    fun onSttText(text: String, fin: Boolean, lang: String? = null) {
+    /**
+     * Stt thread, whole sentence models: a live guess or a finished line. [lang]: the language the
+     * model heard, if it says. [cased]: the model writes capitals (see [cap]).
+     */
+    fun onSttText(text: String, fin: Boolean, lang: String? = null, cased: Boolean = true) {
         main.post {
-            val t = text.trim().replaceFirstChar { it.uppercase() }
+            val t = cap(text, cased)
             if (fin) { partial = ""; if (t.isNotEmpty()) finish(t, true, lang) } else partial = t
             render()
         }
     }
 
+    /**
+     * Stt thread, streaming models: [done] the lines finished now, in order, [join] a piece that
+     * goes on the end of the line finished before them (see [attach]), and [now] the words heard
+     * after them. All in one go, so no frame shows a finished line gone and the words after it
+     * not there yet. [cased]: the model writes capitals (see [cap]).
+     */
+    fun onSttLines(done: List<String>, join: String, now: String, cased: Boolean = true) {
+        main.post {
+            if (join.isNotEmpty()) attach(join, cased)
+            for (s in done) cap(s, cased).takeIf { it.isNotEmpty() }?.let { finish(it, true) }
+            partial = cap(now, cased)
+            render()
+        }
+    }
+
+    /**
+     * Speech-to-text text as shown: trimmed, with a capital first letter when the model writes none
+     * ([cased] false, see SttModel.cased). A model that writes capitals is left as it is: a long
+     * line cut in two goes on in the middle of a sentence there, and its small first letter is right.
+     */
+    private fun cap(s: String, cased: Boolean): String {
+        val t = s.trim()
+        return if (cased) t else t.replaceFirstChar { it.uppercase() }
+    }
+
+    /**
+     * A piece heard after the pause that ended the last line, which belongs on its end: its full
+     * stop or question mark, or the rest of its last word. It goes onto that line when speech to
+     * text made the newest line, and a translation of it is done again, the old one staying up
+     * until the new one is in. With no such line, a piece with letters is a line of its own.
+     */
+    private fun attach(piece: String, cased: Boolean) {
+        val l = history.lastOrNull()?.takeIf { it.fromStt }
+        if (l == null) {
+            if (piece.any { it.isLetterOrDigit() }) finish(cap(piece, cased), true)
+            return
+        }
+        val was = l.text
+        l.text = was + piece
+        when {
+            // Shown as it was said: not translated, or already in the language to translate into.
+            l.shown == was -> l.shown = l.text
+            translating() -> translate(l, ChatTranslate.target())
+            else -> l.shown = l.text
+        }
+    }
+
     private fun finish(t: String, fromStt: Boolean, heard: String? = null) {
         val l = Line(t, SystemClock.uptimeMillis(), t, fromStt)
-        // Speech to text speaks the stream language picked in settings; read it now, on main, so
-        // a line already in the queue keeps the language it was heard in. Auto names none: the
-        // translator guesses each line's language then.
+        // Speech to text speaks the stream language picked in settings, or with Auto the one found
+        // for the stream; read it now, on main, so a line already in the queue keeps the language
+        // it was heard in. Whisper with no language says each line's own ([heard]); with none at
+        // all, the translator guesses.
         val sttLang = if (fromStt) heard ?: SttModels.chosen().sourceLang else null
+        l.src = sttLang
         waiting.addLast(l)
         history.addLast(l)
         while (history.size > HISTORY) history.removeFirst()
@@ -198,13 +260,21 @@ object LiveCaptions {
                 (heard == null && g.known && g.confidence >= Translator.MIN_CONFIDENCE && g.lang == to)
             if (!same) {
                 l.shown = ""
-                worker.post {
-                    val out = runCatching { Translator.translate(t, sttLang, to) }.getOrNull()
-                    main.post { l.shown = out ?: t; pace(); render() }
-                }
+                translate(l, to)
             }
         }
         pace()
+    }
+
+    /** [l]'s text into [to] on the worker. A line asked for again shows only the newest answer. */
+    private fun translate(l: Line, to: String) {
+        val g = ++l.gen
+        val t = l.text
+        val from = l.src
+        worker.post {
+            val out = runCatching { Translator.translate(t, from, to) }.getOrNull()
+            main.post { if (l.gen == g) { l.shown = out ?: t; pace(); render() } }
+        }
     }
 
     /**
@@ -401,7 +471,7 @@ object LiveCaptions {
             box.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         } else {
             tv.gravity = Gravity.CENTER
-            tv.maxLines = 4
+            tv.maxLines = LINES
             // Taps go through to the player, unless the captions are being moved.
             // The lines set the box's width (the handle stretches to it), so it keeps its own.
             body.addView(tv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -608,6 +678,10 @@ object LiveCaptions {
         val tv = textRef?.get() ?: return
         val out = SpannableStringBuilder()
         val tr = translating()
+        // Speech to text held back (heat or memory) or not downloaded: say so, or the box just goes quiet.
+        val n = note()
+        holdShown = n
+        val noteText = n?.let { I18n.t(it) }
         if (builtStyle == 1) {
             for (l in history) {
                 if (out.isNotEmpty()) out.append('\n')
@@ -617,21 +691,21 @@ object LiveCaptions {
                 if (l.shown != l.text) { out.append('\n'); grey(out, l.text) }
             }
         } else {
-            for (l in lines) {
-                if (!l.ready) continue
-                if (out.isNotEmpty()) out.append('\n')
-                out.append(l.shown)
-            }
-            if (moving && out.isEmpty() && partial.isEmpty()) out.append(I18n.t("Captions show here"))
+            // The note takes the rows it needs as it is drawn, small and grey, often two or three.
+            val noteRows = noteText?.let { s -> maxOf(1, rows(tv, SpannableStringBuilder().also { grey(it, s) })) } ?: 0
+            // A note too long for the rows there are makes the box taller while it is up, with a
+            // row left for the captions, rather than being cut off before it says where to download.
+            val maxLines = maxOf(LINES, noteRows + 1)
+            if (tv.maxLines != maxLines) tv.maxLines = maxLines
+            linesLook(tv, out, tr, maxLines - noteRows)
+            if (moving && out.isEmpty()) out.append(I18n.t("Captions show here"))
         }
-        if (partial.isNotEmpty() && lines.none { it.text == partial } && history.lastOrNull()?.text != partial) {
+        if (builtStyle == 1 && livePartial()) {
             if (out.isNotEmpty()) out.append('\n')
             // While translating, the words still being heard are the original: shown smaller and grey.
             if (tr) grey(out, partial) else out.append(partial)
         }
-        // Speech to text held back (heat or memory) or not downloaded: say so, or the box just goes quiet.
-        holdShown = note()
-        holdShown?.let { if (out.isNotEmpty()) out.append('\n'); grey(out, I18n.t(it)) }
+        noteText?.let { if (out.isNotEmpty()) out.append('\n'); grey(out, it) }
         if (out.toString() == lastText.toString()) return
         lastText = out
         tv.text = out
@@ -639,12 +713,66 @@ object LiveCaptions {
         tv.requestLayout()
     }
 
+    /** The partial line, unless it is a finished line already (a stream's own captions repeat their rows). */
+    private fun livePartial() = partial.isNotEmpty() && lines.none { it.text == partial } && history.lastOrNull()?.text != partial
+
     /**
-     * The grey note under the captions: speech to text is held back, or its downloads are missing.
-     * No download note while the stream sends its own captions, which need nothing downloaded.
+     * The lines look: the lines on screen, and under them what is still being said: finished lines
+     * not on screen yet (waiting for room, or for their translation) and the partial line, as they
+     * looked while being said, so a line that is finished never blinks out and back in. When it
+     * all takes more rows than [room] (the captions' rows less the note's), the oldest lines on
+     * screen give way first, so the newest words always stay in view.
+     */
+    private fun linesLook(tv: TextView, out: SpannableStringBuilder, tr: Boolean, room: Int) {
+        val said = waiting.mapTo(ArrayList()) { it.text }
+        if (livePartial()) said.add(partial)
+        var live = SpeechLines.tail(SpeechLines.glue(said), LIVE_CHARS)
+        val up = lines.filter { it.ready }.map { it.shown }
+        var skip = 0
+        while (true) {
+            out.clear()
+            out.clearSpans()
+            for (k in skip until up.size) { if (out.isNotEmpty()) out.append('\n'); out.append(up[k]) }
+            if (live.isNotEmpty()) {
+                if (out.isNotEmpty()) out.append('\n')
+                // While translating, the words still being heard are the original: shown smaller and grey.
+                if (tr) grey(out, live) else out.append(live)
+            }
+            if (rows(tv, out) <= room) return
+            if (skip < up.size) skip++
+            else if (live.length > MIN_LIVE) live = SpeechLines.tail(live, live.length * 2 / 3)
+            else return
+        }
+    }
+
+    /** The most characters of what is still being said that the lines look shows (its newest ones). */
+    private const val LIVE_CHARS = 160
+    /** To fit the rows, it is never cut shorter than this. */
+    private const val MIN_LIVE = 40
+
+    /** Rows [s] takes at the width the lines may take now; 0 while that is not known yet. */
+    private fun rows(tv: TextView, s: CharSequence): Int {
+        val max = tv.maxWidth
+        if (s.isEmpty() || max <= 0 || max == Int.MAX_VALUE) return 0
+        val w = max - tv.compoundPaddingLeft - tv.compoundPaddingRight
+        if (w <= 0) return 0
+        return StaticLayout.Builder.obtain(s, 0, s.length, tv.paint, w)
+            .setIncludePad(tv.includeFontPadding)
+            .setLineSpacing(tv.lineSpacingExtra, tv.lineSpacingMultiplier)
+            .setBreakStrategy(tv.breakStrategy)
+            .setHyphenationFrequency(tv.hyphenationFrequency)
+            .build().lineCount
+    }
+
+    /**
+     * The grey note under the captions: speech to text is held back, or its downloads are missing,
+     * or (Auto, for a few seconds) the stream's language has a better model to download. None of
+     * the download notes while the stream sends its own captions, which need nothing downloaded.
+     * The better model's note is only asked for while the captions are on screen, since asking
+     * starts its few seconds (see StreamLang.tip).
      */
     private fun note(): String? = Stt.holdNote()
-        ?: textRef?.get()?.context?.takeIf { !ccRecent() }?.let { Stt.setupNote(it) }
+        ?: textRef?.get()?.context?.takeIf { !ccRecent() }?.let { Stt.setupNote(it) ?: (if (showing) StreamLang.tip() else null) }
 
     private fun grey(out: SpannableStringBuilder, s: String) {
         val a = out.length

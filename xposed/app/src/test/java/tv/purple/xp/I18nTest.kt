@@ -22,9 +22,37 @@ class I18nTest {
         assertEquals("Updates", I18n.t("Updates"))
     }
 
+    /** A phone language with no file: the text stays English, and so do the names put into it. */
+    @Test fun shownLanguageHasAFile() {
+        Locale.setDefault(Locale.forLanguageTag("pl"))
+        assertEquals("pl", I18n.lang())
+        assertEquals("en", I18n.shownLang())
+        assertEquals("Portuguese", SttModels.langName("pt", I18n.shownLang()))
+        Locale.setDefault(Locale.FRENCH)
+        assertEquals("fr", I18n.shownLang())
+        Locale.setDefault(Locale.ENGLISH)
+        assertEquals("en", I18n.shownLang())
+    }
+
     @Test fun templatesFillTheirHoles() {
         Locale.setDefault(Locale.FRENCH)
         assertEquals(". 3 nouvelles versions depuis.", I18n.t(". 3 new versions since then."))
+    }
+
+    /** Auto's caption box notes and menu line, with a language name or a list in them. */
+    @Test fun autoNotesAreTranslated() {
+        Locale.setDefault(Locale.forLanguageTag("es"))
+        assertEquals("Los subtítulos en Español necesitan una descarga primero: Reproductor, Durante las pausas publicitarias",
+            I18n.t("Captions in Spanish need a download first: Player, During ad breaks"))
+        assertEquals("Hay un modelo de voz propio para Japonés, que da subtítulos mucho mejores. Descárgalo en Reproductor, Durante las pausas publicitarias",
+            I18n.t("Japanese has its own speech model, which gives much better captions. Download it under Player, During ad breaks"))
+        val line = I18n.t("Auto: each stream uses the speech model for its language. Downloaded: Inglés, Japonés. " +
+            "The all-languages model (Whisper base) finds a stream's language as it starts, and hears languages that have no model of their own. " +
+            "Tap to download a language")
+        assertTrue(line, line.startsWith("Auto: cada directo usa el modelo de voz de su idioma. Descargados: Inglés, Japonés. "))
+        assertEquals("¿Descargar el modelo de voz para todos los idiomas (Whisper base)?", I18n.t("Download the all-languages speech model (Whisper base)?"))
+        assertEquals("Español (descargando 45%)", I18n.t("Español (downloading 45%)"))
+        assertEquals("Comprobando y descomprimiendo: 95%", I18n.t("Checking and unpacking: 95%"))
     }
 
     @Test fun patternMatchesWholeText() {

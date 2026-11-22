@@ -386,8 +386,9 @@ object PurpleMenu {
      */
     private fun streamLanguage() = Drop("Stream language",
         "The language the streamer speaks, so speech-to-text uses the speech model for it. Each language's model is its own download, under Player, During ad breaks. " +
-            "Japanese, Filipino, Lithuanian, Auto and English (Twitch slang) hear a whole sentence at a time, so their captions come a moment later. " +
-            "Auto hears any language and translates each line from the language it is in, for streams that switch languages",
+            "Japanese, Filipino, Lithuanian, English (Twitch slang) and the all-languages model hear a whole sentence at a time, so their captions come a moment later. " +
+            "Auto uses the language each channel is set to on Twitch. With the all-languages model downloaded, it also listens to the first few sentences to check, " +
+            "then uses that language's own model, or the all-languages model told that language when there is none",
         SttModels.KEY, SttModels.labels(), def = SttModels.DEF, done = true)
 
     private val TRANSLATE: List<Item> = listOf(
@@ -998,11 +999,15 @@ object PurpleMenu {
 
     // ---------------------------------------------------------------- ad-break helpers
 
-    /** Speech-to-text was just switched on: say what is still missing, if anything. */
+    /**
+     * Speech-to-text was just switched on: say what is still missing, if anything. With Auto any
+     * speech model will do here, as for the hooks: the one a channel needs is named in the caption
+     * box once the channel is known.
+     */
     private fun sttNeedsDownloads(ctx: Context) {
         when {
             !SttPacks.supported() -> toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor")
-            !SttPacks.engineReady(ctx) || !SttPacks.modelReady(ctx) ->
+            !SttPacks.hookReady(ctx) ->
                 toast(ctx, "Now download the captions engine and the speech model below")
         }
     }
@@ -1012,7 +1017,7 @@ object PurpleMenu {
         val tick = object : Runnable {
             override fun run() {
                 if (!v.isAttachedToWindow) return
-                runCatching { item.describe(ctx) }.onSuccess { if (v.text.toString() != it) v.text = it }
+                runCatching { I18n.t(item.describe(ctx)) }.onSuccess { if (v.text.toString() != it) v.text = it }
                 v.postDelayed(this, 1000L)
             }
         }
@@ -1025,10 +1030,69 @@ object PurpleMenu {
     private fun mb(b: Long) = (b + 500_000) / 1_000_000
 
     /** What a download row says: what the pack is, its sizes, and whether it is there or how far. */
-    private fun packSummary(ctx: Context, model: Boolean): String =
-        (if (model) SttModels.chosen().let { "${it.what.replaceFirstChar { c -> c.uppercase() }}, for the stream language above. ${shortCredit(it)}. " }
+    private fun packSummary(ctx: Context, model: Boolean): String {
+        if (model && SttModels.auto()) return autoSummary(ctx)
+        return (if (model) SttModels.chosen().let { "${it.what.replaceFirstChar { c -> c.uppercase() }}, for the stream language above. ${shortCredit(it)}. " }
          else "sherpa-onnx ${PackPins.SHERPA_VERSION}, by k2-fsa (Apache-2.0), includes espeak-ng (GPL-3.0). ") +
             SttPacks.packLine(ctx, model)
+    }
+
+    /**
+     * The speech model row with Auto, where each stream gets its own language's model: which are
+     * downloaded, what the all-languages model is for, and a tap to download a language
+     * ([pickLanguage]). While one downloads, how far it is.
+     */
+    private fun autoSummary(ctx: Context): String {
+        if (!SttPacks.supported()) return "Not available on this phone: it needs a 64-bit ARM processor"
+        SttPacks.MODEL_PACKS.firstOrNull { it.busy.get() }?.let { p ->
+            return if (p.progress < 90) "Downloading: ${p.progress}%" else "Checking and unpacking: ${p.progress}%"
+        }
+        // Each name on its own through I18n, since the list as a whole is no known text. The short
+        // name for the all-languages model: the sentence after the list says what it is for.
+        val have = speechDownloads().filter { SttPacks.ready(ctx, SttPacks.modelPack(it.first())) }
+            .joinToString(", ") { downloadName(it, short = true) }.ifEmpty { I18n.t("none yet") }
+        return "Auto: each stream uses the speech model for its language. Downloaded: ${have}. " +
+            "The all-languages model (Whisper base) finds a stream's language as it starts, and hears languages that have no model of their own. " +
+            "Tap to download a language"
+    }
+
+    /** Every speech model download once, the all-languages model first; languages that share one are listed together. */
+    private fun speechDownloads(): List<List<SttModel>> =
+        SttModels.ALL.groupBy { it.asset }.values.sortedBy { if (it.first() === SttModels.WHISPER) 0 else 1 }
+
+    /**
+     * A download's name in the list, already in the language PurpleTV is shown in. The
+     * all-languages model says what it is for, unless [short].
+     */
+    private fun downloadName(ms: List<SttModel>, short: Boolean = false): String = when {
+        ms.first() !== SttModels.WHISPER -> ms.joinToString(", ") { I18n.t(it.label) }
+        short -> I18n.t("All languages (Whisper base)")
+        else -> I18n.t("All languages (Whisper base): finds each stream's language, and hears languages without a model of their own")
+    }
+
+    /**
+     * Auto's "Download a language": every speech model with its size, or that it is downloaded
+     * or downloading. A tap asks first with its size and licence, as for a language picked above,
+     * and downloads it the same way, checked against its pins.
+     */
+    private fun pickLanguage(ctx: Context, set: (String) -> Unit) {
+        if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
+        val all = speechDownloads()
+        val rows = all.map { ms ->
+            val p = SttPacks.modelPack(ms.first())
+            val name = downloadName(ms)
+            when {
+                p.busy.get() -> "$name (downloading ${p.progress}%)"
+                SttPacks.ready(ctx, p) -> "$name (downloaded)"
+                else -> "$name (${mb(p.bytes)} MB)"
+            }
+        }.toTypedArray()
+        TBuilder(ctx, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Download a language")
+            .setItems(rows) { _, which -> downloadPack(ctx, model = true, set = set, pick = all[which].first()) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     /** The model's credit up to its first address, for a one line summary. */
     private fun shortCredit(m: SttModel): String =
@@ -1039,12 +1103,15 @@ object PurpleMenu {
      * come from the captions-pack release of PurpleTV ReVive on GitHub and are checked against
      * their pinned SHA-256 before anything is used.
      */
-    private fun downloadPack(ctx: Context, model: Boolean, set: (String) -> Unit) {
-        val m = SttModels.chosen()
+    private fun downloadPack(ctx: Context, model: Boolean, set: (String) -> Unit, pick: SttModel? = null) {
+        // With Auto the row offers every language instead, and comes back here with the one tapped.
+        if (model && pick == null && SttModels.auto()) { pickLanguage(ctx, set); return }
+        val m = pick ?: SttModels.chosen()
         val what = if (model) m.what else "captions engine"
+        val pack = if (model) SttPacks.modelPack(m) else SttPacks.ENGINE
         if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
-        if (SttPacks.packBusy(model)) { toast(ctx, "The $what is already downloading"); return }
-        if (if (model) SttPacks.modelReady(ctx) else SttPacks.engineReady(ctx)) {
+        if (pack.busy.get()) { toast(ctx, "The $what is already downloading"); return }
+        if (SttPacks.ready(ctx, pack)) {
             toast(ctx, "The $what is already downloaded and checked"); return
         }
         val bytes = if (model) m.bytes else PackPins.ENGINE_BYTES

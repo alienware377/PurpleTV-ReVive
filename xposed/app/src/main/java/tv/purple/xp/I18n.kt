@@ -31,7 +31,10 @@ object I18n {
     @Volatile private var loaded: Pair<String, Table?>? = null
     private val cache = ConcurrentHashMap<String, String>()
 
-    /** The language in use: the one picked, else the phone's when there is a file for it, else English. */
+    /**
+     * The language asked for: the one picked, else the phone's, whether or not there is a file
+     * for it. Text is only shown in it when there is (see [shownLang]); otherwise it stays English.
+     */
     fun lang(): String {
         val picked = if (Settings.isReady()) LANGS.getOrNull(Settings.getInt(KEY, 0))?.first.orEmpty() else ""
         if (picked.isNotEmpty()) return picked
@@ -42,6 +45,13 @@ object I18n {
             else -> c
         }
     }
+
+    /**
+     * The language text is really shown in: [lang] when there is a file for it, else English. A
+     * name put into English text (a language's, say) is written in this one, so a phone set to a
+     * language PurpleTV has no file for gets "Portuguese", not its own word for it, in English text.
+     */
+    fun shownLang(): String = if (table() != null) lang() else "en"
 
     /** True for right to left languages, so a page can lay itself out that way. */
     fun rtl(): Boolean = lang() == "ar"

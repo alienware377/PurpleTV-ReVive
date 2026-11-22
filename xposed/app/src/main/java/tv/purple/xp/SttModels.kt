@@ -50,7 +50,23 @@ class SttModel(
     /** What the download is called in the menu; languages that share one model share the name. */
     val what: String = "$label speech model",
     /** Which writing systems of its text are kept (see SpeechScript). */
-    val script: SpeechScript.Mode = SpeechScript.Mode.ANY
+    val script: SpeechScript.Mode = SpeechScript.Mode.ANY,
+    /**
+     * Whisper only: the language it is told to hear (see [SttModels.forced]). Empty lets it find
+     * the language of each sentence itself, which it often gets wrong on stream sound.
+     */
+    val whisperLang: String = "",
+    /**
+     * The model writes capital letters. A model that writes none (the Russian one, the
+     * many-language one) gets a capital at the start of each caption line.
+     */
+    val cased: Boolean = true,
+    /**
+     * The model's tokens are byte-level BPE: each byte of the text's UTF-8 is written as one of
+     * 256 printable characters, so its token list does not read as text ("ƋŞĮ" for "不"). Stt reads
+     * them back ([SpeechLines.fromByteBpe]) before the lines are cut.
+     */
+    val byteBpe: Boolean = false
 ) {
     /**
      * The shapes of model sherpa-onnx 1.13.8 can run that are in use here. Streaming models hear
@@ -73,7 +89,13 @@ class SttModel(
     val unpackedBytes: Long get() = entries.values.sumOf { it.bytes }
 
     /** The language the translator starts from: null lets it guess from each line. */
-    val sourceLang: String? get() = if (lang == SttModels.AUTO) null else lang.substringBefore('-')
+    val sourceLang: String? get() = if (lang == SttModels.AUTO) whisperLang.ifEmpty { null } else lang.substringBefore('-')
+
+    /**
+     * Tells loaded models apart: the language, and for Whisper the language it was told. Whisper
+     * holds that language in its recognizer, so another one needs a new recognizer.
+     */
+    val key: String get() = if (whisperLang.isEmpty()) lang else "$lang:$whisperLang"
 }
 
 object SttModels {
@@ -94,7 +116,7 @@ object SttModels {
     const val TAG3 = "captions-pack-3"
     const val RELEASE_PAGE3 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG3
 
-    /** The pre-release with Whisper base, the model behind Auto. */
+    /** The pre-release with Whisper base, the all-languages model behind Auto. */
     const val TAG4 = "captions-pack-4"
     const val RELEASE_PAGE4 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG4
 
@@ -102,7 +124,11 @@ object SttModels {
     const val TAG5 = "captions-pack-5"
     const val RELEASE_PAGE5 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG5
 
-    /** The stream language that hears any language: Whisper, which names each sentence's language. */
+    /**
+     * The stream language that follows each stream: its language is found (see StreamLang) and that
+     * language's own model is used. Its entry in [ALL] is Whisper base, the all-languages model,
+     * which hears the start of a channel to check the language and covers languages without a model.
+     */
     const val AUTO = "auto"
 
     /** English: the captions-pack-1 model, read from PackPins, which never changes. */
@@ -194,7 +220,7 @@ object SttModels {
             lang = "ru", label = "Russian", tag = TAG2,
             asset = "purpletv-captions-model-vosk-small-ru-2025-08-16.zip",
             sha256 = "69ce81464ed019236f52976af9173726471a12351568cc2d363fd777c486d843", bytes = 22835595L,
-            kind = SttModel.Kind.TRANSDUCER, modelType = "zipformer2",
+            kind = SttModel.Kind.TRANSDUCER, modelType = "zipformer2", cased = false,
             licence = "Apache-2.0",
             credit = "Vosk small streaming Russian model by Alpha Cephei (https://huggingface.co/alphacep/vosk-model-small-streaming-ru), Apache-2.0, converted for sherpa-onnx by csukuangfj",
             files = mapOf(
@@ -242,7 +268,7 @@ object SttModels {
             lang = "zh", label = "Chinese", tag = TAG2,
             asset = "purpletv-captions-model-zipformer-ctc-zh-small-2025-04-01.zip",
             sha256 = "bc3f5bd113f6269319b91e76adb8ab7779f0877ebfcfde6a224e79fcb2bd758d", bytes = 20009466L,
-            kind = SttModel.Kind.ZIPFORMER2_CTC, modelType = "",
+            kind = SttModel.Kind.ZIPFORMER2_CTC, modelType = "", byteBpe = true,
             licence = "Apache-2.0",
             credit = "Small streaming Zipformer CTC Chinese model by k2-fsa (csukuangfj) (https://huggingface.co/csukuangfj/icefall-streaming-zipformer-small-ctc-zh-2025-04-01), Apache-2.0",
             files = mapOf(
@@ -321,14 +347,15 @@ object SttModels {
         entries = MANY_ENTRIES,
         dir = "model-mul",
         what = "many-language speech model (Filipino and Lithuanian)",
-        script = script
+        script = script,
+        cased = false
     )
 
     val PACK3: List<SttModel> = listOf(
         JA,
         many("tl", "Filipino", SpeechScript.Mode.LATIN),
         many("lt", "Lithuanian", SpeechScript.Mode.LATIN),
-        // Auto: csukuangfj/sherpa-onnx-whisper-base at bb53ee204431c90d314c1cc08d28d23e5b7927cc
+        // Auto, the all-languages model: csukuangfj/sherpa-onnx-whisper-base at bb53ee204431c90d314c1cc08d28d23e5b7927cc
         SttModel(
             lang = AUTO, label = "Auto (any language)", tag = TAG4,
             asset = "purpletv-captions-model-whisper-base.zip",
@@ -352,7 +379,7 @@ object SttModels {
                 "LICENSE-MIT-silero-vad.txt" to PackPins.FilePin(1075L, "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"),
                 "README.txt" to PackPins.FilePin(2187L, "310b0397083cdb992da65dc1ae63b75b3435bcebe2404e3c290261eaa197e35d")
             ),
-            what = "Auto speech model (Whisper base)"
+            what = "all-languages speech model (Whisper base)"
         )
     )
 
@@ -395,8 +422,93 @@ object SttModels {
     /** The model for a stored setting value. Anything unknown (a newer version's choice synced over) is English. */
     fun forValue(v: Int): SttModel = ALL.getOrNull(v) ?: EN
 
-    /** The model for the stream language picked in settings. */
-    fun chosen(): SttModel = if (Settings.isReady()) forValue(Settings.getInt(KEY, DEF)) else EN
+    /** The stream language picked in settings: a language's model, or the Auto entry. */
+    fun picked(): SttModel = if (Settings.isReady()) forValue(Settings.getInt(KEY, DEF)) else EN
+
+    /** True when the stream language picked is Auto. */
+    fun auto(): Boolean = picked().lang == AUTO
+
+    /**
+     * The model to hear the stream with now: the language picked, or with Auto the model for the
+     * language of the channel being watched (see StreamLang).
+     */
+    fun chosen(): SttModel {
+        val p = picked()
+        return if (p.lang == AUTO) StreamLang.model() else p
+    }
+
+    /** Whisper base, the all-languages model: Auto's own entry. */
+    val WHISPER: SttModel = byLang(AUTO)!!
+
+    /**
+     * The languages Whisper base knows, read from the model's own list (all_language_codes). Told
+     * any other language, sherpa-onnx ends the whole process at its first sentence, so Whisper is
+     * only ever told one of these.
+     */
+    val WHISPER_LANGS: Set<String> = ("af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu " +
+        "ha haw he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no " +
+        "oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo zh").split(' ').toSet()
+
+    /** The models made for [lang] alone, best first (English before English (Twitch slang)). */
+    fun dedicated(lang: String): List<SttModel> = ALL.filter { it.lang != AUTO && it.lang.substringBefore('-') == lang }
+
+    private val forcedModels = java.util.concurrent.ConcurrentHashMap<String, SttModel>()
+
+    /**
+     * Whisper told to hear [lang] only: the same download and folder as [WHISPER]. Null when
+     * Whisper does not know [lang].
+     */
+    fun forced(lang: String): SttModel? {
+        if (lang !in WHISPER_LANGS) return null
+        return forcedModels.getOrPut(lang) {
+            val w = WHISPER
+            SttModel(w.lang, w.label, w.tag, w.asset, w.sha256, w.bytes, w.kind, w.modelType, w.licence, w.credit,
+                w.files, w.entries, w.dir, w.what, w.script, whisperLang = lang, cased = w.cased, byteBpe = w.byteBpe)
+        }
+    }
+
+    /**
+     * What Auto uses for a stream in [lang]. [missing] is the language's own model when it has one
+     * that is not downloaded, so the caption box and the menu can say so.
+     */
+    class AutoPick(val model: SttModel, val lang: String?, val missing: SttModel?)
+
+    /**
+     * Auto's model for a stream in [lang] (null: not known), [ready] saying which downloads are on
+     * the phone and [bad] which models failed to load in this run:
+     *  - the language's own model when it is downloaded (English before English (Twitch slang));
+     *  - its own model is not downloaded: Whisper told the language when Whisper is, else that model
+     *    (the caption box then says it needs a download);
+     *  - its own model is downloaded but failed to load: Whisper told the language, and nothing says
+     *    to download a model that is already there. When Whisper can not stand in either, that
+     *    model all the same, and Stt loads nothing for it, as before;
+     *  - no model of its own (Portuguese, Italian, Arabic, ...): Whisper told the language;
+     *  - not known: Whisper finding the language of each sentence, the last resort.
+     */
+    fun autoPick(lang: String?, bad: (SttModel) -> Boolean = { false }, ready: (SttModel) -> Boolean): AutoPick {
+        if (lang == null) return AutoPick(WHISPER, null, null)
+        val own = dedicated(lang)
+        val usable = own.filterNot(bad)
+        usable.firstOrNull(ready)?.let { return AutoPick(it, lang, null) }
+        val missing = usable.firstOrNull()
+        val told = forced(lang)
+        return when {
+            own.isEmpty() -> AutoPick(told ?: WHISPER, lang, null)
+            told != null && !bad(told) && ready(WHISPER) -> AutoPick(told, lang, missing)
+            else -> AutoPick(missing ?: own.first(), lang, missing)
+        }
+    }
+
+    /**
+     * [lang]'s name for a message: the stream language's own label when it has a model (I18n
+     * translates those), otherwise the name in the language PurpleTV is shown in ([ui], see
+     * I18n.shownLang).
+     */
+    fun langName(lang: String, ui: String = "en"): String =
+        dedicated(lang).firstOrNull()?.label
+            ?: runCatching { java.util.Locale.forLanguageTag(lang).getDisplayLanguage(java.util.Locale.forLanguageTag(ui)) }.getOrNull()
+                ?.takeIf { it.isNotBlank() && it != lang }?.replaceFirstChar { it.uppercase() }
+            ?: lang
 
     /**
      * sherpa-onnx's model config for [m] unpacked in [dir]. Only the part that differs per model is
@@ -431,9 +543,11 @@ object SttModels {
             SttModel.Kind.OFFLINE_TRANSDUCER -> base.copy(transducer = OfflineTransducerModelConfig(
                 encoder = path("encoder"), decoder = path("decoder"), joiner = path("joiner")))
             SttModel.Kind.OMNILINGUAL_CTC -> base.copy(omnilingual = OfflineOmnilingualAsrCtcModelConfig(model = path("model")))
-            // No language named: Whisper finds it for every sentence and says which it was.
+            // The language Auto found for the stream, or none: Whisper then finds it for every
+            // sentence and says which it was. Only ever one it knows (see WHISPER_LANGS).
             SttModel.Kind.WHISPER -> base.copy(whisper = OfflineWhisperModelConfig(
-                encoder = path("encoder"), decoder = path("decoder"), language = "", task = "transcribe"))
+                encoder = path("encoder"), decoder = path("decoder"),
+                language = m.whisperLang.takeIf { it in WHISPER_LANGS }.orEmpty(), task = "transcribe"))
             else -> error("${m.lang} is a streaming model, see modelConfig")
         }
     }
