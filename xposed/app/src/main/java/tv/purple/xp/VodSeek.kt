@@ -45,6 +45,8 @@ object VodSeek {
         val getDur = runCatching { cls.getMethod("getDuration") }.getOrNull()
         XposedBridge.hookMethod(m, object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
+                // The taps were on Twitch's VOD buttons, so only Twitch's player may use them up.
+                if (OwnPlayers.isMine(p.thisObject)) return
                 val f = fwd; val b = back
                 if (f == 0 && b == 0) return
                 fwd = 0; back = 0

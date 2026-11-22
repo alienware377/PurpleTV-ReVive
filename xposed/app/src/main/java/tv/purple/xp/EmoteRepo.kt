@@ -202,6 +202,14 @@ object EmoteRepo {
     // Target emote height in px; set once we know screen density.
     @Volatile private var emoteHeightPx = 56
 
+    /** Copies of the global emotes (name to picture address, and name to source), for chats
+     *  drawn apart from Twitch's own, which must not see the current channel's emotes. */
+    internal fun globalUrls(): Map<String, String> = HashMap(gMap)
+    internal fun globalSrc(): Map<String, String> = HashMap(gSrc)
+
+    /** The row height emote pictures are drawn at, in px. */
+    internal fun emoteHeight(): Int = emoteHeightPx
+
     /**
      * Built lazily so it can find the app's cache directory, which does not exist yet when this
      * object is first touched.
@@ -701,17 +709,28 @@ object EmoteRepo {
         http.newCall(req).execute().use { r -> r.code to r.body?.string() }
     }.getOrElse { log("helixPost failed: ${it.javaClass.simpleName}"); null }
 
+    /** The signed-in account's login name, which Twitch keeps beside the token (key "name"), for
+     *  signing in to chat the way Twitch does. "" when logged out. Never logged. */
+    fun ownLogin(ctx: Context): String = readAuthPref(ctx, "name")
+
+    /** The signed-in account's numeric id as text (key "userIdString"), "" when logged out. */
+    fun ownUserId(ctx: Context): String = readAuthPref(ctx, "userIdString")
+
     /** Read the host's OAuth token (SharedPreferences key authToken_v2) by scanning the app's own
      *  shared_prefs dir: no hardcoded file name, obfuscation-immune. Returns "" if absent. */
-    private fun readAuthToken(ctx: Context): String {
+    private fun readAuthToken(ctx: Context): String = readAuthPref(ctx, "authToken_v2")
+
+    /** [key] from the first prefs file that holds a token: Twitch keeps the account's login and id
+     *  in that same file. Returns "" if absent or logged out. */
+    private fun readAuthPref(ctx: Context, key: String): String {
         val dir = File(ctx.applicationInfo.dataDir, "shared_prefs")
         val files = dir.listFiles { f -> f.name.endsWith(".xml") } ?: return ""
         for (f in files) {
             val name = f.name.removeSuffix(".xml")
-            val t = runCatching {
-                ctx.getSharedPreferences(name, Context.MODE_PRIVATE).getString("authToken_v2", null)
-            }.getOrNull()
-            if (!t.isNullOrBlank()) return t
+            val prefs = runCatching { ctx.getSharedPreferences(name, Context.MODE_PRIVATE) }.getOrNull() ?: continue
+            val t = runCatching { prefs.getString("authToken_v2", null) }.getOrNull()
+            if (t.isNullOrBlank()) continue
+            return if (key == "authToken_v2") t else runCatching { prefs.getString(key, null) }.getOrNull().orEmpty()
         }
         return ""
     }
@@ -1134,8 +1153,8 @@ object EmoteRepo {
     }
 
     // 7TV channel: https://7tv.io/v3/users/twitch/<id> -> { emote_set:{ emotes:[ {name,id} ] } }
-    private fun loadSevenTvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
-                                   up: MutableMap<String, String>) {
+    internal fun loadSevenTvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                                    up: MutableMap<String, String>) {
         val root = JSONObject(get("https://7tv.io/v3/users/twitch/$id"))
         val arr = root.optJSONObject("emote_set")?.optJSONArray("emotes") ?: return
         var n = 0
@@ -1150,8 +1169,8 @@ object EmoteRepo {
     }
 
     // BTTV channel: https://api.betterttv.net/3/cached/users/twitch/<id> -> { channelEmotes:[], sharedEmotes:[] }
-    private fun loadBttvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
-                                up: MutableMap<String, String>, channelName: String?) {
+    internal fun loadBttvChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                                 up: MutableMap<String, String>, channelName: String?) {
         val root = JSONObject(get("https://api.betterttv.net/3/cached/users/twitch/$id"))
         var n = 0
         for (key in arrayOf("channelEmotes", "sharedEmotes")) {
@@ -1170,8 +1189,8 @@ object EmoteRepo {
     }
 
     // FFZ room: https://api.frankerfacez.com/v1/room/id/<id> -> { sets:{ "<id>":{ emoticons:[...] } } }
-    private fun loadFfzChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
-                               up: MutableMap<String, String>) {
+    internal fun loadFfzChannel(id: String, out: MutableMap<String, String>, src: MutableMap<String, String>,
+                                up: MutableMap<String, String>) {
         val root = JSONObject(get("https://api.frankerfacez.com/v1/room/id/$id"))
         val sets = root.optJSONObject("sets") ?: return
         var n = 0

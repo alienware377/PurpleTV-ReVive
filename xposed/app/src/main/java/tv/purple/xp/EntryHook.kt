@@ -106,6 +106,7 @@ class EntryHook : de.robv.android.xposed.IXposedHookLoadPackage {
         runCatching { FrequentEmotes.install(lpparam) }.onFailure { log("frequent emotes failed: $it") }
         runCatching { FollowerEmoteFix.install(lpparam) }.onFailure { log("follower emote fix failed: $it") }
         runCatching { RefreshButton.install(lpparam) }.onFailure { log("refresh button failed: $it") }
+        runCatching { TwoStreams.install(lpparam) }.onFailure { log("two streams failed: $it") }
         runCatching { VodSeek.install(lpparam) }.onFailure { log("vod seek failed: $it") }
         runCatching { PickerSections.install(lpparam) }.onFailure { log("picker sections failed: $it") }
         runCatching { PickerSend.install() }.onFailure { log("picker send failed: $it") }

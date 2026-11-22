@@ -171,7 +171,7 @@ object DynLight {
 
     /** From each VideoFilters pass. The GL path measures inside its own drawing instead. */
     fun ensureRunning() {
-        if (running || !active() || GlVideoFilter.available()) return
+        if (running || !active() || GlVideoFilter.available() || TwoStreams.isOpen()) return
         running = true
         main.postDelayed(tick, TICK_MS)
     }
@@ -181,9 +181,11 @@ object DynLight {
             // Stop when no player is really on screen. Twitch in the background keeps its player
             // attached with its window hidden, so checking attachment alone measured forever, and a
             // closed player leaves nothing to measure. The next VideoFilters.attach() pass starts
-            // this again through ensureRunning().
-            val live: List<TextureView> = runCatching { if (active() && !GlVideoFilter.available()) liveViews() else emptyList() }
-                .getOrDefault(emptyList())
+            // this again through ensureRunning(). Under the two-streams screen Twitch's player only
+            // holds a paused frame nobody sees, so it stops there too until that screen closes.
+            val live: List<TextureView> = runCatching {
+                if (active() && !GlVideoFilter.available() && !TwoStreams.isOpen()) liveViews() else emptyList()
+            }.getOrDefault(emptyList())
             if (live.isEmpty()) { running = false; return }
             runCatching { measureView(live) }.onFailure { log("DL measure: $it") }
             main.postDelayed(this, TICK_MS)

@@ -182,7 +182,7 @@ object AdVolume {
     /** The setting changed: re-apply at once (from the menu, DevBridge or sync). */
     fun refresh() {
         if (!installed) return
-        bg.post { safely("refresh") { recompute("setting"); if (anyOpen()) ensurePoll() } }
+        bg.post { safely("refresh") { recompute("setting"); if (anyWindow()) ensurePoll() } }
     }
 
     /** Keep an in-app sound of our own (read-aloud) at its own level during audio-ad windows. */
@@ -273,7 +273,7 @@ object AdVolume {
         runCatching {
             val trk = cl.loadClass("com.amazonaws.ivs.player.MediaSink\$Track")
             hookPublic(trk, "configureAudio", after { _ ->
-                if (anyOpen()) {
+                if (anyWindow()) {
                     first("new-sink", "an audio sink was built during an ad")
                     bg.post { safely("sink") { recompute("new audio sink") } }
                 }
@@ -622,7 +622,18 @@ object AdVolume {
 
     // ---- windows ----
 
-    private fun anyOpen() = synchronized(L) { tw != Tw.NONE || players.values.any { it.ad } }
+    /** Any ad window at all, the two-streams screen's players included: what keeps the levels and the poll going. */
+    private fun anyWindow() = synchronized(L) { tw != Tw.NONE || players.values.any { it.ad } }
+
+    /**
+     * "An ad is on" for the rest of PurpleTV: ChatTransparency reads it by name, and AdTime asks
+     * ChatTransparency. An ad in one of the two-streams screen's own players still gets its volume
+     * turned down, but it is not Twitch's ad, so it must not hold back toasts or post a break recap
+     * in Twitch's chat.
+     */
+    private fun anyOpen() = synchronized(L) {
+        tw != Tw.NONE || players.entries.any { it.value.ad && !OwnPlayers.isMine(it.key) }
+    }
 
     private fun ensurePoll() {
         if (polling) return
@@ -655,7 +666,7 @@ object AdVolume {
             }
             for (e in ends) log(e)
             recompute("poll")
-            if (anyOpen()) ensurePoll()
+            if (anyWindow()) ensurePoll()
         }
     }
 

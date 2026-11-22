@@ -143,6 +143,8 @@ object EmoteHooks {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         val tv = param.thisObject as? TextView ?: return
                         val cs = param.args[0] as? CharSequence ?: return
+                        // A two-streams chat row handles its own taps, blacklist and animations.
+                        if (tv.tag == DualChatPane.ROW_TAG) return
                         // First: a blacklisted row is collapsed here, and nothing below is worth
                         // doing to a line that will not be drawn.
                         val hidden = runCatching { BlacklistRows.onSetText(tv, cs) }

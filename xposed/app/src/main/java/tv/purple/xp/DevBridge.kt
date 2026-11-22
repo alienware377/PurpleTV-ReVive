@@ -65,6 +65,11 @@ import android.os.Build
  *        languages into English
  *   ... -a tv.purple.xp.DEV_TR --es op into --es lang es       downloads what translates into it
  *   ... -a tv.purple.xp.DEV_TR --es op tr --es text "hola" --es from es --es to en
+ * Two streams (TwoStreams, "TS" lines), on a live stream screen:
+ *   ... -a tv.purple.xp.DEV_DUAL --es op open --es login A --es login2 B   opens the two-streams
+ *        screen with channels A and B
+ *   ... -a tv.purple.xp.DEV_DUAL --es op close | status | pip   (pip leaves for picture-in-picture)
+ *   ... -a tv.purple.xp.DEV_DUAL --es op sound --ei i 0   which stream is heard (0 is A, 1 is B)
  *
  * Only something holding android.permission.DUMP can send these, which in practice means the adb
  * shell or the system. An ordinary app on the phone cannot reach it.
@@ -98,6 +103,7 @@ object DevBridge {
     private const val ACTION_ANIM = "tv.purple.xp.DEV_ANIM"
     private const val ACTION_TR = "tv.purple.xp.DEV_TR"
     private const val ACTION_BADGE = "tv.purple.xp.DEV_BADGE"
+    private const val ACTION_DUAL = "tv.purple.xp.DEV_DUAL"
 
     /** The activity on screen, so a probe can look at its views. */
     @Volatile private var top: java.lang.ref.WeakReference<android.app.Activity>? = null
@@ -135,6 +141,7 @@ object DevBridge {
                         ACTION_ANIM -> log(AnimPause.report())
                         ACTION_TR -> translateTest(app, i)
                         ACTION_BADGE -> BadgeInfo.dev(i)
+                        ACTION_DUAL -> TwoStreams.dev(i)
                         ACTION_VIEW -> view(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false), i.getStringExtra("text"))
                         ACTION_FIND -> find(i.getStringExtra("re").orEmpty(), i.getBooleanExtra("click", false),
                             i.getStringExtra("url"))
@@ -148,7 +155,7 @@ object DevBridge {
             addAction(ACTION_ADVOL)
             addAction(ACTION_PBYP); addAction(ACTION_CAPTION); addAction(ACTION_STT); addAction(ACTION_TTS)
             addAction(ACTION_CLIP); addAction(ACTION_STATS)
-            addAction(ACTION_ANIM); addAction(ACTION_TR); addAction(ACTION_BADGE)
+            addAction(ACTION_ANIM); addAction(ACTION_TR); addAction(ACTION_BADGE); addAction(ACTION_DUAL)
         }
         (app as? android.app.Application)?.registerActivityLifecycleCallbacks(
             object : android.app.Application.ActivityLifecycleCallbacks {

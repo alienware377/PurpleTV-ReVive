@@ -24,7 +24,8 @@ import kotlin.math.abs
 object BarFit {
 
     /** Ours, nearest Twitch's buttons first: the ones further left wrap first. */
-    private val OURS = listOf("ptv_sleep_timer", "ptv_filters_button", "ptv_refresh_button", "ptv_clip_save", "ptv_stats_button")
+    private val OURS = listOf("ptv_sleep_timer", "ptv_filters_button", "ptv_refresh_button", "ptv_clip_save", "ptv_stats_button",
+        "ptv_dual_button")
     private val TWITCH = arrayOf("create_clip_text_button", "create_clip_button_compose_view", "switch_to_vertical_view",
         "cast_button", "media_route_button", "share_button", "settings_button", "audio_and_subtitles")
     /** Smallest our buttons are drawn before some wrap to the second line. */

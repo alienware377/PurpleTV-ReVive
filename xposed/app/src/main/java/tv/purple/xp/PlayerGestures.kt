@@ -110,7 +110,9 @@ object PlayerGestures {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 mode = Mode.NONE; tracking = false
-                if (!enabledAny()) return false
+                // Twitch's player area is still "shown" under the two-streams screen, so a swipe on
+                // that screen's chats would otherwise change the volume or brightness.
+                if (!enabledAny() || TwoStreams.isOpen()) return false
                 // DEV_PORTRAIT is a hidden switch for testing on a device locked to portrait.
                 if (a.resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE &&
                     !Settings.get(DEV_PORTRAIT, false)) return false

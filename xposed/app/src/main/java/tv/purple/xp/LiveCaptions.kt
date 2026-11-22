@@ -303,8 +303,10 @@ object LiveCaptions {
         val act = ViewHider.currentActivity()
         val root = act?.window?.peekDecorView()
         val vid = root?.let { r -> Res.id(r.context, "playback_view_container").takeIf { it != 0 }?.let { r.findViewById<View>(it) } }
+        // Twitch's player stays "shown" under the two-streams screen, only paused there, so it
+        // has nothing to caption and the box would sit on top of that screen.
         val now = onCached && vid != null && vid.isShown && RefreshButton.liveLogin() != null &&
-            !PbypWatch.active && !PbypWatch.visible && act?.hasWindowFocus() != false
+            !PbypWatch.active && !PbypWatch.visible && act?.hasWindowFocus() != false && !TwoStreams.isOpen()
         if (now != showing) {
             showing = now
             // Cleared on screen too, or the last words come back with the overlay.

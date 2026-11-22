@@ -354,7 +354,32 @@ object ViewHider {
         passCount++
     }
 
+    /** Shortest time between two full passes while the two-streams screen covers Twitch's views. */
+    private const val COVERED_PASS_MS = 1000L
+    private var lastCoveredPass = 0L
+    private var coveredQueued = false
+
+    /**
+     * The two-streams screen's chats add lines several times a second, and every one of those is
+     * a layout of the whole window. Twitch's views under that screen change rarely, so while it is
+     * open the full pass runs at most once a second, with one more after the last skipped one.
+     * The screen itself is still kept on top on every layout.
+     */
+    private fun covered(act: Activity, root: View): Boolean {
+        if (!TwoStreams.isOpen()) return false
+        runCatching { TwoStreams.attach(root) }
+        val now = android.os.SystemClock.uptimeMillis()
+        val wait = COVERED_PASS_MS - (now - lastCoveredPass)
+        if (wait <= 0) { lastCoveredPass = now; return false }
+        if (!coveredQueued) {
+            coveredQueued = true
+            handler.postDelayed({ coveredQueued = false; runCatching { apply(act) }.onFailure { log("VH apply: $it") } }, wait)
+        }
+        return true
+    }
+
     private fun apply(act: Activity) {
+        if (act.window?.peekDecorView()?.let { covered(act, it) } == true) return
         countPass()
         // Cheap exit: if nothing is switched on there's no reason to walk the tree at all.
         val active = RULES.filter { it.active() }
@@ -378,6 +403,7 @@ object ViewHider {
         timed("following") { runCatching { FollowingSections.attach(root) }.onFailure { log("following sections: $it") } }
         timed("points") { runCatching { PointsWatch.check(root) } }
         timed("stats") { runCatching { PlayerStats.attach(root) } }
+        timed("dual") { runCatching { TwoStreams.attach(root) }.onFailure { log("two streams: $it") } }
         // Last of the player buttons: fits the whole row once every button has placed itself.
         timed("barfit") { runCatching { BarFit.apply(root) }.onFailure { log("bar fit: $it") } }
         timed("cutout") { runCatching { CutoutFill.onPass(root) } }

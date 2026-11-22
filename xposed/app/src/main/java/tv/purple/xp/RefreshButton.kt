@@ -40,6 +40,9 @@ object RefreshButton {
         cls = c
         val hook = object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
+                // The two-streams screen loads its own players. They must never become the stream
+                // Twitch shows, or liveLogin() would name the second channel even after it closes.
+                if (OwnPlayers.isMine(p.thisObject)) return
                 val a0 = p.args.getOrNull(0) ?: return
                 val uri = when (a0) {
                     is Uri -> a0
@@ -79,6 +82,16 @@ object RefreshButton {
     fun liveLogin(): String? {
         val path = lastUri?.path ?: return null
         return HLS.find(path)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Twitch's last live stream address (".../api/channel/hls/<login>.m3u8?..."), so another
+     * channel can be asked for with the same options Twitch uses. It carries Twitch's short-lived
+     * pass, so it is never logged.
+     */
+    fun lastLiveUri(): String? {
+        val u = lastUri ?: return null
+        return if (u.path?.contains("/api/channel/hls/") == true) u.toString() else null
     }
 
     private fun refresh(v: View) {

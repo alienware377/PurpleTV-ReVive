@@ -52,7 +52,7 @@ object SettingsSync {
      *  syncs again, so it could not pick up being switched back on. */
     fun local(key: String) = key.startsWith("sync_") || key.startsWith("update_") || key.startsWith("dev_") ||
         key == GlVideoFilter.KEY_FORCE || key.startsWith("vf_ui_") || key.startsWith("af_ui_") ||
-        key.startsWith("fav_ui_") || key == Settings.KEY_ENABLED ||
+        key.startsWith("fav_ui_") || key.startsWith("dual_ui_") || key == Settings.KEY_ENABLED ||
         // Text-to-speech engines differ from phone to phone.
         key == ReadAloud.KEY_ENGINE ||
         // A size that suits a tablet or an unfolded Fold is far too big on a phone.

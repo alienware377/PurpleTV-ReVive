@@ -69,6 +69,9 @@ object PlayerStats {
         if (setSurface != null) XposedBridge.hookMethod(setSurface, object : XC_MethodHook() {
             override fun afterHookedMethod(p: MethodHookParam) {
                 val me = p.thisObject
+                // The two-streams screen's players draw too, but they are never Twitch's stream:
+                // speech to text, captions and the stats box must stay on Twitch's player.
+                if (OwnPlayers.isMine(me)) return
                 if (p.args.getOrNull(0) != null) shown = WeakReference(me)
                 else if (shown?.get() === me) shown = null
             }

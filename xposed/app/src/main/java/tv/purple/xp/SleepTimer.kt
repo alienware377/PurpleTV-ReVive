@@ -158,6 +158,8 @@ object SleepTimer {
 
     private fun pauseNow() {
         dueAt = 0
+        // The two-streams screen pauses its own players; the media key may not reach them.
+        runCatching { TwoStreams.onSleep() }.onFailure { log("sleep timer two streams: $it") }
         val ctx = appCtx ?: Settings.ctx() ?: return
         runCatching {
             val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
