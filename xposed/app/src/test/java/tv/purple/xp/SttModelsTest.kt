@@ -241,8 +241,20 @@ class SttModelsTest {
         assertSame(es, e.missing)
     }
 
-    /** GigaAM adds no row and no download, and is set up as sherpa-onnx needs it. */
-    @Test fun gigaamIsNotOfferedAndHasItsOwnConfig() {
+    /** Russian's download is GigaAM, the old model stays for phones that have it, and X-ASR is not offered. */
+    @Test fun theBetterModelIsTheDownload() {
+        val ru = SttModels.byLang("ru")!!
+        assertSame(SttModels.RU_GIGAAM, SttModels.offered(ru))
+        assertSame(SttModels.RU_GIGAAM, SttModels.offered(SttModels.RU_GIGAAM))
+        val en = SttModels.byLang("en")!!
+        assertSame(en, SttModels.offered(en))
+        for (m in SttModels.ALL) if (m !== ru) assertSame(m, SttModels.offered(m))
+        assertSame(ru, SttModels.upgraded(ru, { false }) { it === ru })
+        assertSame(SttModels.RU_GIGAAM, SttModels.upgraded(ru, { false }) { true })
+    }
+
+    /** GigaAM adds no row to the language list, and is set up as sherpa-onnx needs it. */
+    @Test fun gigaamHasNoRowAndHasItsOwnConfig() {
         val g = SttModels.RU_GIGAAM
         val ru = SttModels.byLang("ru")!!
         assertTrue(g !in SttModels.ALL)

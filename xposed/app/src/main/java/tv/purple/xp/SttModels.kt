@@ -141,6 +141,7 @@ object SttModels {
 
     /** The pre-release with GigaAM, the better Russian model. */
     const val TAG6 = "captions-pack-6"
+    const val RELEASE_PAGE6 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG6
 
     /** The pre-release with X-ASR, the better English model. */
     const val TAG7 = "captions-pack-7"
@@ -519,10 +520,14 @@ object SttModels {
 
     /**
      * Better models that take over from a language's model once they are on the phone. They are
-     * not in [ALL]: they add no row to the language list and no download, so a phone without one
-     * goes on with the model it has, and nothing offers a file that is not released.
+     * not in [ALL], so they add no row to the language list and the stored choice keeps its
+     * meaning. A phone without one goes on with the model it has, and its download row offers the
+     * better one ([offered]).
      */
     val UPGRADES: Map<String, SttModel> = mapOf("ru" to RU_GIGAAM, "en" to EN_XASR)
+
+    /** What the download for [m] is now: the model that takes over from it, when one does. */
+    fun offered(m: SttModel): SttModel = takesOver(m.lang) ?: m
 
     /**
      * [m], or the model that takes over from it when that one is downloaded ([ready]) and has not

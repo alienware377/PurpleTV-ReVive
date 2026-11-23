@@ -230,7 +230,7 @@ object SttPacks {
      */
     fun packLine(ctx: Context, model: Boolean): String {
         if (!supported()) return "Not available on this phone: it needs a 64-bit ARM processor"
-        val p = if (model) modelPack() else ENGINE
+        val p = if (model) offeredPack() else ENGINE
         val pct = p.progress
         return when {
             // The last tenth is the check and unpack, after the bytes are all in.
@@ -244,7 +244,10 @@ object SttPacks {
     }
 
     /** True while this one pack is downloading. */
-    fun packBusy(model: Boolean): Boolean = (if (model) modelPack() else ENGINE).busy.get()
+    fun packBusy(model: Boolean): Boolean = (if (model) offeredPack() else ENGINE).busy.get()
+
+    /** The pack the download row is about: the better model of the language, when it has one. */
+    private fun offeredPack(): Pack = modelPack(SttModels.offered(SttModels.chosen()))
 
     private fun mb(b: Long) = (b + 500_000) / 1_000_000
 
@@ -2024,7 +2027,7 @@ object Stt {
     }
 
     private fun devDownload(ctx: Context, which: String) {
-        val model = { SttPacks.downloadModel(ctx, {}, { ok, m -> log("STT dev model: ok=$ok $m") }) }
+        val model = { SttPacks.downloadModel(ctx, {}, { ok, m -> log("STT dev model: ok=$ok $m") }, SttModels.offered(SttModels.chosen())) }
         when (which) {
             "engine" -> SttPacks.downloadEngine(ctx, {}, { ok, m -> log("STT dev engine: ok=$ok $m") })
             "model" -> model()

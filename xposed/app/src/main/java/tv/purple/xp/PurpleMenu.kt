@@ -646,6 +646,8 @@ object PurpleMenu {
         Link("Omnilingual ASR by Meta, Apache-2.0", "The many-language speech model behind Filipino, Lithuanian and Auto, " +
             "converted for sherpa-onnx by csukuangfj",
             "https://github.com/facebookresearch/omnilingual-asr"),
+        Link("GigaAM by Sber, MIT", "The Russian speech model, converted for sherpa-onnx by csukuangfj",
+            "https://github.com/salute-developers/GigaAM"),
         Link("Whisper by OpenAI, MIT", "The speech model behind Auto (converted for sherpa-onnx by csukuangfj) and, trained further on Twitch chat speech, English (Twitch slang)",
             "https://github.com/openai/whisper"),
         Link("Silero VAD by the Silero Team, MIT", "Finds where each sentence starts and ends for the Japanese and many-language models",
@@ -660,7 +662,9 @@ object PurpleMenu {
         Link("Auto speech model: licences and source", "The licence texts and source of Whisper base",
             SttModels.RELEASE_PAGE4),
         Link("English (Twitch slang) speech model: licences and source", "The licence texts, source and training data of Whisper base.en trained further",
-            SttModels.RELEASE_PAGE5)
+            SttModels.RELEASE_PAGE5),
+        Link("Russian speech model: licences and source", "The licence texts and source of GigaAM",
+            SttModels.RELEASE_PAGE6)
     )
 
     private val UPDATES = listOf(
@@ -1032,7 +1036,7 @@ object PurpleMenu {
     /** What a download row says: what the pack is, its sizes, and whether it is there or how far. */
     private fun packSummary(ctx: Context, model: Boolean): String {
         if (model && SttModels.auto()) return autoSummary(ctx)
-        return (if (model) SttModels.chosen().let { "${it.what.replaceFirstChar { c -> c.uppercase() }}, for the stream language above. ${shortCredit(it)}. " }
+        return (if (model) SttModels.offered(SttModels.chosen()).let { "${it.what.replaceFirstChar { c -> c.uppercase() }}, for the stream language above. ${shortCredit(it)}. " }
          else "sherpa-onnx ${PackPins.SHERPA_VERSION}, by k2-fsa (Apache-2.0), includes espeak-ng (GPL-3.0). ") +
             SttPacks.packLine(ctx, model)
     }
@@ -1049,7 +1053,9 @@ object PurpleMenu {
         }
         // Each name on its own through I18n, since the list as a whole is no known text. The short
         // name for the all-languages model: the sentence after the list says what it is for.
-        val have = speechDownloads().filter { SttPacks.ready(ctx, SttPacks.modelPack(it.first())) }
+        val have = speechDownloads().filter {
+            SttPacks.ready(ctx, SttPacks.modelPack(it.first())) || SttPacks.ready(ctx, SttPacks.modelPack(SttModels.offered(it.first())))
+        }
             .joinToString(", ") { downloadName(it, short = true) }.ifEmpty { I18n.t("none yet") }
         return "Auto: each stream uses the speech model for its language. Downloaded: ${have}. " +
             "The all-languages model (Whisper base) finds a stream's language as it starts, and hears languages that have no model of their own. " +
@@ -1079,7 +1085,7 @@ object PurpleMenu {
         if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
         val all = speechDownloads()
         val rows = all.map { ms ->
-            val p = SttPacks.modelPack(ms.first())
+            val p = SttPacks.modelPack(SttModels.offered(ms.first()))
             val name = downloadName(ms)
             when {
                 p.busy.get() -> "$name (downloading ${p.progress}%)"
@@ -1106,7 +1112,7 @@ object PurpleMenu {
     private fun downloadPack(ctx: Context, model: Boolean, set: (String) -> Unit, pick: SttModel? = null) {
         // With Auto the row offers every language instead, and comes back here with the one tapped.
         if (model && pick == null && SttModels.auto()) { pickLanguage(ctx, set); return }
-        val m = pick ?: SttModels.chosen()
+        val m = SttModels.offered(pick ?: SttModels.chosen())
         val what = if (model) m.what else "captions engine"
         val pack = if (model) SttPacks.modelPack(m) else SttPacks.ENGINE
         if (!SttPacks.supported()) { toast(ctx, "Speech-to-text needs a phone with a 64-bit ARM processor"); return }
@@ -1124,6 +1130,7 @@ object PurpleMenu {
                              SttModels.TAG3 -> SttModels.RELEASE_PAGE3
                              SttModels.TAG4 -> SttModels.RELEASE_PAGE4
                              SttModels.TAG5 -> SttModels.RELEASE_PAGE5
+                             SttModels.TAG6 -> SttModels.RELEASE_PAGE6
                              else -> SttModels.RELEASE_PAGE2
                          }) +
                          (if (m.kind == SttModel.Kind.OMNILINGUAL_CTC) "\n\nIt needs a lot of memory while captions run (about 400 MB more), " +
