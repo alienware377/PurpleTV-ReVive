@@ -403,9 +403,14 @@ object LiveCaptions {
         val before = lines.size
         while (lines.isNotEmpty() && lines.first().since < cut && waiting.isEmpty()) lines.removeFirst()
         pace()
+        behindTip = !moving && !dragging && DualTip.covers(box)
         if (lines.size != before || waiting.isNotEmpty() || lastText.isEmpty() || note() != holdShown) render()
         place(box, vid, content)
     }
+
+    /** A feature bubble on the player controls is under the box: it waits, keeping its place. */
+    private var behindTip = false
+    private fun shownState() = if (behindTip) View.INVISIBLE else View.VISIBLE
 
     private fun dp(v: View, x: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, x, v.resources.displayMetrics).toInt()
 
@@ -647,7 +652,7 @@ object LiveCaptions {
         val tv = textRef?.get() ?: return
         val st = builtStyle
         if (st == 0 && !moving && tv.text.isNullOrEmpty()) { box.visibility = View.GONE; return }
-        box.visibility = View.VISIBLE
+        box.visibility = shownState()
         if (dragging) return
         if (st == 1) {
             val (w, h) = boxSize(vid, content)
@@ -709,7 +714,7 @@ object LiveCaptions {
         if (out.toString() == lastText.toString()) return
         lastText = out
         tv.text = out
-        if (builtStyle == 0) boxRef?.get()?.visibility = if (out.isEmpty() && !moving) View.GONE else View.VISIBLE
+        if (builtStyle == 0) boxRef?.get()?.visibility = if (out.isEmpty() && !moving) View.GONE else shownState()
         tv.requestLayout()
     }
 

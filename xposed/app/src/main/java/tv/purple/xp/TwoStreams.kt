@@ -694,7 +694,7 @@ object TwoStreams {
         val settingsId = ids("settings_button"); if (settingsId == 0) return
         val bars = ArrayList<ViewGroup>()
         collectBars(root, settingsId, bars)
-        val live = RefreshButton.liveLogin() != null
+        val live = RefreshButton.liveShown()
         for (bar in bars) {
             var btn = bar.findViewWithTag<ImageView>(TAG_BUTTON)
             if (!on) {

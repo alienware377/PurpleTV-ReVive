@@ -144,6 +144,9 @@ object RefreshButton {
 
     fun isClip(p: Any): Boolean = p in clipPlayers
 
+    /** A live stream is what the player shows. After a clip opens, [liveLogin] still names the channel before it. */
+    fun liveShown(): Boolean = liveLogin() != null && Stt.mainPlayer()?.let { isClip(it) } != true
+
     private fun endClip(p: Any) {
         if (!clipPlayers.remove(p)) return
         playingAt = SystemClock.uptimeMillis()

@@ -7,6 +7,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.lang.ref.WeakReference
 
 /**
  * A one-time speech bubble under the two streams button, the same as the one for the filters. It
@@ -23,6 +24,32 @@ object DualTip {
 
     fun done() {
         if (!Settings.get(KEY, false)) Settings.set(KEY, true)
+    }
+
+    /** The feature bubble on the player controls now, this one or the filters'. */
+    private var bubble: WeakReference<View>? = null
+
+    fun track(tip: View) {
+        if (bubble?.get() !== tip) bubble = WeakReference(tip)
+    }
+
+    /**
+     * True while a bubble can be seen and [box] sits over it. The caption box is above the player
+     * controls, so it steps aside for as long as they show the bubble.
+     */
+    fun covers(box: View): Boolean {
+        val t = bubble?.get() ?: return false
+        if (!t.isShown || box.width <= 0 || box.height <= 0) return false
+        var alpha = t.alpha
+        var p = t.parent
+        while (p is View) {
+            alpha *= p.alpha
+            p = p.parent
+        }
+        if (alpha < 0.05f) return false
+        val a = IntArray(2).also { t.getLocationInWindow(it) }
+        val b = IntArray(2).also { box.getLocationInWindow(it) }
+        return a[0] < b[0] + box.width && b[0] < a[0] + t.width && a[1] < b[1] + box.height && b[1] < a[1] + t.height
     }
 
     fun remove(bar: ViewGroup) {
@@ -72,7 +99,10 @@ object DualTip {
         }
         if (tip.visibility != View.VISIBLE) tip.visibility = View.VISIBLE
         move(tip, btn.x, btn.width.toFloat(), btn.y + btn.height)
-        tip.bringToFront()
+        // Bringing a view forward asks for a new layout even when it is already in front, and this
+        // runs after every layout.
+        if (bar.getChildAt(bar.childCount - 1) !== tip) tip.bringToFront()
+        track(tip)
     }
 
     /** Under the button drawn at [left] with [width]: BarFit may draw it smaller or on a second line. */

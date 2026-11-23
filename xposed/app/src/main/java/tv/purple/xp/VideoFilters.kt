@@ -525,7 +525,7 @@ object VideoFilters {
         var tip = bar.findViewWithTag<View>(TIP_TAG)
         if (Settings.get(KEY_TIP, false)) { if (tip != null) bar.removeView(tip); return }
         // The two buttons sit side by side, so their bubbles take turns, the newer feature first.
-        if (DualTip.pending() && RefreshButton.liveLogin() != null) { tip?.visibility = View.GONE; return }
+        if (DualTip.pending() && RefreshButton.liveShown()) { tip?.visibility = View.GONE; return }
         val ctx = bar.context
         fun dp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
         if (tip == null) {
@@ -558,7 +558,10 @@ object VideoFilters {
         }
         if (tip.visibility != View.VISIBLE) tip.visibility = View.VISIBLE
         moveTip(tip, btn.x, btn.width.toFloat(), btn.y + btn.height)
-        tip.bringToFront()
+        // Bringing a view forward asks for a new layout even when it is already in front, and this
+        // runs after every layout.
+        if (bar.getChildAt(bar.childCount - 1) !== tip) tip.bringToFront()
+        DualTip.track(tip)
     }
 
     /**
