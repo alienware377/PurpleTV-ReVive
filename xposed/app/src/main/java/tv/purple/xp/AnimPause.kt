@@ -32,8 +32,9 @@ import de.robv.android.xposed.XposedHelpers
  *    detached by the RecyclerView, a closed picker or suggestion strip is removed);
  *  - its own or a parent's visibility, and the window's, from View.onVisibilityAggregated, the
  *    call the framework itself uses to pause an ImageView's animation;
- *  - the window being hidden or shown (Twitch sent to the background and back), from one window
- *    visibility listener per window, which looks at every tracked view again.
+ *  - the window being hidden or shown (Twitch sent to the background and back), on Android 14 and
+ *    newer also from one window visibility listener per window, which looks at every tracked view
+ *    again.
  *
  * Chat lines draw their pictures through spans, which have no view of their own. Each picture's
  * callback is one shared object ([Mux]) that redraws every view showing the picture right now,
@@ -161,9 +162,15 @@ object AnimPause {
         if (v.isAttachedToWindow) watchWindow(v)
     }
 
+    /**
+     * Android 14 added the window visibility listener, and on older versions even touching its
+     * class throws, which used to stop the picture from being tracked and started at all. There,
+     * View.onVisibilityAggregated reports the window being hidden and shown as well.
+     */
     private fun watchWindow(v: View) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
         val vto = v.viewTreeObserver
-        if (vto.isAlive && windows.add(vto)) vto.addOnWindowVisibilityChangeListener(WindowVis)
+        if (vto.isAlive && windows.add(vto)) WindowVis.watch(vto)
     }
 
     private object Attach : View.OnAttachStateChangeListener {
@@ -176,7 +183,10 @@ object AnimPause {
     }
 
     /** A window was hidden or shown: Twitch went to the background or came back. */
+    @android.annotation.TargetApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     private object WindowVis : ViewTreeObserver.OnWindowVisibilityChangeListener {
+        fun watch(vto: ViewTreeObserver) = vto.addOnWindowVisibilityChangeListener(this)
+
         override fun onWindowVisibilityChanged(visibility: Int) {
             runCatching { for (v in book.allHosts()) book.setShowing(v, showing(v)) }
         }
