@@ -697,12 +697,20 @@ object TwoStreams {
         val live = RefreshButton.liveLogin() != null
         for (bar in bars) {
             var btn = bar.findViewWithTag<ImageView>(TAG_BUTTON)
-            if (!on) { if (btn != null) bar.removeView(btn); continue }
+            if (!on) {
+                if (btn != null) bar.removeView(btn)
+                DualTip.remove(bar)
+                continue
+            }
             val row = ROW.mapNotNull { n -> ids(n).takeIf { it != 0 }?.let { bar.findViewById<View>(it) } }
                 .filter { it.parent === bar && it.visibility == View.VISIBLE && it.width > 0 }.toMutableList()
             for (t in OURS) bar.findViewWithTag<View>(t)?.takeIf { it.visibility == View.VISIBLE && it.width > 0 }?.let { row.add(it) }
             val ref = sizeRef(bar, row)
-            if (ref == null || !live) { btn?.visibility = View.GONE; continue }
+            if (ref == null || !live) {
+                btn?.visibility = View.GONE
+                DualTip.hide(bar)
+                continue
+            }
             if (btn == null) {
                 btn = ImageView(bar.context).apply {
                     tag = TAG_BUTTON
@@ -710,7 +718,10 @@ object TwoStreams {
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setPadding(ref.paddingLeft, ref.paddingTop, ref.paddingRight, ref.paddingBottom)
                     contentDescription = I18n.t("Watch two streams")
-                    setOnClickListener { v -> activityOf(v.context)?.let { openPicker(it) } }
+                    setOnClickListener { v ->
+                        DualTip.done()
+                        activityOf(v.context)?.let { openPicker(it) }
+                    }
                 }
                 bar.addView(btn, ViewGroup.LayoutParams(ref.height, ref.height))
                 added = true
@@ -720,6 +731,8 @@ object TwoStreams {
             if (btn.x != x) btn.x = x
             if (btn.y != ref.y) btn.y = ref.y
             if (btn.visibility != View.VISIBLE) btn.visibility = View.VISIBLE
+            val shownBtn = btn
+            runCatching { DualTip.place(bar, shownBtn) { activityOf(shownBtn.context)?.let { openPicker(it) } } }
         }
     }
 

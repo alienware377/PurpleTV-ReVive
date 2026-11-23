@@ -128,6 +128,12 @@ object BarFit {
             val below = if (onLine1 && line2.isNotEmpty()) y + size + size * scale2 else visTop + size * s
             VideoFilters.moveTip(bar, b.x + size * (1f - s) / 2f, size * s, below)
         }
+        bar.findViewWithTag<View>("ptv_dual_button")?.takeIf { it.visibility == View.VISIBLE }?.let { b ->
+            val s = b.scaleX
+            val visTop = b.y + size * (1f - s) / 2f
+            val below = if (b in line1 && line2.isNotEmpty()) y + size + size * scale2 else visTop + size * s
+            DualTip.moveTip(bar, b.x + size * (1f - s) / 2f, size * s, below)
+        }
 
         val sig = "${bar.width} ${room.toInt()} ${line1.size}+${line2.size} ${need.toInt()}"
         if (sig != lastSig) {

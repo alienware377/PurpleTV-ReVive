@@ -516,6 +516,7 @@
 "Twitch moves raiders over a few seconds late, so they miss the raid card in the new chat. This adds it back": "Twitch はレイドの参加者を数秒遅れて移動させるため、新しいチャットのレイドカードを見逃してしまいます。これで再び表示します",
 "Twitch's own": "Twitch 標準",
 "Two streams could not start": "2 画面視聴を開始できませんでした",
+"New: two streams! Tap here to watch a second live channel side by side, each with its own chat, and keep both playing in picture-in-picture.": "新機能: 2つの配信! ここをタップすると、2つ目のライブチャンネルをそれぞれのチャット付きで並べて視聴でき、ピクチャーインピクチャーでも両方再生できます。",
 "Type a channel name": "チャンネル名を入力してください",
 "UPDATE AVAILABLE": "アップデートあり",
 "UPDATE READY": "アップデートの準備完了",

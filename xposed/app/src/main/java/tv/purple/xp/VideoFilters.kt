@@ -524,6 +524,8 @@ object VideoFilters {
     private fun placeTip(bar: ViewGroup, btn: View, ref: View) {
         var tip = bar.findViewWithTag<View>(TIP_TAG)
         if (Settings.get(KEY_TIP, false)) { if (tip != null) bar.removeView(tip); return }
+        // The two buttons sit side by side, so their bubbles take turns, the newer feature first.
+        if (DualTip.pending() && RefreshButton.liveLogin() != null) { tip?.visibility = View.GONE; return }
         val ctx = bar.context
         fun dp(v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
         if (tip == null) {
