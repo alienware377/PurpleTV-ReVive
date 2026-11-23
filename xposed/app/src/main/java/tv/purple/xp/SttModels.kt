@@ -66,8 +66,23 @@ class SttModel(
      * 256 printable characters, so its token list does not read as text ("ƋŞĮ" for "不"). Stt reads
      * them back ([SpeechLines.fromByteBpe]) before the lines are cut.
      */
-    val byteBpe: Boolean = false
+    val byteBpe: Boolean = false,
+    /** Mel bins the model was trained on. Nearly all use 80; GigaAM uses 64. */
+    val featDim: Int = 80,
+    /** How a streaming model searches for its words. Whole sentence models stay on greedy. */
+    val decoding: Decoding = Decoding.GREEDY
 ) {
+    /**
+     * Greedy takes the likeliest token each step. Modified beam search keeps [maxPaths] guesses
+     * going, which is more accurate and slower, and can rewrite the last few tokens as it goes
+     * (SpeechLines.Splitter copes with that). Greedy never reads [maxPaths], so it keeps
+     * sherpa-onnx's default.
+     */
+    enum class Decoding(val method: String, val maxPaths: Int) {
+        GREEDY("greedy_search", 4),
+        BEAM4("modified_beam_search", 4)
+    }
+
     /**
      * The shapes of model sherpa-onnx 1.13.8 can run that are in use here. Streaming models hear
      * the sound as it comes; whole sentence ones are given one sentence at a time, found with the
@@ -124,6 +139,22 @@ object SttModels {
     const val TAG5 = "captions-pack-5"
     const val RELEASE_PAGE5 = "https://github.com/alienware377/PurpleTV-ReVive/releases/tag/" + TAG5
 
+    /** The pre-release with GigaAM, the better Russian model. */
+    const val TAG6 = "captions-pack-6"
+
+    /** The pre-release with X-ASR, the better English model. */
+    const val TAG7 = "captions-pack-7"
+
+    /** How the English models search for their words: the one place to change it. */
+    val EN_DECODING = SttModel.Decoding.BEAM4
+    val EN_XASR_DECODING = SttModel.Decoding.BEAM4
+
+    /**
+     * Off: X-ASR never takes over English, even with its pack on the phone. On one recorded English
+     * stream it wrote Chinese, which is worse than the words it gets right elsewhere.
+     */
+    const val EN_XASR_ON = false
+
     /**
      * The stream language that follows each stream: its language is found (see StreamLang) and that
      * language's own model is used. Its entry in [ALL] is Whisper base, the all-languages model,
@@ -141,7 +172,8 @@ object SttModels {
         credit = PackPins.MODEL_CREDIT,
         files = PackPins.MODEL_FILES,
         entries = PackPins.MODEL_ENTRIES,
-        dir = "model"
+        dir = "model",
+        decoding = EN_DECODING
     )
 
     /** captions-pack-2, built by tools/make_captions_pack.py, which prints these pins. */
@@ -419,11 +451,111 @@ object SttModels {
 
     fun byLang(lang: String): SttModel? = ALL.firstOrNull { it.lang == lang }
 
+    /**
+     * Russian, captions-pack-6: GigaAM v3 end-to-end, csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16
+     * at a6039be7cee829a9044a69ac0ebaf1c191217c97. It writes punctuation and capitals, which also
+     * gives the translator whole sentences to work with. A whole sentence model on 64 mel bins.
+     */
+    val RU_GIGAAM = SttModel(
+        lang = "ru-gigaam", label = "Russian", tag = TAG6,
+        asset = "purpletv-captions-model-gigaam-v3-punct-ru-2025-12-16.zip",
+        sha256 = "f2c20c8e85fb3ee16ae461db5291ebd1325583ca380e8f418e70aaea8d45c49c", bytes = 171595177L,
+        kind = SttModel.Kind.OFFLINE_TRANSDUCER, modelType = "nemo_transducer",
+        licence = "MIT",
+        credit = "GigaAM v3 by Sber (https://github.com/salute-developers/GigaAM), MIT, converted for sherpa-onnx by csukuangfj",
+        files = mapOf(
+            "encoder" to "encoder.int8.onnx",
+            "decoder" to "decoder.onnx",
+            "joiner" to "joiner.onnx",
+            "tokens" to "tokens.txt",
+            "vad" to "silero_vad.onnx"
+        ),
+        entries = mapOf(
+            "encoder.int8.onnx" to PackPins.FilePin(224570820L, "369f35a71bf288d3b8e0391fabd8dba5f2314088d440bca474056b7b4b6e66bf"),
+            "decoder.onnx" to PackPins.FilePin(4600132L, "38fc7475443ea2a26f63211ca350f73ac50fff824ab7a3876ee2bd610c53bbc4"),
+            "joiner.onnx" to PackPins.FilePin(2712896L, "602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c"),
+            "tokens.txt" to PackPins.FilePin(13354L, "39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7"),
+            "silero_vad.onnx" to PackPins.FilePin(1807522L, "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"),
+            "LICENSE.txt" to PackPins.FilePin(1370L, "baa68b4d00c1fba8a1ab03c6ca648caea298cf3945df650c7627ad8a508913ff"),
+            "LICENSE-MIT-gigaam.txt" to PackPins.FilePin(1070L, "f00de6715714c7a63d08639cdbfaa40224eefc407302614bd19f1a8b98c875aa"),
+            "LICENSE-MIT-silero-vad.txt" to PackPins.FilePin(1075L, "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"),
+            "README.txt" to PackPins.FilePin(2333L, "2583a7b3d038c7d1fb93ddca281eaceff1e0525b3942cb3e280fe790d6afec03")
+        ),
+        featDim = 64
+    )
+
+    /**
+     * English, captions-pack-7: X-ASR 480 ms streaming Zipformer, from the sherpa-onnx release
+     * archive of Gilgamesh-J/X-ASR at 838297cd47fed858e6cf72eaf5a52f948a3edd73. It writes
+     * punctuation and capitals. It is a Chinese and English model, so its text is kept to Latin
+     * letters ([SttModel.script], see SpeechLines.withoutCjk).
+     */
+    val EN_XASR = SttModel(
+        lang = "en-xasr", label = "English", tag = TAG7,
+        asset = "purpletv-captions-model-x-asr-480ms-zh-en-punct-int8-2026-06-05.zip",
+        sha256 = "5af09c91d2778ac341551f32514fc60740faa770009a3a76c715021d4acbe8aa", bytes = 131321676L,
+        kind = SttModel.Kind.TRANSDUCER, modelType = "zipformer2",
+        licence = "Apache-2.0",
+        credit = "X-ASR by Gilgamesh-J (https://github.com/Gilgamesh-J/X-ASR), Apache-2.0, packaged for sherpa-onnx by k2-fsa",
+        files = mapOf(
+            "encoder" to "encoder.int8.onnx",
+            "decoder" to "decoder.onnx",
+            "joiner" to "joiner.int8.onnx",
+            "tokens" to "tokens.txt"
+        ),
+        entries = mapOf(
+            "encoder.int8.onnx" to PackPins.FilePin(155278641L, "908596dcc137a73b95be908ca55e88caa1b3dbbe8027c171615f4b0609c5eb1e"),
+            "decoder.onnx" to PackPins.FilePin(11309084L, "a1cbc9eac2d5e3fb6617a218c67ad6daaa7f4e0fd225f08b2c22ab0413c8c257"),
+            "joiner.int8.onnx" to PackPins.FilePin(2581422L, "aedb7fa697b2ab43f20499826fff7c997eea7d67db77be97769aeeeb726e63b3"),
+            "tokens.txt" to PackPins.FilePin(58806L, "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"),
+            "LICENSE.txt" to PackPins.FilePin(1093L, "8d03aac8ca6afe742e633311fc07854f591ecdd126a1a4e515f5d392b649b72b"),
+            "LICENSE-Apache-2.0.txt" to PackPins.FilePin(11358L, "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
+            "LICENSE-x-asr.txt" to PackPins.FilePin(11357L, "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"),
+            "README.txt" to PackPins.FilePin(2303L, "0131e881b72e82d01ed8a6bf5cf034761964439c39e8cce2e361095c909da424")
+        ),
+        script = SpeechScript.Mode.LATIN,
+        decoding = EN_XASR_DECODING
+    )
+
+    /**
+     * Better models that take over from a language's model once they are on the phone. They are
+     * not in [ALL]: they add no row to the language list and no download, so a phone without one
+     * goes on with the model it has, and nothing offers a file that is not released.
+     */
+    val UPGRADES: Map<String, SttModel> = mapOf("ru" to RU_GIGAAM, "en" to EN_XASR)
+
+    /**
+     * [m], or the model that takes over from it when that one is downloaded ([ready]) and has not
+     * failed to load in this run ([bad]). A failed load falls back to [m] until Twitch restarts.
+     */
+    fun upgraded(m: SttModel, bad: (SttModel) -> Boolean, ready: (SttModel) -> Boolean): SttModel {
+        val up = takesOver(m.lang) ?: return m
+        return if (!bad(up) && ready(up)) up else m
+    }
+
+    /** The model that may take over from [lang]'s now. [UPGRADES] also lists packs that are switched off. */
+    private fun takesOver(lang: String): SttModel? =
+        UPGRADES[lang]?.takeIf { it !== EN_XASR || EN_XASR_ON }
+
+    /** The same for the phone as it is now. Only a language with an upgrade looks at the disk. */
+    private fun upgradedNow(m: SttModel): SttModel {
+        if (takesOver(m.lang) == null) return m
+        val ctx = Settings.ctx() ?: return m
+        return upgraded(m, { Stt.bad(it.lang) }) { SttPacks.ready(ctx, SttPacks.modelPack(it)) }
+    }
+
     /** The model for a stored setting value. Anything unknown (a newer version's choice synced over) is English. */
     fun forValue(v: Int): SttModel = ALL.getOrNull(v) ?: EN
 
+    /**
+     * Test aid (DevBridge, do=force_lang): a stream language for this run of Twitch only. The
+     * stored setting syncs to other devices, so a test must not change it.
+     */
+    @Volatile var devLang: String? = null
+
     /** The stream language picked in settings: a language's model, or the Auto entry. */
-    fun picked(): SttModel = if (Settings.isReady()) forValue(Settings.getInt(KEY, DEF)) else EN
+    fun picked(): SttModel = devLang?.let { byLang(it) }
+        ?: if (Settings.isReady()) forValue(Settings.getInt(KEY, DEF)) else EN
 
     /** True when the stream language picked is Auto. */
     fun auto(): Boolean = picked().lang == AUTO
@@ -434,7 +566,7 @@ object SttModels {
      */
     fun chosen(): SttModel {
         val p = picked()
-        return if (p.lang == AUTO) StreamLang.model() else p
+        return if (p.lang == AUTO) StreamLang.model() else upgradedNow(p)
     }
 
     /** Whisper base, the all-languages model: Auto's own entry. */
@@ -476,6 +608,7 @@ object SttModels {
     /**
      * Auto's model for a stream in [lang] (null: not known), [ready] saying which downloads are on
      * the phone and [bad] which models failed to load in this run:
+     *  - a model that takes over from the language's own (see [UPGRADES]) when it is downloaded;
      *  - the language's own model when it is downloaded (English before English (Twitch slang));
      *  - its own model is not downloaded: Whisper told the language when Whisper is, else that model
      *    (the caption box then says it needs a download);
@@ -489,6 +622,7 @@ object SttModels {
         if (lang == null) return AutoPick(WHISPER, null, null)
         val own = dedicated(lang)
         val usable = own.filterNot(bad)
+        own.firstNotNullOfOrNull { m -> upgraded(m, bad, ready).takeIf { it !== m } }?.let { return AutoPick(it, lang, null) }
         usable.firstOrNull(ready)?.let { return AutoPick(it, lang, null) }
         val missing = usable.firstOrNull()
         val told = forced(lang)

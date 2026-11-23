@@ -63,6 +63,10 @@ object SpeechLines {
         private var done = 0
         /** The last line ended at a pause: the first piece after it may still belong to it. */
         private var joinOpen = false
+        /** The last result, to find the same place when a beam search changes its mind. */
+        private val seen = ArrayList<String>()
+        /** The words still being said, as last handed on. */
+        private var going = ""
 
         /** Words are kept from before a forced reset that no line has given out yet. */
         val holding: Boolean get() = carry.isNotEmpty()
@@ -71,7 +75,35 @@ object SpeechLines {
         fun reset() {
             carry.clear()
             done = 0
+            seen.clear()
+            going = ""
             joinOpen = false
+        }
+
+        /**
+         * A beam search can rewrite tokens it already gave, so the count in [done] may no longer
+         * sit after the last word given out. While everything up to it is unchanged it stays;
+         * otherwise the old and new words are lined up to find the same place ([place]).
+         */
+        private fun realign(t: List<String>) {
+            if (done == 0 || seen.isEmpty() || unchanged(t)) return
+            done = place(seen, done, t)
+            skipToWord(t)
+        }
+
+        private fun unchanged(t: List<String>): Boolean {
+            if (t.size < done || seen.size < done) return false
+            for (k in 0 until done) if (t[k] != seen[k]) return false
+            return done >= seen.size || done >= t.size || t[done] == seen[done]
+        }
+
+        private fun skipToWord(t: List<String>) {
+            while (done < t.size && !startsWord(t, done)) done++
+        }
+
+        private fun remember(t: List<String>) {
+            seen.clear()
+            if (done > 0) seen.addAll(t)
         }
 
         /** The result so far, while the talk goes on. */
@@ -88,6 +120,10 @@ object SpeechLines {
         fun flush(tokens: List<String>): Step = run(tokens, FLUSH)
 
         private fun run(tokens: List<String>, mode: Int): Step {
+            // A beam search's best guess fell behind what is already out: it grows back, and
+            // going on from here would show those words a second time.
+            if (mode == GOING && tokens.size < done && seen.isNotEmpty()) return Step(emptyList(), "", going)
+            realign(tokens)
             if (done > tokens.size) done = tokens.size
             val last = mode != GOING
             var join = ""
@@ -120,6 +156,8 @@ object SpeechLines {
                 GOING -> {
                     if (from <= carry.size) carry.subList(0, from).clear()
                     else { done += from - carry.size; carry.clear() }
+                    remember(tokens)
+                    going = rest
                     return Step(lines, join, rest)
                 }
                 FORCED -> {
@@ -127,12 +165,16 @@ object SpeechLines {
                     carry.clear()
                     carry.addAll(keep)
                     done = 0
+                    seen.clear()
+                    going = rest
                     return Step(lines, join, rest)
                 }
                 else -> {
                     if (rest.isNotEmpty()) lines.add(rest)
                     carry.clear()
                     done = 0
+                    seen.clear()
+                    going = ""
                     // Only a pause right after a line leaves it open; a gap in the sound or a
                     // stretch of silence with nothing said closes it.
                     joinOpen = mode == PAUSE && rest.isNotEmpty()
@@ -146,6 +188,10 @@ object SpeechLines {
     private const val PAUSE = 1
     private const val FORCED = 2
     private const val FLUSH = 3
+
+    /** Tokens looked at on each side of a place to find it again, and the extra room in the new result. */
+    private const val WINDOW = 32
+    private const val MARGIN = 16
 
     /**
      * True when an endpoint after [heard] seconds of sound since the last reset, whose last word
@@ -188,6 +234,87 @@ object SpeechLines {
             g = e
         }
         return -1
+    }
+
+    /**
+     * Where the place [at] in [old] is in [now], after a beam search rewrote tokens around it. The
+     * words on both sides are lined up, so a word that changed, merged or split stays on its side
+     * of the place: what was given out is not shown again, and nothing after it is skipped.
+     */
+    internal fun place(old: List<String>, at: Int, now: List<String>): Int {
+        val oTo = minOf(old.size, at + WINDOW)
+        val nFrom = maxOf(0, at - WINDOW - MARGIN)
+        val nTo = minOf(now.size, at + WINDOW + MARGIN)
+        val oStarts = wordStarts(old, maxOf(0, at - WINDOW), oTo)
+        val nStarts = wordStarts(now, nFrom, nTo)
+        val o = wordKeys(old, oStarts, oTo)
+        val w = wordKeys(now, nStarts, nTo)
+        val out = oStarts.count { it < at }
+        val len = Array(o.size + 1) { IntArray(w.size + 1) }
+        for (i in o.indices.reversed()) for (j in w.indices.reversed()) {
+            len[i][j] = if (o[i] == w[j]) len[i + 1][j + 1] + 1 else maxOf(len[i + 1][j], len[i][j + 1])
+        }
+        var i = 0
+        var j = 0
+        var oBefore = -1
+        var nBefore = -1
+        var oAfter = -1
+        var nAfter = -1
+        while (i < o.size && j < w.size) {
+            if (o[i] == w[j]) {
+                if (i >= out) {
+                    oAfter = i
+                    nAfter = j
+                    break
+                }
+                oBefore = i
+                nBefore = j
+                i++
+                j++
+            } else if (len[i + 1][j] >= len[i][j + 1]) i++ else j++
+        }
+        if (oBefore < 0 && oAfter < 0) return minOf(at, now.size)
+        val changedOut = out - oBefore - 1
+        val gap = (if (oAfter >= 0) nAfter else w.size) - nBefore - 1
+        val given = when {
+            gap <= 0 -> 0
+            changedOut == 0 -> movedMark(old, oStarts, oBefore, oTo, now, nStarts, nBefore, gap, nTo)
+            oAfter < 0 -> minOf(changedOut, gap)
+            oAfter == out -> gap
+            else -> (gap - (oAfter - out)).coerceIn(1, gap)
+        }
+        val k = nBefore + 1 + given
+        return if (k < nStarts.size) nStarts[k] else nTo
+    }
+
+    /**
+     * New words came in right after the last word given out. They are still to be shown, unless
+     * that word's sentence mark moved past them ("so." became "so ok."): they are then part of the
+     * line already out, up to the word that has the mark now.
+     */
+    private fun movedMark(
+        old: List<String>, oStarts: List<Int>, oWord: Int, oTo: Int,
+        now: List<String>, nStarts: List<Int>, nWord: Int, gap: Int, nTo: Int
+    ): Int {
+        if (oWord < 0 || nWord < 0) return 0
+        val oEnd = if (oWord + 1 < oStarts.size) oStarts[oWord + 1] else oTo
+        val mark = lastMark(old, oStarts[oWord], oEnd)
+        if (mark !in SENTENCE && mark !in CLAUSE) return 0
+        if (lastMark(now, nStarts[nWord], nStarts[nWord + 1]) == mark) return 0
+        for (g in 1..gap) {
+            val e = if (nWord + g + 1 < nStarts.size) nStarts[nWord + g + 1] else nTo
+            if (lastMark(now, nStarts[nWord + g], e) == mark) return g
+        }
+        return 0
+    }
+
+    private fun wordStarts(t: List<String>, from: Int, to: Int): List<Int> =
+        (from until to).filter { it == from || startsWord(t, it) }
+
+    /** Each word without its marks or capitals, so "Just" and "just," count as the same word. */
+    private fun wordKeys(t: List<String>, starts: List<Int>, to: Int): List<String> = starts.indices.map { w ->
+        val raw = t.subList(starts[w], if (w + 1 < starts.size) starts[w + 1] else to).joinToString("")
+        raw.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { raw }
     }
 
     /**
@@ -272,11 +399,59 @@ object SpeechLines {
                 }
             }
             flushBytes()
-            sb.append(t.replace('\u2581', ' '))
+            val mark = t.trim(' ', '\u2581')
+            if (mark.isNotEmpty() && mark.all { it in SENTENCE || it in CLAUSE }) {
+                // Some models write punctuation as a word of its own (" ."): it goes on the word before.
+                while (sb.isNotEmpty() && sb[sb.length - 1] == ' ') sb.setLength(sb.length - 1)
+                sb.append(mark)
+            } else {
+                // A bare word mark can be left before a token that was taken out: one space only.
+                val s = t.replace('\u2581', ' ')
+                sb.append(if (s.startsWith(' ') && sb.endsWith(' ')) s.trimStart() else s)
+            }
         }
         flushBytes()
         return sb.toString()
     }
+
+    /**
+     * The tokens of a model that also knows Chinese, for a stream in a language written in Latin
+     * letters: Chinese and Japanese characters are left out, with the punctuation that followed
+     * them, and full width punctuation after a kept word becomes the plain mark. Only a token's own
+     * text decides, so the list still only grows at the end, as [Splitter] needs.
+     */
+    fun withoutCjk(tokens: List<String>): List<String> {
+        val out = ArrayList<String>(tokens.size)
+        var dropped = false
+        for (t in tokens) {
+            var k = 0
+            var has = false
+            while (k < t.length) {
+                val cp = t.codePointAt(k)
+                if (cjk(cp)) { has = true; break }
+                k += Character.charCount(cp)
+            }
+            if (has) { dropped = true; continue }
+            val mark = t.trim(' ', '\u2581')
+            val isMark = mark.isNotEmpty() && mark.all { it in SENTENCE || it in CLAUSE }
+            if (isMark && dropped) continue
+            dropped = false
+            out.add(if (isMark) plainMarks(t) else t)
+        }
+        return out
+    }
+
+    private fun plainMarks(t: String): String {
+        val sb = StringBuilder(t.length)
+        for (c in t) {
+            val i = WIDE_MARKS.indexOf(c)
+            sb.append(if (i >= 0) PLAIN_MARKS[i] else c)
+        }
+        return sb.toString()
+    }
+
+    private const val WIDE_MARKS = "\uff0c\u3002\uff01\uff1f\uff1a\uff1b\u3001"
+    private const val PLAIN_MARKS = ",.!?:;,"
 
     // ---- byte-level BPE ----
 

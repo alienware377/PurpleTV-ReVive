@@ -4,6 +4,8 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Path
 import android.graphics.RectF
+import android.media.MediaMetadata
+import android.media.session.MediaSession
 import android.net.Uri
 import android.os.SystemClock
 import android.view.View
@@ -13,6 +15,9 @@ import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.Locale
+import java.util.WeakHashMap
 
 /**
  * "Show refresh button": a reload button in the live player controls, for a stream that froze or
@@ -28,11 +33,24 @@ object RefreshButton {
     const val KEY = "show_refresh_button_v2"
     private const val TAG = "ptv_refresh_button"
     private const val FRESH_MS = 10 * 60_000L
+    private const val ASKED = 32
 
     @Volatile private var player: WeakReference<Any>? = null
     @Volatile private var lastLoad: Any? = null
     @Volatile private var lastUri: Uri? = null
     @Volatile private var loadedAt = 0L
+    /** Channels Twitch asked a player for lately, so a media title can be told from an ad's. */
+    private val asked = Collections.synchronizedSet(LinkedHashSet<String>())
+    /** What Twitch's media session says is playing: the channel's name, in lower case. */
+    @Volatile private var sessionName: String? = null
+    @Volatile private var playing: String? = null
+    @Volatile private var playingAt = 0L
+    /**
+     * Players holding a clip: their sound says nothing about the channel's language. The clip feed
+     * keeps several, the next one loaded ahead of the one on screen.
+     */
+    private val clipPlayers: MutableSet<Any> = Collections.newSetFromMap(Collections.synchronizedMap(WeakHashMap()))
+    @Volatile private var wasClip = false
     private var cls: Class<*>? = null
 
     fun install(lp: LoadPackageParam) {
@@ -49,6 +67,7 @@ object RefreshButton {
                     else -> runCatching { a0.javaClass.getMethod("getUri").invoke(a0) as? Uri }.getOrNull()
                 } ?: return
                 if (uri.host.isNullOrEmpty()) return
+                loginOf(uri)?.let { note(it.lowercase(Locale.ROOT)) }
                 // Side players (Picture-by-Picture ads, the vertical view, the feed) preload the "v2"
                 // address. Skip them, so the button keeps reloading the player on screen.
                 if (p.method.name == "preload" && uri.path?.contains("/api/v2/channel/hls/") == true) return
@@ -58,20 +77,92 @@ object RefreshButton {
                 // address come through here too, so only a new address restarts it.
                 if (uri != lastUri) loadedAt = SystemClock.uptimeMillis()
                 lastUri = uri
+                if (p.method.name == "load") endClip(p.thisObject)
             }
         }
         val n = XposedBridge.hookAllMethods(c, "load", hook).size + XposedBridge.hookAllMethods(c, "preload", hook).size
+        // A clip goes straight to the native player, past load, so the address above still names
+        // the channel it was opened from.
+        val clips = XposedBridge.hookAllMethods(c, "loadClipManifest", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                if (OwnPlayers.isMine(p.thisObject)) return
+                clipPlayers.add(p.thisObject)
+                playingAt = SystemClock.uptimeMillis()
+                log("RB clip loaded")
+            }
+        }).size
+        XposedBridge.hookAllMethods(c, "loadSource", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) = endClip(p.thisObject)
+        })
+        // A preload names a channel that may never play, and a preloaded stream can start without
+        // its address passing through here. The media session is what Twitch itself says is playing.
+        val titles = XposedBridge.hookAllMethods(MediaSession::class.java, "setMetadata", object : XC_MethodHook() {
+            override fun beforeHookedMethod(p: MethodHookParam) {
+                val title = (p.args.getOrNull(0) as? MediaMetadata)?.description?.title?.toString()
+                sessionName = title?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() }
+                playingLogin()
+            }
+        }).size
         // A released player must never be called again: its native side is gone, and a crash
         // there can not be caught. Its references go the moment Twitch releases it.
         val r = XposedBridge.hookAllMethods(c, "release", object : XC_MethodHook() {
             override fun beforeHookedMethod(p: MethodHookParam) {
                 val me = p.thisObject
                 if (player?.get() === me) { player = null; lastLoad = null }
+                endClip(me)
                 PlayerStats.forget(me)
             }
         }).size
-        log("RB hooks: $n, release: $r")
+        log("RB hooks: $n, titles: $titles, clips: $clips, release: $r")
     }
+
+    private fun loginOf(uri: Uri?): String? =
+        uri?.path?.let { HLS.find(it)?.groupValues?.get(1) }?.takeIf { it.isNotBlank() }
+
+    private fun note(login: String) = synchronized(asked) {
+        asked.remove(login)
+        asked.add(login)
+        if (asked.size > ASKED) asked.remove(asked.first())
+    }
+
+    /**
+     * The live channel being heard, in lower case, for what depends on that sound. [liveLogin] also
+     * follows preloads, so it can name a channel that is not playing. The media session's title
+     * wins when it is a channel Twitch asked for; an ad's title, or a display name in another
+     * script, is not one, and the last address stands in.
+     */
+    fun playingLogin(): String? {
+        val named = sessionName?.takeIf { it in asked }
+        val login = named ?: liveLogin()?.lowercase(Locale.ROOT)
+        if (login != playing) {
+            playing = login
+            playingAt = SystemClock.uptimeMillis()
+            log("RB playing: ${login ?: "not live"}${if (named == null) " (last address)" else ""}")
+        }
+        return login
+    }
+
+    private fun endClip(p: Any) {
+        if (!clipPlayers.remove(p)) return
+        playingAt = SystemClock.uptimeMillis()
+    }
+
+    /**
+     * True while the sound being heard is a clip. A change either way counts as a channel change,
+     * so a sentence that began on one side of it is not credited to the other.
+     */
+    fun clipHeard(): Boolean {
+        val now = Stt.mainPlayer()?.let { it in clipPlayers } == true
+        if (now != wasClip) {
+            wasClip = now
+            playingAt = SystemClock.uptimeMillis()
+            log("RB clip: $now")
+        }
+        return now
+    }
+
+    /** When the playing channel last changed (uptime ms), 0 before the first. */
+    fun playingSince(): Long = playingAt
 
     /** The player Twitch is using now, for the stats box. */
     fun currentPlayer(): Any? = player?.get()

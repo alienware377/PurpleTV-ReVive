@@ -51,6 +51,11 @@ import android.os.Build
  *   ... -a tv.purple.xp.DEV_STT --es op stop       ends feed_main (and a WAV feed)
  *   ... -a tv.purple.xp.DEV_STT --es op load | unload | wav --es path P | pack_download
  *        [--es which engine|model|both] | pack_verify | pack_delete | pack_corrupt
+ *   ... -a tv.purple.xp.DEV_STT --es op pack_local --es lang ru-gigaam --es path P   installs a model
+ *        that takes over from another from a zip on the phone, through the usual pin checks
+ *   ... -a tv.purple.xp.DEV_STT --es op pack_local_drop --es lang ru-gigaam   removes only that model
+ *   ... -a tv.purple.xp.DEV_STT --es op force_lang --es lang ru   a stream language until Twitch
+ *        restarts, without changing the stored setting (no lang: back to the setting)
  * Read-aloud (ReadAloud, "RA" lines):
  *   ... -a tv.purple.xp.DEV_TTS --es op say --es text "hello" [--ez force true]   force says it
  *        now, like the menu's Test voice; without it, only during a shown break

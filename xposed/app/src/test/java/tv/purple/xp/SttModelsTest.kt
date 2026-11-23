@@ -241,6 +241,74 @@ class SttModelsTest {
         assertSame(es, e.missing)
     }
 
+    /** GigaAM adds no row and no download, and is set up as sherpa-onnx needs it. */
+    @Test fun gigaamIsNotOfferedAndHasItsOwnConfig() {
+        val g = SttModels.RU_GIGAAM
+        val ru = SttModels.byLang("ru")!!
+        assertTrue(g !in SttModels.ALL)
+        assertTrue(SttModels.ALL.none { it.asset == g.asset || it.dir == g.dir || it.tag == g.tag })
+        assertEquals(listOf(ru), SttModels.dedicated("ru"))
+        assertSame(ru, SttModels.byLang("ru"))
+        // Heard as Russian by the translator, but failing to load must not turn the old model off.
+        assertEquals("ru", g.sourceLang)
+        assertTrue(g.key != ru.key)
+        assertEquals(setOf(SttModels.TAG6, SttModels.TAG7), SttModels.UPGRADES.values.map { it.tag }.toSet())
+
+        assertTrue(g.sha256.matches(Regex("[0-9a-f]{64}")))
+        assertEquals(g.kind.roles.toSet(), g.files.keys)
+        for (f in g.files.values) assertTrue(f, f in g.entries)
+        for (pin in g.entries.values) assertTrue(pin.bytes > 0 && pin.sha256.matches(Regex("[0-9a-f]{64}")))
+        assertTrue("LICENSE.txt" in g.entries && "README.txt" in g.entries && "LICENSE-MIT-silero-vad.txt" in g.entries)
+        assertEquals("MIT", g.licence)
+
+        assertEquals(64, g.featDim)
+        assertTrue(g.cased)
+        assertEquals(80, ru.featDim)
+        val c = SttModels.offlineConfig(g, dir, 2)
+        assertEquals("nemo_transducer", c.modelType)
+        assertEquals(File(dir, "encoder.int8.onnx").absolutePath, c.transducer.encoder)
+        assertEquals(File(dir, "joiner.onnx").absolutePath, c.transducer.joiner)
+        assertEquals(File(dir, "silero_vad.onnx").absolutePath, SttModels.vadConfig(g, dir).sileroVadModelConfig.model)
+    }
+
+    /** Russian stays on its old model unless GigaAM is on the phone and did not fail to load. */
+    @Test fun russianMovesToGigaamOnlyWhenItIsThere() {
+        val g = SttModels.RU_GIGAAM
+        val ru = SttModels.byLang("ru")!!
+        fun up(m: SttModel, bad: Set<SttModel> = emptySet(), vararg have: SttModel) =
+            SttModels.upgraded(m, { it in bad }) { it in have }
+        assertSame(ru, up(ru))
+        assertSame(ru, up(ru, emptySet(), ru))
+        assertSame(g, up(ru, emptySet(), ru, g))
+        assertSame(g, up(ru, emptySet(), g))
+        assertSame(ru, up(ru, setOf(g), ru, g))
+        for (m in SttModels.ALL) if (m !== ru) assertSame(m, up(m, emptySet(), *SttModels.ALL.toTypedArray(), g))
+    }
+
+    /** Auto follows the same rule, and only ever names the released model as missing. */
+    @Test fun autoMovesToGigaamOnlyWhenItIsThere() {
+        val g = SttModels.RU_GIGAAM
+        val ru = SttModels.byLang("ru")!!
+        val w = SttModels.WHISPER
+        fun pick(bad: Set<SttModel>, vararg have: SttModel) =
+            SttModels.autoPick("ru", bad = { it in bad }) { it in have }
+        assertSame(ru, pick(emptySet(), ru).model)
+        assertEquals(null, pick(emptySet(), ru).missing)
+        assertSame(g, pick(emptySet(), ru, g).model)
+        assertSame(g, pick(emptySet(), g).model)
+        assertEquals(null, pick(emptySet(), g).missing)
+        assertSame(g, pick(setOf(ru), ru, g).model)
+        // GigaAM failed to load: back to the old model.
+        assertSame(ru, pick(setOf(g), ru, g).model)
+        // Nothing for Russian on the phone: Whisper told Russian, and the old model is the one named.
+        val none = pick(emptySet(), w)
+        assertEquals("auto:ru", none.model.key)
+        assertSame(ru, none.missing)
+        assertSame(ru, pick(emptySet()).model)
+        assertSame(ru, pick(emptySet()).missing)
+        assertSame(ru, pick(setOf(g), w).missing)
+    }
+
     @Test fun languageNames() {
         assertEquals("Spanish", SttModels.langName("es"))
         assertEquals("English", SttModels.langName("en"))

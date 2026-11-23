@@ -134,7 +134,7 @@ object SttPacks {
      * download and one folder serve them all.
      */
     internal val MODELS: Map<String, Pack> = HashMap<String, Pack>().let { byDir ->
-        SttModels.ALL.associate { m ->
+        (SttModels.ALL + SttModels.UPGRADES.values).associate { m ->
             m.lang to byDir.getOrPut(m.dir) { Pack(m.what, m.dir, m.asset, m.sha256, m.bytes, m.entries, tag = m.tag) }
         }
     }
@@ -587,6 +587,43 @@ object SttPacks {
     }
 
     /**
+     * Test aid (DevBridge): a model that takes over from another (SttModels.UPGRADES) from a zip
+     * already on the phone. The zip goes where a finished download waits, so the usual path checks
+     * its size and SHA-256 and every entry's, and touches no network.
+     */
+    fun devInstallLocal(ctx: Context, lang: String, path: String) {
+        val m = SttModels.UPGRADES.values.firstOrNull { it.lang == lang }
+            ?: run { log("STT pack_local: no upgrade model '$lang'"); return }
+        val p = modelPack(m)
+        val app = ctx.applicationContext ?: ctx
+        Thread({
+            val copied = runCatching {
+                val src = File(path)
+                if (src.length() != p.bytes) error("${src.length()} bytes, expected ${p.bytes}")
+                val dl = File(root(app, p.group), "dl").apply { mkdirs() }
+                src.inputStream().use { i -> FileOutputStream(File(dl, p.asset + ".part")).use { o -> i.copyTo(o, 256 * 1024); o.fd.sync() } }
+            }
+            copied.exceptionOrNull()?.let { log("STT pack_local: not copied ($it)"); return@Thread }
+            download(app, p, {}, { ok, msg -> log("STT pack_local ${p.dir}: ok=$ok $msg") })
+        }, "ptv-stt-dl").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+    }
+
+    /** Test aid (DevBridge): removes only that model, so the phone is back on the one it took over from. */
+    fun devDropLocal(ctx: Context, lang: String) {
+        val m = SttModels.UPGRADES.values.firstOrNull { it.lang == lang }
+            ?: run { log("STT pack_local_drop: no upgrade model '$lang'"); return }
+        val p = modelPack(m)
+        val app = ctx.applicationContext ?: ctx
+        Stt.afterUnload("test model removed") {
+            synchronized(swapLock) {
+                drop(app, p)
+                runCatching { File(File(root(app, p.group), "dl"), p.asset + ".part").delete() }
+            }
+            log("STT pack_local_drop ${p.dir}: removed")
+        }
+    }
+
+    /**
      * Test aid (DevBridge): hash the engine, the chosen model and any other model on the phone now.
      * A pack that fails is deleted.
      */
@@ -680,8 +717,11 @@ object Stt {
     /** Partial text at most 4 times a second. */
     private const val PARTIAL_MS = 250L
     private const val STATS_MS = 30_000L
-    /** 0.4 s of silence after an utterance, so the model gives out its last words. */
-    private const val TAIL_SAMPLES = 6_400
+    /**
+     * 2 s of silence after an utterance, so the model gives out its last words. With 0.4 s the
+     * streaming models often kept the last word back, and it was lost at the reset.
+     */
+    private const val TAIL_SAMPLES = 32_000
     /**
      * Talk without a pause this long ends in a reset anyway, only so the result never grows without
      * end. An endpoint after this much sound, with less than [PAUSE_S] since the last word, is taken
@@ -795,6 +835,8 @@ object Stt {
     @Volatile private var loadedCased = true
     /** The streaming model loaded now gives byte-level BPE tokens (see SttModel.byteBpe). */
     private var byteBpe = false
+    /** The streaming model loaded now also knows Chinese, which is left out (see SpeechLines.withoutCjk). */
+    private var latinOnly = false
     @Volatile private var inBreak = false
     @Volatile private var memoryHold = false
     @Volatile private var thermalHold = false
@@ -1296,6 +1338,9 @@ object Stt {
         val pack = SttPacks.modelPack(m)
         if (m.kind.offline) {
             if (loadOffline(ctx, m, pack, t0)) return true
+            // A model that takes over from another and failed its check or its load: nothing else
+            // would look again until the next channel, so the older model is loaded right away.
+            if (m in SttModels.UPGRADES.values && SttModels.chosen() !== m) return load()
             // The same when it failed just now.
             return m.key == SttModels.AUTO && m.lang in badLangs && StreamLang.skipCheck() && load()
         }
@@ -1317,12 +1362,17 @@ object Stt {
                         rule3 = EndpointRule(false, 0.0f, FORCED_S)
                     ),
                     enableEndpoint = true,
-                    decodingMethod = "greedy_search"
+                    decodingMethod = m.decoding.method,
+                    maxActivePaths = m.decoding.maxPaths
                 )
                 r = OnlineRecognizer(null, cfg)
                 null
             }
-            if (why != null) { log("STT not loaded: $why"); return false }
+            if (why != null) {
+                log("STT not loaded: $why")
+                // A model that takes over from another and failed its check: the older one now.
+                return m in SttModels.UPGRADES.values && SttModels.chosen() !== m && load()
+            }
             val made = r ?: return false
             stream = made.createStream()
             rec = made
@@ -1334,6 +1384,8 @@ object Stt {
             if (m.lang != "en") {
                 badLangs.add(m.lang)
                 log("STT the ${m.lang} speech model could not be loaded, that language is off until Twitch restarts ($t)")
+                // A model with an older one behind it goes straight back to that one.
+                if (m in SttModels.UPGRADES.values) return load()
                 AdTime.toast("The speech model for this stream language could not be loaded")
                 return false
             }
@@ -1346,6 +1398,7 @@ object Stt {
         loadedDir = m.dir
         loadedCased = m.cased
         byteBpe = m.byteBpe
+        latinOnly = m.script == SpeechScript.Mode.LATIN
         res.reset(16000)
         curRate = 0; curCh = 0; fed = 0L; lastPartial = ""
         lines.reset()
@@ -1368,7 +1421,7 @@ object Stt {
                 SttPacks.ensureHashed(ctx, pack)?.let { return@synchronized it }
                 val dir = SttPacks.dir(ctx, pack)
                 r = OfflineRecognizer(null, OfflineRecognizerConfig(
-                    featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
+                    featConfig = FeatureConfig(sampleRate = 16000, featureDim = m.featDim),
                     modelConfig = SttModels.offlineConfig(m, dir, threads),
                     decodingMethod = "greedy_search"
                 ))
@@ -1381,7 +1434,8 @@ object Stt {
             r?.let { release(it) }
             badLangs.add(m.lang)
             log("STT the ${m.lang} speech model could not be loaded, that language is off until Twitch restarts ($t)")
-            AdTime.toast("The speech model for this stream language could not be loaded")
+            // A model with an older one behind it just goes back to that one on the next look.
+            if (m !in SttModels.UPGRADES.values) AdTime.toast("The speech model for this stream language could not be loaded")
             return false
         }
         val made = r ?: return false
@@ -1395,6 +1449,7 @@ object Stt {
         loadedDir = m.dir
         loadedCased = m.cased
         byteBpe = false
+        latinOnly = false
         res.reset(16000)
         curRate = 0; curCh = 0; fed = 0L; lastPartial = ""
         clearSentence()
@@ -1609,8 +1664,11 @@ object Stt {
      * A result's tokens as the line splitter takes them. A byte-level BPE model's are read back
      * into text first: as they come they are not words but bytes ("ƋŞĮ" for "不").
      */
-    private fun pieces(tokens: Array<String>): List<String> =
-        if (byteBpe) SpeechLines.fromByteBpe(tokens.asList()) else tokens.asList()
+    private fun pieces(tokens: Array<String>): List<String> = when {
+        byteBpe -> SpeechLines.fromByteBpe(tokens.asList())
+        latinOnly -> SpeechLines.withoutCjk(tokens.asList())
+        else -> tokens.asList()
+    }
 
     /** Hand the resampled audio to the stream. A copy of exactly that length, as JNI needs. */
     private fun feed() {
@@ -1801,7 +1859,7 @@ object Stt {
         waiting.incrementAndGet()
         // Whisper with no language in Auto: its sentences are the language check of the channel
         // they were heard on (see StreamLang).
-        val who = if (fin && loadedKey == SttModels.AUTO) StreamLang.checkFor() else null
+        val who = if (fin && loadedKey == SttModels.AUTO) StreamLang.checkFor(data.size / 16000f) else null
         dec.post { decodeSentence(data, fin, gen, who) }
     }
 
@@ -1825,6 +1883,7 @@ object Stt {
             val ns = System.nanoTime() - t0
             decodeNs.addAndGet(ns)
             lastDecodeMs = ns / 1_000_000
+            if (fin && Settings.get(KEY_LOG, false)) log("STT sentence ${data.size / 16} ms heard in $lastDecodeMs ms, ${waiting.get() - 1} waiting")
             if (gen == decGen) {
                 val shown = filter?.take(text, fin, SystemClock.uptimeMillis()) ?: text
                 if (shown != text && Settings.get(KEY_LOG, false)) log("STT left out: ${text.length - shown.length} chars")
@@ -1938,7 +1997,14 @@ object Stt {
             "pack_verify" -> Thread({ log("STT verify: " + SttPacks.verify(ctx)) }, "ptv-stt-dl").apply { isDaemon = true }.start()
             "pack_delete" -> SttPacks.deleteAll(ctx)
             "pack_corrupt" -> log("STT corrupt: " + runCatching { SttPacks.devCorrupt(ctx) }.getOrElse { "failed: $it" })
-            else -> log("STT dev: unknown do '$op' (status, feed_main, stop, load, unload, wav, pack_download, pack_verify, pack_delete, pack_corrupt)")
+            "pack_local" -> SttPacks.devInstallLocal(ctx, i.getStringExtra("lang").orEmpty(), i.getStringExtra("path").orEmpty())
+            "pack_local_drop" -> SttPacks.devDropLocal(ctx, i.getStringExtra("lang").orEmpty())
+            "force_lang" -> {
+                SttModels.devLang = i.getStringExtra("lang")?.takeIf { SttModels.byLang(it) != null }
+                log("STT force_lang: ${SttModels.devLang ?: "off, the stored setting counts again"}")
+                bg.post { safely("dev force_lang") { evaluate() } }
+            }
+            else -> log("STT dev: unknown do '$op' (status, feed_main, stop, load, unload, wav, pack_download, pack_verify, pack_delete, pack_corrupt, pack_local, pack_local_drop, force_lang)")
         }
     }
 

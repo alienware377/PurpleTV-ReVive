@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds the speech model packs for the GitHub pre-releases captions-pack-2 to captions-pack-5.
+"""Builds the speech model packs for the GitHub pre-releases captions-pack-2 to captions-pack-7.
 
 Run it with python3 -I (no site packages are needed, only the standard library):
 
@@ -10,7 +10,9 @@ captions-pack-3 holds the whole sentence models (Japanese, and one model for man
 also serves Filipino, Lithuanian and Auto). They hear a sentence at a time, so each zip also
 carries Silero VAD, which cuts the sound into sentences. English and the engine (the sherpa-onnx
 library) stay in captions-pack-1, which never changes. captions-pack-4 holds Whisper base for
-Auto, and captions-pack-5 Whisper base.en trained further on Twitch chat speech.
+Auto, captions-pack-5 Whisper base.en trained further on Twitch chat speech, captions-pack-6
+GigaAM, the whole sentence Russian model that takes over from the small streaming one, and
+captions-pack-7 X-ASR, the streaming model that takes over from Kroko for English.
 
 What it does:
   - downloads each model's files from its Hugging Face repo at a fixed commit, and checks every
@@ -30,6 +32,7 @@ import hashlib
 import io
 import os
 import sys
+import tarfile
 import time
 import urllib.request
 import zipfile
@@ -78,6 +81,8 @@ https://www.apache.org/licenses/LICENSE-2.0
 TAG3 = "captions-pack-3"
 TAG4 = "captions-pack-4"
 TAG5 = "captions-pack-5"
+TAG6 = "captions-pack-6"
+TAG7 = "captions-pack-7"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Silero VAD (MIT), the copy sherpa-onnx's own examples use. Each pack 3 zip carries it.
@@ -362,6 +367,106 @@ MODELS3 = [
 ]
 
 
+# captions-pack-6: GigaAM v3 for Russian, with punctuation and capitals, 8 bit encoder weights.
+GIGAAM_TEXT = """Licence: MIT
+
+Credit: {credit}
+
+The original model weights are published under the MIT licence:
+    {origin}
+Full licence text: LICENSE-MIT-gigaam.txt in this zip.
+"""
+
+MODELS6 = [
+    dict(
+        lang="ru-gigaam", label="Russian", tag=TAG6, pack=6, vad=True,
+        asset="purpletv-captions-model-gigaam-v3-punct-ru-2025-12-16.zip",
+        repo="csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16",
+        commit="a6039be7cee829a9044a69ac0ebaf1c191217c97",
+        kind="offline_transducer", model_type="nemo_transducer",
+        files=[
+            ("encoder", "encoder.int8.onnx", 224570820,
+             "369f35a71bf288d3b8e0391fabd8dba5f2314088d440bca474056b7b4b6e66bf"),
+            ("decoder", "decoder.onnx", 4600132,
+             "38fc7475443ea2a26f63211ca350f73ac50fff824ab7a3876ee2bd610c53bbc4"),
+            ("joiner", "joiner.onnx", 2712896,
+             "602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c"),
+            ("tokens", "tokens.txt", 13354,
+             "39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7"),
+        ],
+        notice=("LICENSE", "LICENSE-MIT-gigaam.txt", 1070,
+                "f00de6715714c7a63d08639cdbfaa40224eefc407302614bd19f1a8b98c875aa"),
+        what="GigaAM v3 end-to-end by Sber, a whole sentence Russian model that writes\n"
+             "punctuation and capitals, with 8 bit encoder weights.",
+        credit="GigaAM v3 by Sber (https://github.com/salute-developers/GigaAM), MIT,\n"
+               "converted for sherpa-onnx by csukuangfj",
+        licence="MIT", licence_text=GIGAAM_TEXT,
+        origin="https://github.com/salute-developers/GigaAM",
+    ),
+]
+
+
+# captions-pack-7: X-ASR for English. It comes as a sherpa-onnx release archive, not a Hugging Face
+# repo, so the archive itself is pinned. It also knows Chinese; the app leaves that text out.
+XASR_NAME = "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05"
+XASR_COMMIT = "838297cd47fed858e6cf72eaf5a52f948a3edd73"
+
+MODELS7 = [
+    dict(
+        lang="en-xasr", label="English", tag=TAG7, pack=7,
+        asset="purpletv-captions-model-x-asr-480ms-zh-en-punct-int8-2026-06-05.zip",
+        repo="Gilgamesh-J/X-ASR", commit=XASR_COMMIT,
+        archive=dict(
+            url="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" + XASR_NAME + ".tar.bz2",
+            name=XASR_NAME + ".tar.bz2", size=133895136,
+            sha="fa5f63d618e5a01526e275a358bb7772e403f84808a4769fba52cffd8160bf74",
+            prefix=XASR_NAME + "/"),
+        kind="transducer", model_type="zipformer2",
+        files=[
+            ("encoder", "encoder.int8.onnx", 155278641,
+             "908596dcc137a73b95be908ca55e88caa1b3dbbe8027c171615f4b0609c5eb1e"),
+            ("decoder", "decoder.onnx", 11309084,
+             "a1cbc9eac2d5e3fb6617a218c67ad6daaa7f4e0fd225f08b2c22ab0413c8c257"),
+            ("joiner", "joiner.int8.onnx", 2581422,
+             "aedb7fa697b2ab43f20499826fff7c997eea7d67db77be97769aeeeb726e63b3"),
+            ("tokens", "tokens.txt", 58806,
+             "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"),
+        ],
+        licence_file=("https://raw.githubusercontent.com/Gilgamesh-J/X-ASR/" + XASR_COMMIT + "/LICENSE",
+                      "LICENSE-x-asr.txt", 11357,
+                      "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"),
+        what="X-ASR 480 ms streaming Zipformer, a Chinese and English model that writes\n"
+             "punctuation and capitals, with 8 bit encoder and joiner weights. PurpleTV\n"
+             "uses it for English and leaves any Chinese text out.",
+        credit="X-ASR by Gilgamesh-J (https://github.com/Gilgamesh-J/X-ASR), Apache-2.0,\n"
+               "packaged for sherpa-onnx by k2-fsa",
+        licence="Apache-2.0", licence_text=APACHE_LICENCE_TEXT,
+        origin="https://github.com/Gilgamesh-J/X-ASR",
+    ),
+]
+
+
+def published(m):
+    """Where the model files were taken from, as two lines for LICENSE.txt and README.txt."""
+    if m.get("archive"):
+        return "%s\n(SHA-256 %s)" % (m["archive"]["url"], m["archive"]["sha"])
+    return "https://huggingface.co/%s\n(commit %s)" % (m["repo"], m["commit"])
+
+
+def from_archive(cache, m):
+    """The pinned model files out of a release archive, by name."""
+    a = m["archive"]
+    p = fetch(a["url"], os.path.join(cache, a["name"]))
+    check(p, a["size"], a["sha"])
+    want = {a["prefix"] + f[1]: f[1] for f in m["files"]}
+    got = {}
+    with tarfile.open(p, "r:bz2") as t:
+        for e in t:
+            if e.isfile() and e.name in want:
+                got[want[e.name]] = t.extractfile(e).read()
+    return got
+
+
 def fetch(url, dst):
     """Downloads url to dst once (kept as a cache), retrying on 429 and network errors."""
     if os.path.isfile(dst) and os.path.getsize(dst) > 0:
@@ -422,8 +527,8 @@ def licence_txt(m):
     else:
         changes = (
             "\nChanges: none. The model files are byte for byte the ones published at\n"
-            "https://huggingface.co/%s\n(commit %s). They were only put into this zip\n"
-            "together with README.txt and this file.\n\n" % (m["repo"], m["commit"])
+            "%s. They were only put into this zip\n"
+            "together with README.txt and this file.\n\n" % published(m)
         )
     tail = changes + (
         "No warranty: the model is provided as is, without any warranty, as the\nlicence says.\n\n"
@@ -449,8 +554,8 @@ def readme_txt(m, model_entries):
         "Credits", "-------", m["credit"], "",
         "Model: " + m["what"],
         "    Original:         " + m["origin"],
-        "    %s https://huggingface.co/%s" % ("Trained from:    " if m.get("local") else "Files from:      ", m["repo"]),
-        "                      (commit %s)" % m["commit"],
+        "    %s %s" % ("Trained from:    " if m.get("local") else "Files from:      ", published(m).split("\n")[0]),
+        "                      " + published(m).split("\n")[1],
     ] + ([] if m.get("local") else ["    Model list:       " + MODEL_LIST]) + [
         "",
         "What is inside", "--------------",
@@ -497,13 +602,16 @@ def build_model(out, cache, m):
     model_entries = []
     unpacked = os.path.join(out, "models", m["lang"])
     os.makedirs(unpacked, exist_ok=True)
+    packed = from_archive(cache, m) if m.get("archive") else {}
     for role, name, size, sha in m["files"]:
-        if m.get("local"):
-            p = os.path.join(ROOT, m["local"], name)
+        if m.get("archive"):
+            data = packed.get(name, b"")
+        elif m.get("local"):
+            data = open(os.path.join(ROOT, m["local"], name), "rb").read()
         else:
             p = fetch(HF + m["repo"] + "/resolve/" + m["commit"] + "/" + name,
                       os.path.join(cache, m["repo"].replace("/", "__"), m["commit"], name))
-        data = open(p, "rb").read()
+            data = open(p, "rb").read()
         got = sha256_bytes(data)
         if sha is None:
             print("  unpinned %s/%s: %d bytes, sha %s" % (m["repo"], name, len(data), got))
@@ -568,7 +676,7 @@ def kotlin_pin(m, size, sha, entries):
         "            entries = mapOf(\n%s\n            )\n"
         "        )"
         % (m["label"], m["repo"], m["commit"], kt(m["lang"]), kt(m["label"]),
-           {TAG3: "TAG3", TAG4: "TAG4", TAG5: "TAG5"}.get(m.get("tag"), "TAG2"), kt(m["asset"]), sha, size,
+           {TAG3: "TAG3", TAG4: "TAG4", TAG5: "TAG5", TAG6: "TAG6", TAG7: "TAG7"}.get(m.get("tag"), "TAG2"), kt(m["asset"]), sha, size,
            "SttModel.Kind." + KINDS[m["kind"]],
            kt(m["model_type"]), kt(m["licence"]), kt(credit),
            roles.replace("            ", "                "), ents.replace("            ", "                "))
@@ -585,7 +693,7 @@ def main():
     cache = os.path.join(out, "cache")
     os.makedirs(cache, exist_ok=True)
     pins = []
-    for m in MODELS + MODELS3 + MODELS4 + MODELS5:
+    for m in MODELS + MODELS3 + MODELS4 + MODELS5 + MODELS6 + MODELS7:
         if only and m["lang"] not in only:
             continue
         size, sha, entries = build_model(out, cache, m)

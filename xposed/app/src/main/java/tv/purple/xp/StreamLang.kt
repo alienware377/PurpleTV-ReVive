@@ -55,6 +55,8 @@ object StreamLang {
     private const val TIP_MS = 10_000L
     /** Channels remembered at most; past this the oldest answers are simply asked again. */
     private const val KEEP = 200
+    /** How long after a channel change the old stream's sound can still reach the check. */
+    private const val SWITCH_MS = 2_000L
 
     /** [lang] null: the tag names no spoken language, or the channel was not found. [ok] false: the ask failed. */
     private class Tag(val lang: String?, val ok: Boolean, val at: Long)
@@ -169,7 +171,7 @@ object StreamLang {
 
     // ---- the channel being watched ----
 
-    private fun login(): String? = RefreshButton.liveLogin()?.lowercase(Locale.ROOT)
+    private fun login(): String? = RefreshButton.playingLogin()?.lowercase(Locale.ROOT)
 
     private fun now() = SystemClock.uptimeMillis()
 
@@ -215,8 +217,17 @@ object StreamLang {
         return now() - since < WAIT_MS
     }
 
-    /** The channel whose check Whisper's sentences go to now, or null when there is no check to make. */
-    fun checkFor(): String? = login()?.takeIf { SttModels.auto() && !heard.containsKey(it) }
+    /**
+     * The channel whose check a sentence of [seconds] that just ended goes to, or null when there
+     * is no check to make. A sentence that began before the channel changed, or just after while
+     * the old stream's sound is still on its way through, says nothing about the new channel.
+     */
+    fun checkFor(seconds: Float): String? {
+        val l = login() ?: return null
+        if (!SttModels.auto() || heard.containsKey(l) || RefreshButton.clipHeard()) return null
+        val began = now() - (seconds * 1000f).toLong()
+        return l.takeIf { began >= RefreshButton.playingSince() + SWITCH_MS }
+    }
 
     /**
      * One sentence of the check for [login]: Whisper heard [text] in [lang]. True when this settles
