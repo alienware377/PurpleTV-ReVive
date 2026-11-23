@@ -142,6 +142,8 @@ object RefreshButton {
         return login
     }
 
+    fun isClip(p: Any): Boolean = p in clipPlayers
+
     private fun endClip(p: Any) {
         if (!clipPlayers.remove(p)) return
         playingAt = SystemClock.uptimeMillis()

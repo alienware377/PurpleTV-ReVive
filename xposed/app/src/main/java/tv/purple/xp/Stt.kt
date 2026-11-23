@@ -2010,12 +2010,17 @@ object Stt {
 
     /**
      * The main player for feed_main: the one drawing to the screen, never the PbyP player (it
-     * takes a surface too while it is shown), else the one Twitch last loaded a stream into.
+     * takes a surface too while it is shown), else the one Twitch last loaded a stream into. The
+     * clip feed draws over a live stream that goes on in the mini player, so a clip only counts
+     * when no other player is drawing.
      */
     internal fun mainPlayer(): Any? {
         val pbyp = PbypWatch.player()
-        return PlayerStats.shownPlayer()?.takeIf { it !== pbyp }
-            ?: RefreshButton.currentPlayer()?.takeIf { it !== pbyp }
+        val shown = PlayerStats.shownPlayer()?.takeIf { it !== pbyp }
+        if (shown != null && RefreshButton.isClip(shown)) {
+            PlayerStats.drawingExcept { it === pbyp || RefreshButton.isClip(it) }?.let { return it }
+        }
+        return shown ?: RefreshButton.currentPlayer()?.takeIf { it !== pbyp }
     }
 
     private fun devDownload(ctx: Context, which: String) {

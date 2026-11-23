@@ -6,6 +6,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -17,6 +18,8 @@ import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
 import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.WeakHashMap
 
 /**
  * Two player options built on Amazon IVS, the player Twitch uses, whose class keeps its real name:
@@ -72,17 +75,33 @@ object PlayerStats {
                 // The two-streams screen's players draw too, but they are never Twitch's stream:
                 // speech to text, captions and the stats box must stay on Twitch's player.
                 if (OwnPlayers.isMine(me)) return
-                if (p.args.getOrNull(0) != null) shown = WeakReference(me)
-                else if (shown?.get() === me) shown = null
+                if (p.args.getOrNull(0) != null) {
+                    shown = WeakReference(me)
+                    drawing[me] = SystemClock.uptimeMillis()
+                } else {
+                    drawing.remove(me)
+                    if (shown?.get() === me) shown = null
+                }
             }
         })
         log("PS player options installed")
     }
 
     @Volatile private var shown: WeakReference<Any>? = null
+    /** Every player holding a surface now, with when it got it: more than one can be on screen. */
+    private val drawing = Collections.synchronizedMap(WeakHashMap<Any, Long>())
 
     /** Twitch released [p]: never ask it for numbers again. */
-    fun forget(p: Any?) { if (p != null && shown?.get() === p) shown = null }
+    fun forget(p: Any?) {
+        if (p == null) return
+        drawing.remove(p)
+        if (shown?.get() === p) shown = null
+    }
+
+    /** The player that most recently got a surface, among those [skip] does not rule out. */
+    fun drawingExcept(skip: (Any) -> Boolean): Any? = synchronized(drawing) {
+        drawing.entries.filter { !skip(it.key) }.maxByOrNull { it.value }?.key
+    }
 
     /** The IVS player drawing to the screen now, for AdVolume's test commands. */
     fun shownPlayer(): Any? = shown?.get()
