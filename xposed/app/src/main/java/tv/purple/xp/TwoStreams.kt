@@ -56,8 +56,7 @@ import java.util.WeakHashMap
  * (and muted) underneath and carries on where it was when the screen closes. Leaving the app
  * shrinks both players, stacked, into picture-in-picture.
  *
- * Only one stream is heard at a time, the first one to begin with; tapping a player picks it.
- * Back closes the screen and Twitch's own player plays again. Each stream's strip can also carry on
+ * Each stream has its own volume, from the speaker button in its strip. Back closes the screen and Twitch's own player plays again. Each stream's strip can also carry on
  * with that stream alone in Twitch, or close it and carry on with the other.
  */
 object TwoStreams {
@@ -80,7 +79,6 @@ object TwoStreams {
     @Volatile private var host: WeakReference<Activity>? = null
     /** The channel Twitch's own player had when the screen opened. */
     private var twitchLogin: String? = null
-    private var audible = 0
     private var added = false
     /** Paused because the app went to the background, so coming back plays again. */
     private var pausedByStop = false
@@ -98,10 +96,19 @@ object TwoStreams {
 
     fun isOpen(): Boolean = screen != null
 
+    /** What the live captions follow while this screen is open. The first three work from any thread. */
+    fun captionPlayer(): Any? = screen?.captionPlayer()
+    fun captionLogin(): String? = screen?.captionLogin()
+    fun captionSince(): Long? = screen?.captionSince()
+    fun captionView(): DualPlayer? = screen?.captionView()
+
     // ---- install ----
 
     fun install(lp: LoadPackageParam) {
         runCatching { OwnPlayers.install(lp) }.onFailure { log("TS own players failed: $it") }
+        runCatching { DualTracker.install(lp) }.onFailure { log("TS tracker failed: $it") }
+        runCatching { DualCards.install(lp) }.onFailure { log("TS cards failed: $it") }
+        runCatching { SettingsPip.install(lp) }.onFailure { log("TS settings failed: $it") }
         runCatching { TwoStreamPip.install() }.onFailure { log("TS picture-in-picture failed: $it") }
         TwoStreamPip.hint = { screen?.pipHint() }
         TwoStreamPip.onPip = { a, on -> if (host?.get() === a) pipChanged(a, on) }
@@ -112,6 +119,14 @@ object TwoStreams {
             n += runCatching { XposedBridge.hookAllMethods(Activity::class.java, m, lifeHook).size }.getOrDefault(0)
         n += runCatching { XposedBridge.hookAllMethods(Activity::class.java, "onNewIntent", newIntentHook).size }.getOrDefault(0)
         n += runCatching { XposedBridge.hookAllMethods(Activity::class.java, "onCreate", splashHook).size }.getOrDefault(0)
+        // Before Android saves the app's state: a panel saved with it would come back with no place to go.
+        n += runCatching {
+            XposedBridge.hookAllMethods(android.app.Instrumentation::class.java, "callActivityOnSaveInstanceState", object : XC_MethodHook() {
+                override fun beforeHookedMethod(p: MethodHookParam) {
+                    if (host?.get() === p.args[0]) runCatching { screen?.closeSheet() }
+                }
+            }).size
+        }.getOrDefault(0)
         val core = runCatching { lp.classLoader.loadClass("com.amazonaws.ivs.player.CorePlayerImpl") }.getOrNull()
         stateHooked = core != null &&
             runCatching { XposedBridge.hookAllMethods(core, "handleStateChange", stateHook).isNotEmpty() }.getOrDefault(false)
@@ -158,6 +173,7 @@ object TwoStreams {
             val a = p.thisObject as? Activity ?: return
             if (screen == null || host?.get() !== a) return
             val i = p.args.getOrNull(0) as? Intent
+            if (i?.hasExtra(SettingsPip.EXTRA) == true) return
             if (i != null && i.action == Intent.ACTION_MAIN && i.hasCategory(Intent.CATEGORY_LAUNCHER)) return
             if (i?.data == null && SystemClock.uptimeMillis() - launcherAt < LAUNCHER_MS) return
             // At once, not posted: Twitch starts loading what was asked for right after this, and its
@@ -220,7 +236,6 @@ object TwoStreams {
         if (cur != null) shut(resume = false, navigate = null, why = "opened again elsewhere")
         val decor = act.window?.decorView as? ViewGroup ?: return
         twitchLogin = RefreshButton.liveLogin()
-        audible = 0
         sleeping = false
         pausedByStop = false
         val r = TwoStreamsRoot(act, ui)
@@ -230,7 +245,6 @@ object TwoStreams {
             decor.addView(r, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             r.show(0, la)
             r.show(1, lb)
-            r.setAudible(audible)
         } catch (t: Throwable) {
             log("TS open failed: $t")
             toast(act, "Two streams could not start")
@@ -277,6 +291,7 @@ object TwoStreams {
         main.removeCallbacks(watchdog)
         main.removeCallbacks(holdNow)
         closePicker()
+        FiltersPanel.closeFor(null)
         stopListening()
         val away = act == null || stopped[act] == true
         if (act != null) {
@@ -318,11 +333,6 @@ object TwoStreams {
         syncMedia()
     }
 
-    private fun setAudible(i: Int) {
-        audible = i
-        screen?.setAudible(i)
-    }
-
     private fun replaceStream(i: Int, login: String) {
         val r = screen ?: return
         r.show(i, login)
@@ -330,12 +340,15 @@ object TwoStreams {
     }
 
     private val ui = object : TwoStreamsRoot.Ui {
-        override fun back() = shut(resume = true, navigate = null, why = "back")
+        override fun back() { if (screen?.closeSheet() != true) shut(resume = true, navigate = null, why = "back") }
         override fun tapPlayer(i: Int) {
             wake()
-            setAudible(i)
+            screen?.tapControls(i)
         }
-        override fun sound(i: Int) = setAudible(if (audible == i) -1 else i)
+        override fun played() {
+            sleeping = false
+            syncMedia()
+        }
         override fun swap(i: Int) { host?.get()?.let { openPicker(it, i) } }
         override fun watch(i: Int) = close(i)
         override fun dismiss(i: Int) = close(1 - i)
@@ -523,6 +536,7 @@ object TwoStreams {
                     screen == null -> {}
                     a != null && decor?.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true -> hideKeyboard(a)
                     f != null && f.hasSelection() -> f.setSelection(f.selectionEnd)
+                    screen?.closeSheet() == true -> {}
                     else -> shut(resume = true, navigate = null, why = "back")
                 }
             }
@@ -562,7 +576,7 @@ object TwoStreams {
     private val backHook = object : XC_MethodHook() {
         override fun beforeHookedMethod(p: MethodHookParam) {
             if (screen == null || host?.get() !== p.thisObject) return
-            shut(resume = true, navigate = null, why = "back")
+            if (screen?.closeSheet() != true) shut(resume = true, navigate = null, why = "back")
             p.result = null
         }
     }
@@ -938,9 +952,17 @@ object TwoStreams {
      *   open --es login B                    Twitch's live channel beside B
      *   open --es login A --es login2 B      any two channels
      *   close [--ei keep 0|1]                0 plays Twitch's own player again, 1 carries on with the second stream in Twitch
-     *   status                               sizes, states, which stream is heard, picture-in-picture
+     *   status                               sizes, states, volumes, picture-in-picture
      *   pip                                  into picture-in-picture now
-     *   sound --ei i 0|1 (or --es which 0|1|none)   which stream is heard; -1 or none mutes both
+     *   sound --ei i 0|1 --ei v 0..100       one stream's volume
+     *   volume --ei i 0|1                    opens that stream's volume popup
+     *   card --ei i 0|1 --es kind viewer|emote|chat|picker|points   opens that real Twitch screen from a pane
+     *   clearfx                              forgets every channel's own filter settings
+     *   tap --ei i 0|1                       a tap on that stream's video: shows its controls
+     *   captions --ei i 0|1|-1               which stream the captions follow (-1 the louder one)
+     *   closesheet                           closes an open picker or rewards panel
+     *   settings                             opens Twitch's main settings the way the app does
+     *   raid --ei i 0|1 --es login C         moves a pane as a raid to C would, without joining one
      *   picker [--ei replace 0|1]            the channel list, as the player button or a strip opens it
      *   swap --ei slot 0|1 --es login C      put channel C in place of a stream
      */
@@ -964,14 +986,23 @@ object TwoStreams {
                 else log("TS dev pip: ${if (TwoStreamPip.enterNow(a)) "entered" else "refused"}")
             }
             "sound" -> {
-                val w = i.getStringExtra("which") ?: when {
-                    i.hasExtra("which") -> i.getIntExtra("which", -1).toString()
-                    i.hasExtra("i") -> i.getIntExtra("i", -1).toString()
-                    else -> "none"
-                }
-                setAudible(when (w) { "0" -> 0; "1" -> 1; else -> -1 })
-                log("TS dev sound: ${audibleName()}")
+                val k = i.getIntExtra("i", 0)
+                val v = i.getIntExtra("v", 100)
+                screen?.setVolume(k, v, false)
+                log("TS dev sound: stream ${k + 1} at $v")
             }
+            "volume" -> screen?.openVolume(i.getIntExtra("i", 0))
+            "card" -> screen?.devCard(i.getIntExtra("i", 0), i.getStringExtra("kind").orEmpty())
+            "settings" -> ViewHider.currentActivity()?.let { log("TS dev settings: ${DualCards.settings(it)}") }
+            "tap" -> ui.tapPlayer(i.getIntExtra("i", 0))
+            "clearfx" -> {
+                Settings.withFxScope(null) { Settings.replace(emptyMap()) { it.startsWith("dual_ui_fx_") } }
+                screen?.let { r -> runCatching { VideoFilters.refresh(r) } }
+                AudioFilters.refresh()
+            }
+            "captions" -> screen?.pickCaptions(i.getIntExtra("i", -1))
+            "closesheet" -> log("TS dev sheet closed: ${screen?.closeSheet()}")
+            "raid" -> i.getStringExtra("login")?.let { screen?.devRaid(i.getIntExtra("i", 1), it) }
             "picker" -> {
                 val act = host?.get() ?: ViewHider.currentActivity() ?: run { log("TS dev picker: no activity on screen"); return }
                 openPicker(act, i.getIntExtra("replace", -1))
@@ -986,12 +1017,10 @@ object TwoStreams {
         }
     }
 
-    private fun audibleName() = arrayOf("first stream", "second stream").getOrElse(audible) { "none" }
-
     private fun status() {
         val r = screen
         val a = host?.get()
-        log("TS status: ${if (r == null) "closed" else "open on ${a?.javaClass?.simpleName}"}, heard: ${audibleName()}, " +
+        log("TS status: ${if (r == null) "closed" else "open on ${a?.javaClass?.simpleName}"}, " +
             "Twitch's channel ${twitchLogin ?: "-"}, Twitch's players held ${synchronized(twitchLock) { holds.size }} " +
             "(was playing: $heldWasPlaying, paused again $repauses times), sleeping $sleeping, " +
             "paused for background $pausedByStop, app stopped ${a?.let { stopped[it] } ?: "-"}, " +

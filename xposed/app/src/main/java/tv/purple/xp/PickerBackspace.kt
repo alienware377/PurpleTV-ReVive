@@ -100,10 +100,16 @@ object PickerBackspace {
 
     /** The chat box, in the picker's own window or the stream screen's. */
     private fun inputFor(v: View): EditText? {
+        EmoteAutocomplete.box()?.let { return it }
         val id = Res.id(v.context, "message_input")
         if (id == 0) return null
         return (v.rootView?.findViewById<View>(id)
             ?: ViewHider.currentActivity()?.window?.decorView?.findViewById(id)) as? EditText
+    }
+
+    /** The picker's delete key on a message box of ours, in the mode set for it. */
+    fun backspace(et: EditText) {
+        if (Settings.getInt(KEY, MODE_WORD) == MODE_WORD) deleteWord(et) else deleteLetter(et)
     }
 
     /** Deletes the selection, or the last word or emote before the cursor with the space after it. */

@@ -51,7 +51,11 @@ object VideoFilters {
 
     fun fullSupport() = shaderSupported() || GlVideoFilter.available()
 
-    fun usable(i: Int) = fullSupport() || FilterDefs.FILTERS[i].key in MATRIX_KEYS
+    fun usable(i: Int): Boolean {
+        // Dynamic light measures one picture at a time, so it stays with Twitch's own player.
+        if (Settings.inFxScope() && FilterDefs.FILTERS[i].group == FilterDefs.Group.DYNAMIC) return false
+        return fullSupport() || FilterDefs.FILTERS[i].key in MATRIX_KEYS
+    }
 
     /** True when the master switch is on and at least one usable filter is moved off zero. */
     fun anyActive(): Boolean =
@@ -68,7 +72,9 @@ object VideoFilters {
     fun attach(root: View) {
         val ctx = root.context
         val id = Res.id(ctx, "playback_view_container")
-        if (id != 0) {
+        applyPanes()
+        // Twitch's own player follows the shared settings, even with a stream's filter panel open.
+        if (id != 0) Settings.withFxScope(null) {
             // Which path draws the filters is part of the key: when the GL path gives up (or the
             // GL switch is flipped) the settings stay the same, so without it no view would ever
             // be handed over to the RuntimeShader or colour matrix path.
@@ -132,7 +138,55 @@ object VideoFilters {
         if (v is ViewGroup) for (i in 0 until v.childCount) textureViewsIn(v.getChildAt(i), out)
     }
 
-    private fun apply(tv: TextureView) {
+    // ---- two-streams players: each channel has its own filter settings ----
+
+    private val panes = WeakHashMap<TextureView, String>()
+    private var panesSeen = ""
+
+    fun addPane(tv: TextureView, login: String) {
+        panes[tv] = login
+        views[tv] = true
+        applied.remove(tv)
+        panesSeen = ""
+    }
+
+    fun dropPane(tv: TextureView) {
+        panes.remove(tv)
+        views.remove(tv)
+        applied.remove(tv)
+        panesSeen = ""
+    }
+
+    fun paneScope(tv: TextureView): String? = panes[tv]
+
+    /** The two-streams player showing [st], for the GL path. */
+    fun paneFor(st: android.graphics.SurfaceTexture): TextureView? = panes.keys.firstOrNull { it.surfaceTexture === st }
+
+    /** Some two-streams player has filters to draw. */
+    fun anyPaneActive(): Boolean = panes.values.toSet().any { s -> Settings.withFxScope(s) { anyActive() } }
+
+    private fun anyAnimated(): Boolean =
+        Settings.withFxScope(null) { animated() } || panes.values.toSet().any { s -> Settings.withFxScope(s) { animated() } }
+
+    private fun applyPanes() {
+        if (panes.isEmpty()) return
+        val now = Settings.rev.toString() + (if (GlVideoFilter.available()) "g" else "f") +
+            panes.keys.joinToString { "${it.width}x${it.height}" }
+        if (now == panesSeen) return
+        panesSeen = now
+        for ((tv, s) in panes.entries.toList()) {
+            if (!tv.isAttachedToWindow || tv.width == 0) { panesSeen = ""; continue }
+            val sig = Settings.withFxScope(s) { signature() } + (if (GlVideoFilter.available()) "|gl" else "|fb") + "|${tv.width}x${tv.height}"
+            if (applied[tv] == sig) continue
+            applied[tv] = sig
+            runCatching { apply(tv) }.onFailure { log("filters apply failed: $it") }
+        }
+        if (anyPaneActive()) { scheduleGrain(); DynLight.ensureRunning() }
+    }
+
+    private fun apply(tv: TextureView) = Settings.withFxScope(panes[tv]) { applyNow(tv) }
+
+    private fun applyNow(tv: TextureView) {
         val on = anyActive()
         when {
             GlVideoFilter.available() -> {
@@ -328,9 +382,12 @@ object VideoFilters {
     /** What each shader's inputs were last filled for: settings revision, size, and dynamic light. */
     private val filledFor = java.util.WeakHashMap<RuntimeShader, String>()
 
-    private fun buildShader(tv: TextureView): RuntimeShader {
+    private fun buildShader(tv: TextureView): RuntimeShader = Settings.withFxScope(panes[tv]) { buildShaderNow(tv) }
+
+    private fun buildShaderNow(tv: TextureView): RuntimeShader {
         val active = activeKeys()
-        val id = active.sorted().joinToString(",")
+        // Per channel: two players with the same filters on still hold different values.
+        val id = panes[tv].orEmpty() + "|" + active.sorted().joinToString(",")
         val s = shaders[id] ?: RuntimeShader(FilterShader.agsl(active)).also { shaders[id] = it }
         val w = tv.width.takeIf { it > 0 } ?: 1920
         val h = tv.height.takeIf { it > 0 } ?: 1080
@@ -367,9 +424,9 @@ object VideoFilters {
 
     /** Redraw every video with fresh shader inputs (Android 13+ path; the GL path reads them per frame). */
     fun reapplyEffects() {
-        if (!shaderSupported() || GlVideoFilter.available() || !anyActive()) return
+        if (!shaderSupported() || GlVideoFilter.available()) return
         for (tv in weakKeys(views)) {
-            if (!tv.isAttachedToWindow) continue
+            if (!tv.isAttachedToWindow || !Settings.withFxScope(panes[tv]) { anyActive() }) continue
             runCatching { tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content")) }
         }
     }
@@ -383,9 +440,10 @@ object VideoFilters {
             // the background) keeps its player attached, so checking that alone ran this forever.
             // The next ViewHider pass starts it again through attach().
             val live = weakKeys(views).filter { it.isAttachedToWindow && it.windowVisibility == View.VISIBLE && it.isShown }
-            if (live.isEmpty() || GlVideoFilter.available() || !animated()) { grainRunning = false; return }
+            if (live.isEmpty() || GlVideoFilter.available() || !anyAnimated()) { grainRunning = false; return }
             seed = (seed + 1.37f) % 997f
             for (tv in live) {
+                if (!Settings.withFxScope(panes[tv]) { anyActive() }) continue
                 if (shaderSupported()) runCatching {
                     tv.setRenderEffect(RenderEffect.createRuntimeShaderEffect(buildShader(tv), "content"))
                 }
@@ -397,7 +455,7 @@ object VideoFilters {
     private fun scheduleGrain() {
         // The GL path moves its grain on every drawn frame by itself.
         if (grainRunning || GlVideoFilter.available()) return
-        if (animated()) {
+        if (anyAnimated()) {
             grainRunning = true
             handler.postDelayed(grainTick, 42)
         }

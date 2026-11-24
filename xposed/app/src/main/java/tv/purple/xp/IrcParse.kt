@@ -47,6 +47,9 @@ data class IrcMsg(val tags: Map<String, String>, val prefix: String?, val comman
  *  they can go straight into setSpan. */
 data class EmoteRange(val id: String, val start: Int, val end: Int)
 
+/** A GIF in a message: the part of the text it replaces, as UTF-16 positions, end exclusive. */
+data class GifRange(val id: String, val url: String, val start: Int, val end: Int)
+
 /**
  * Reads and writes Twitch chat lines (IRC with IRCv3 tags, as sent by irc-ws.chat.twitch.tv).
  *
@@ -181,6 +184,28 @@ object IrcParse {
         return out
     }
 
+    /**
+     * The "gifs" tag: "start-end|gifId|url", comma separated. Positions count code points and the
+     * end is inclusive, as in the emotes tag. Entries that do not fit the text are left out.
+     */
+    fun gifRanges(tag: String?, text: String): List<GifRange> {
+        if (tag.isNullOrEmpty() || text.isEmpty()) return emptyList()
+        val points = text.codePointCount(0, text.length)
+        val out = ArrayList<GifRange>(1)
+        for (entry in tag.split(',')) {
+            val p = entry.split('|')
+            if (p.size != 3 || p[1].isEmpty() || !p[2].startsWith("https://")) continue
+            val dash = p[0].indexOf('-')
+            if (dash <= 0) continue
+            val a = p[0].substring(0, dash).toIntOrNull() ?: continue
+            val b = p[0].substring(dash + 1).toIntOrNull() ?: continue
+            if (a < 0 || b < a || b >= points) continue
+            val s = text.offsetByCodePoints(0, a)
+            out.add(GifRange(p[1], p[2], s, text.offsetByCodePoints(s, b - a + 1)))
+        }
+        return out.sortedBy { it.start }
+    }
+
     /** The "badges" tag ("subscriber/12,premium/1") as (set, version) pairs, in the order Twitch
      *  sent them, which is the order they are shown in. */
     fun badges(tag: String?): List<Pair<String, String>> {
@@ -218,9 +243,10 @@ object IrcParse {
     /**
      * The PRIVMSG line that sends [text] to [channel], or null when there is nothing to send.
      * "/me waves" becomes an ACTION, as in Twitch's own chat. Line breaks become spaces, because
-     * a raw line break would end the IRC line and start a new command.
+     * a raw line break would end the IRC line and start a new command. [replyTo] is the id of the
+     * message this answers.
      */
-    fun privmsg(channel: String, text: String): String? {
+    fun privmsg(channel: String, text: String, replyTo: String? = null): String? {
         val ch = cleanChannel(channel) ?: return null
         val flat = text.replace(LINE_BREAKS, " ").trim()
         if (flat.isEmpty()) return null
@@ -229,8 +255,11 @@ object IrcParse {
             if (words.isEmpty()) return null
             "$ACTION_OPEN $words$CTCP"
         } else flat
-        return "PRIVMSG #$ch :$body"
+        val tag = replyTo?.takeIf { MESSAGE_ID.matches(it) && body === flat }?.let { "@reply-parent-msg-id=$it " }.orEmpty()
+        return "${tag}PRIVMSG #$ch :$body"
     }
+
+    private val MESSAGE_ID = Regex("[A-Za-z0-9-]{1,64}")
 
     private fun parseTags(s: String, from: Int, to: Int): Map<String, String> {
         val out = HashMap<String, String>(32)

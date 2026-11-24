@@ -108,11 +108,13 @@ object ClipSave {
     // ------------------------------------------------------------ making and saving the clip
 
     /** Also used by DevBridge for a test without the button. */
-    fun start(ctx: Context) {
+    fun start(ctx: Context, channelId: String? = null, login: String? = null) {
         val app = ctx.applicationContext
         if (busy) { toast(app, "Still saving the last clip"); return }
-        val channel = EmoteRepo.currentChannel()
-        if (channel.isNullOrBlank() || RefreshButton.liveLogin() == null) { toast(app, "Clips only work on a live stream"); return }
+        // From a two-streams pane it is that channel or none, never whichever one Twitch has open.
+        val channel = if (login != null) channelId else channelId ?: EmoteRepo.currentChannel()
+        fileLogin = login
+        if (channel.isNullOrBlank() || (login == null && RefreshButton.liveLogin() == null)) { toast(app, "Clips only work on a live stream"); return }
         busy = true
         toast(app, "Making a clip…")
         Thread({
@@ -126,6 +128,9 @@ object ClipSave {
             main.post { toast(app, msg) }
         }, "ptv-clip").start()
     }
+
+    /** The channel a clip from the two-streams screen is named after. */
+    @Volatile private var fileLogin: String? = null
 
     /** Blocking: returns the message for the user. Errors meant for the user start with "!". */
     private fun run(ctx: Context, token: String, channel: String): String {
@@ -169,7 +174,7 @@ object ClipSave {
         }
         // The message names the signed link; only the status before it goes to the log.
         failure?.let { error("download: ${it.message?.substringBefore(" for ") ?: it.javaClass.simpleName}") }
-        val name = "${RefreshButton.liveLogin() ?: "twitch"}_${slug.take(40).replace(Regex("[^A-Za-z0-9_-]"), "_")}.mp4"
+        val name = "${fileLogin ?: RefreshButton.liveLogin() ?: "twitch"}_${slug.take(40).replace(Regex("[^A-Za-z0-9_-]"), "_")}.mp4"
         val where = runCatching { publish(ctx, tmp, name) }.also { tmp.delete() }.getOrThrow()
         log("CS saved to $where")
         return "Clip saved to $where"

@@ -36,8 +36,10 @@ object ChannelPoints {
     @Volatile private var channelId: String? = null
     @Volatile private var channelLogin: String? = null
     @Volatile private var started = false
-    /** Last claim id we successfully submitted, to avoid duplicate claim spam within a poll window. */
-    @Volatile private var lastClaimId: String? = null
+    /** Last claim id submitted per channel, to avoid duplicate claim spam within a poll window. */
+    private val lastClaims = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** Channels playing on the two-streams screen, login to id. */
+    private val panes = java.util.concurrent.ConcurrentHashMap<String, String>()
     /** One-shot: log the first successful context parse to confirm the GQL path end-to-end. */
     @Volatile private var probedOk = false
 
@@ -56,6 +58,16 @@ object ChannelPoints {
         if (!id.isNullOrBlank()) channelId = id
         if (!login.isNullOrBlank()) channelLogin = login
     }
+
+    /** A two-streams pane is playing [login]: its bonus chests are claimed too. */
+    fun watch(login: String, id: String) { panes[login.lowercase()] = id }
+
+    fun unwatch(login: String) { panes.remove(login.lowercase()) }
+
+    private val balances = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** The last points balance seen for [login], from the regular check. */
+    fun balance(login: String): Int? = balances[login.lowercase()]
 
     fun install(ctx: Context) {
         if (started) return
@@ -130,18 +142,24 @@ object ChannelPoints {
         synchronized(playing) { playing.values.any { it.equals(login, ignoreCase = true) } }
 
     private fun tick(ctx: Context) {
-        val login = channelLogin ?: return
-        val id = channelId ?: return
+        val targets = LinkedHashMap<String, String>(panes)
+        val login = channelLogin
+        val id = channelId
         // channelLogin is never cleared, so without this the old channel kept being polled every
         // 30 s after its stream was closed. Background audio still counts as playing.
-        if (tracking && !isPlaying(login)) return
+        if (login != null && id != null && (!tracking || isPlaying(login))) targets[login.lowercase()] = id
+        if (targets.isEmpty()) return
         val token = EmoteRepo.authToken(ctx)
         if (token.isBlank()) return
+        for ((l, i) in targets) runCatching { claimOn(token, l, i) }.onFailure { log("CP tick error on $l: $it") }
+    }
+
+    private fun claimOn(token: String, login: String, id: String) {
         val claimId = fetchAvailableClaim(token, login) ?: return
-        if (claimId == lastClaimId) return  // already handled this exact bonus
+        if (claimId == lastClaims[login]) return  // already handled this exact bonus
         log("CP bonus available on $login (claim=$claimId), claiming")
         if (claim(token, id, claimId)) {
-            lastClaimId = claimId
+            lastClaims[login] = claimId
             log("CP claimed channel points on $login")
         } else {
             log("CP claim failed on $login")
@@ -173,6 +191,7 @@ object ChannelPoints {
             log("CP context: communityPoints null for $login (data=${json.optJSONObject("data") != null}), query shape mismatch?")
             return null
         }
+        cp.optInt("balance", -1).takeIf { it >= 0 }?.let { balances[login.lowercase()] = it }
         if (!probedOk) { probedOk = true; log("CP context OK for $login: balance=${cp.optInt("balance", -1)} (GQL path verified)") }
         val claim = cp.optJSONObject("availableClaim") ?: return null
         return claim.optString("id").ifBlank { null }

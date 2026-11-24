@@ -103,7 +103,7 @@ object SleepTimer {
 
     private fun closes() = Settings.getInt(KEY_ACTION, 0) == 0
 
-    private fun choose(ctx: Context) {
+    fun choose(ctx: Context) {
         val left = if (dueAt > 0) ((dueAt - SystemClock.uptimeMillis()) / 60000L + 1) else 0L
         val items = ArrayList<String>()
         items.add(if (dueAt > 0) "Turn off ($left min left)" else "Off")

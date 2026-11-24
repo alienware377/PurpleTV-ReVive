@@ -372,11 +372,14 @@ object LiveCaptions {
         if (!onCached && !showing) { boxRef?.get()?.visibility = View.GONE; moving = false; return }
         val act = ViewHider.currentActivity()
         val root = act?.window?.peekDecorView()
-        val vid = root?.let { r -> Res.id(r.context, "playback_view_container").takeIf { it != 0 }?.let { r.findViewById<View>(it) } }
-        // Twitch's player stays "shown" under the two-streams screen, only paused there, so it
-        // has nothing to caption and the box would sit on top of that screen.
-        val now = onCached && vid != null && vid.isShown && RefreshButton.liveLogin() != null &&
-            !PbypWatch.active && !PbypWatch.visible && act?.hasWindowFocus() != false && !TwoStreams.isOpen()
+        // On the two-streams screen the box lives inside the player it is captioning. Twitch's own
+        // player stays "shown" underneath, only paused, and has nothing to caption then.
+        val two = TwoStreams.isOpen()
+        val pane = if (two) TwoStreams.captionView() else null
+        val vid: View? = if (two) pane
+            else root?.let { r -> Res.id(r.context, "playback_view_container").takeIf { it != 0 }?.let { r.findViewById<View>(it) } }
+        val now = onCached && vid != null && vid.isShown && !ownWindowOnTop(act) && act?.isInPictureInPictureMode != true &&
+            (two || (RefreshButton.liveLogin() != null && !PbypWatch.active && !PbypWatch.visible))
         if (now != showing) {
             showing = now
             // Cleared on screen too, or the last words come back with the overlay.
@@ -387,11 +390,11 @@ object LiveCaptions {
         if (now && moveAsked != 0L) {
             if (SystemClock.uptimeMillis() - moveAsked < MOVE_ASK_MS) beginMove() else moveAsked = 0L
         }
-        val login = RefreshButton.liveLogin()
+        val login = TwoStreams.captionLogin() ?: RefreshButton.liveLogin()
         if (login != null && login != historyOf) { history.clear(); historyOf = login }
         var box = boxRef?.get()
         if (!now || vid == null || root == null) { box?.visibility = View.GONE; return }
-        val content = root.findViewById<ViewGroup>(android.R.id.content) as? FrameLayout ?: return
+        val content = pane ?: root.findViewById<ViewGroup>(android.R.id.content) as? FrameLayout ?: return
         if (box == null || box.parent !== content || builtStyle != style()) {
             box?.let { (it.parent as? ViewGroup)?.removeView(it) }
             box = make(content)
@@ -406,6 +409,24 @@ object LiveCaptions {
         behindTip = !moving && !dragging && DualTip.covers(box)
         if (lines.size != before || waiting.isNotEmpty() || lastText.isEmpty() || note() != holdShown) render()
         place(box, vid, content)
+    }
+
+    /**
+     * Focus went to one of Twitch's own dialogs or menus. In split screen or a floating window it
+     * can also be on another app, with the stream still in plain view, and the captions stay then.
+     */
+    private fun ownWindowOnTop(act: android.app.Activity?): Boolean {
+        if (act == null || act.hasWindowFocus()) return false
+        val decor = act.window?.peekDecorView()
+        return runCatching {
+            val g = Class.forName("android.view.WindowManagerGlobal")
+            val inst = g.getMethod("getInstance").invoke(null)
+            val roots = g.getDeclaredField("mRoots").apply { isAccessible = true }.get(inst) as List<*>
+            roots.toList().any { r ->
+                val v = r?.let { runCatching { it.javaClass.getMethod("getView").invoke(it) as? View }.getOrNull() }
+                v != null && v !== decor && v.hasWindowFocus()
+            }
+        }.getOrDefault(true)
     }
 
     /** A feature bubble on the player controls is under the box: it waits, keeping its place. */

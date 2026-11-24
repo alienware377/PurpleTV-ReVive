@@ -346,9 +346,9 @@ object DevBridge {
                     val desc = v.contentDescription?.toString().orEmpty()
                     val hint = (v as? android.widget.TextView)?.hint?.toString().orEmpty()
                     val label = listOf(name, desc, hint).filter { it.isNotEmpty() }.joinToString(" | ")
-                    if (label.isEmpty() || !rx.containsMatchIn(label)) continue
-                    val loc = IntArray(2).also { v.getLocationOnScreen(it) }
                     val shown = (v as? android.widget.TextView)?.text?.toString()?.take(80)
+                    if ((label.isEmpty() || !rx.containsMatchIn(label)) && shown?.let { rx.containsMatchIn(it) } != true) continue
+                    val loc = IntArray(2).also { v.getLocationOnScreen(it) }
                     log("DEV view: (${loc[0] + v.width / 2},${loc[1] + v.height / 2}) $label${shown?.let { " text=\"$it\"" } ?: ""}")
                     n++
                     if (!done && text != null && v is android.widget.EditText) { v.setText(text); v.setSelection(v.text.length); done = true }

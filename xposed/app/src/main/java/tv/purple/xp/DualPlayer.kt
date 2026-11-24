@@ -35,7 +35,7 @@ import java.security.SecureRandom
  *
  * Everything here runs on the main thread except the network request for the stream pass.
  */
-class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
+class DualPlayer(ctx: Context, val login: String, private val raidId: String? = null) : FrameLayout(ctx) {
 
     enum class State { LOADING, PLAYING, BUFFERING, OFFLINE, ERROR }
 
@@ -53,20 +53,23 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
     private val video = TextureView(ctx)
     private val status = TextView(ctx)
     private val spinner = ProgressBar(ctx, null, android.R.attr.progressBarStyleSmall)
+    /** Called with a control's name when one of the buttons over the video is pressed. */
+    var onControl: ((String, View) -> Unit)? = null
+    private val controls = DualControls(ctx) { k, v -> onControl?.invoke(k, v) }
 
     /** One IVS player. [dead] is set before its release and checked before every call. */
-    private class Core(val obj: Any) { var dead = false }
+    private class Core(val obj: Any, val tracked: DualTracker.Session?) { var dead = false }
 
     private enum class Mode { START, META, RECOVER }
 
-    private var core: Core? = null
+    @Volatile private var core: Core? = null
     private var ivs: Ivs? = null
     private var surface: Surface? = null
     @Volatile private var released = false
     private var started = false
     private var paused = false
     private var pausedAt = 0L
-    private var audible = false
+    private var volume = 100
     private var capW = 0
     private var capH = 0
     private var vidW = 0
@@ -103,7 +106,11 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
                 surface?.release()
                 val s = Surface(st)
                 surface = s
-                core?.let { call(it, ivs?.setSurface, s) }
+                core?.let { c ->
+                    val t = c.tracked
+                    if (t != null) { DualTracker.attach(t, s); if (!paused) DualTracker.start(t) }
+                    else call(c, ivs?.setSurface, s)
+                }
             }
 
             override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
@@ -119,6 +126,7 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
             override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
         }
         addView(video, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.CENTER))
+        VideoFilters.addPane(video, DualUsher.cleanLogin(login) ?: login)
         spinner.isIndeterminate = true
         spinner.indeterminateTintList = ColorStateList.valueOf(0xDDFFFFFF.toInt())
         addView(spinner, LayoutParams(dp(28f), dp(28f), Gravity.CENTER))
@@ -135,8 +143,66 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         addView(status, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
             leftMargin = dp(12f); rightMargin = dp(12f)
         })
+        addView(controls, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         render()
     }
+
+    private var statsOn = false
+    private val statsTick = object : Runnable {
+        override fun run() {
+            if (!statsOn || released) return
+            val p = ivsPlayer
+            controls.setStats(if (p == null) "-" else runCatching { PlayerStats.describe(p) }.getOrDefault("-"))
+            main.postDelayed(this, 1000)
+        }
+    }
+
+    fun toggleControls() = controls.toggle()
+
+    fun hideControls() = controls.showing(false)
+
+    fun isControlAt(x: Float, y: Float) = controls.onButton(x, y)
+
+    val isPausedNow: Boolean get() = paused
+
+    fun toggleStats() {
+        statsOn = !statsOn
+        main.removeCallbacks(statsTick)
+        if (statsOn) statsTick.run() else controls.setStats(null)
+    }
+
+    /** The stream's qualities as name to IVS object, best first. */
+    fun qualities(): List<Pair<String, Any>> {
+        val p = ivsPlayer ?: return emptyList()
+        return runCatching {
+            val set = p.javaClass.getMethod("getQualities").invoke(p) as Collection<*>
+            set.filterNotNull().sortedWith(compareByDescending<Any> { it.javaClass.getMethod("getHeight").invoke(it) as Int }
+                .thenByDescending { it.javaClass.getMethod("getFramerate").invoke(it) as Int })
+                .map { (it.javaClass.getMethod("getName").invoke(it) as String) to it }
+        }.getOrDefault(emptyList())
+    }
+
+    fun currentQuality(): String? {
+        val p = ivsPlayer ?: return null
+        return runCatching {
+            if (p.javaClass.getMethod("isAutoQualityMode").invoke(p) == true) return null
+            val q = p.javaClass.getMethod("getQuality").invoke(p) ?: return null
+            q.javaClass.getMethod("getName").invoke(q) as String
+        }.getOrNull()
+    }
+
+    /** A fixed quality, or back to automatic with null. */
+    fun chooseQuality(q: Any?) {
+        val c = core ?: return
+        if (q == null) { call(c, ivs?.autoQuality, true); return }
+        runCatching {
+            val m = c.obj.javaClass.methods.first { it.name == "setQuality" && it.parameterTypes.size == 1 }
+            m.invoke(c.obj, q)
+        }.onFailure { log("DP quality failed: ${it.cause ?: it}") }
+    }
+
+    /** The IVS player now, for the captions to listen to. Any thread. */
+    val ivsPlayer: Any? get() = core?.takeIf { !it.dead }?.obj
 
     /** Fetch a stream pass and start playing. Once; [retry] starts over. */
     fun start() {
@@ -147,10 +213,31 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         fetch(Mode.START)
     }
 
-    /** Only one stream is heard at a time; the other is muted, not paused. */
-    fun setAudible(on: Boolean) {
-        audible = on
-        core?.let { call(it, ivs?.setMuted, !on) }
+    /**
+     * This stream's own volume, 0 to 100. It goes straight to the IVS player: Twitch's tracker reads
+     * its mute flag from its own wrapper, so a stream turned down here still reports as playing.
+     */
+    fun setVolumePercent(p: Int) {
+        volume = p.coerceIn(0, 100)
+        core?.let { applyVolume(it) }
+    }
+
+    private var audioSession = 0
+
+    /** Tells the audio filters which session is this channel's, so it gets its own settings. */
+    private fun followAudioSession(c: Core) {
+        val s = runCatching { c.obj.javaClass.getMethod("getAudioSessionId").invoke(c.obj) as Int }.getOrDefault(0)
+        if (s <= 0 || s == audioSession) return
+        AudioFilters.scopeSession(audioSession, null)
+        audioSession = s
+        AudioFilters.scopeSession(s, DualUsher.cleanLogin(login) ?: login)
+    }
+
+    /** Squared, as hearing is closer to a curve: 50% sounds about half as loud. */
+    private fun applyVolume(c: Core) {
+        val g = volume / 100f
+        call(c, ivs?.setMuted, false)
+        call(c, ivs?.setVolume, g * g)
     }
 
     /**
@@ -177,20 +264,25 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
     fun pause() {
         if (released || paused) return
         paused = true
+        controls.setPaused(true)
         pausedAt = SystemClock.uptimeMillis()
-        core?.let { call(it, ivs?.pause) }
+        core?.let { c -> c.tracked?.let { DualTracker.pause(it) } ?: call(c, ivs?.pause) }
         main.removeCallbacks(tick)
     }
 
     fun resume() {
         if (released || !paused) return
         paused = false
+        controls.setPaused(false)
         val now = SystemClock.uptimeMillis()
         val c = core
         when {
             // A live stream paused for long is far behind; a fresh load starts at live again.
             c != null && now - pausedAt > LONG_PAUSE_MS -> { retry(); return }
-            c != null -> { call(c, ivs?.play); lastPlayCall = now }
+            c != null -> {
+                c.tracked?.let { DualTracker.resume(it) } ?: call(c, ivs?.play)
+                lastPlayCall = now
+            }
             state == State.OFFLINE && !fetching && now - lastFetch >= OFFLINE_CHECK_MS -> { fetch(Mode.START); return }
         }
         schedule()
@@ -211,7 +303,12 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         if (released) return
         released = true
         gen++
+        statsOn = false
+        main.removeCallbacks(statsTick)
         main.removeCallbacks(tick)
+        VideoFilters.dropPane(video)
+        AudioFilters.scopeSession(audioSession, null)
+        audioSession = 0
         dropCore()
         surface?.release()
         surface = null
@@ -267,8 +364,9 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         dropCore()
         val api = Ivs.of(context.classLoader) ?: run { fail(I18n.t("The video player could not start")); return }
         ivs = api
-        val obj = api.create(context) ?: run { fail(I18n.t("The video player could not start")); return }
-        val c = Core(obj)
+        val tracked = DualTracker.create()
+        val obj = tracked?.player ?: api.create(context) ?: run { fail(I18n.t("The video player could not start")); return }
+        val c = Core(obj, tracked)
         OwnPlayers.add(obj, events)
         core = c
         // A quiet reconnect of a stream that was playing keeps showing the spinner, not "Loading".
@@ -280,19 +378,40 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         call(c, api.lowLatency, true)
         call(c, api.rebufferToLive, true)
         if (api.resumeMode != null) call(c, api.recovery, api.resumeMode)
-        call(c, api.setMuted, !audible)
+        applyVolume(c)
         if (capW > 0) call(c, api.maxSize, capW, capH)
-        surface?.let { call(c, api.setSurface, it) }
+        surface?.let { s -> if (tracked != null) DualTracker.attach(tracked, s) else call(c, api.setSurface, s) }
         val template = runCatching { RefreshButton.lastLiveUri() }.getOrNull()
-        val url = DualUsher.usherUrl(template, a.login, a, System.currentTimeMillis(), sessionHex(), appVersion(context))
+        val url = DualUsher.usherUrl(template, a.login, a, System.currentTimeMillis(), sessionHex(), appVersion(context), raidId)
+        val from = if (template != null) "Twitch's parameters" else "basic parameters"
+        log("DP $login loading ($from, ${if (tracked != null) "Twitch's tracker" else "no tracker"})")
+        if (tracked != null) loadTracked(c, tracked, api, url, a) else loadPlain(c, api, url)
+    }
+
+    /** The tracker reads the stream's session details out of the playlist, so it is fetched first. */
+    private fun loadTracked(c: Core, t: DualTracker.Session, api: Ivs, url: String, a: DualUsher.Access) {
+        Thread({
+            val playlist = runCatching { EmoteRepo.httpGet(url) }.getOrNull()
+            main.post {
+                if (released || core !== c || c.dead) return@post
+                if (playlist != null && DualTracker.load(t, url, a, playlist)) {
+                    applyVolume(c)
+                    if (!paused) { DualTracker.start(t); lastPlayCall = SystemClock.uptimeMillis() }
+                } else {
+                    log("DP $login playing without Twitch's tracker")
+                    loadPlain(c, api, url)
+                }
+            }
+        }, "ptv-dual-playlist").apply { isDaemon = true }.start()
+    }
+
+    private fun loadPlain(c: Core, api: Ivs, url: String) {
         if (!call(c, api.load, Uri.parse(url), "application/x-mpegURL")) {
             dropCore()
             fail(I18n.t("The video player could not start"))
             return
         }
         if (!paused) { call(c, api.play); lastPlayCall = SystemClock.uptimeMillis() }
-        val from = if (template != null) "Twitch's parameters" else "basic parameters"
-        log("DP $login loading ($from)")
     }
 
     private fun onState(code: Int) {
@@ -302,10 +421,13 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
             // A paused IVS player also reports READY, so only a player we want running is pushed on.
             1 -> {
                 val now = SystemClock.uptimeMillis()
-                if (!paused && now - lastPlayCall > 1000) { call(c, ivs?.play); lastPlayCall = now }
+                if (!paused && now - lastPlayCall > 1000) {
+                    c.tracked?.let { DualTracker.start(it) } ?: call(c, ivs?.play)
+                    lastPlayCall = now
+                }
             }
             2 -> if (played) setState(State.BUFFERING, null)
-            3 -> { played = true; setState(State.PLAYING, null) }
+            3 -> { played = true; applyVolume(c); followAudioSession(c); setState(State.PLAYING, null) }
             4 -> { log("DP $login ended"); dropCore(); setState(State.OFFLINE, null) }
         }
     }
@@ -342,6 +464,7 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         c.dead = true
         val api = ivs ?: return
         runCatching { api.setSurface.invoke(c.obj, *arrayOf<Any?>(null)) }.onFailure { log("DP detach failed: ${it.cause ?: it}") }
+        c.tracked?.let { DualTracker.release(it); return }
         Thread({
             runCatching { api.release.invoke(c.obj) }.onFailure { log("DP release failed: ${it.cause ?: it}") }
         }, "ptv-dual-release").start()
@@ -464,6 +587,7 @@ class DualPlayer(ctx: Context, val login: String) : FrameLayout(ctx) {
         val release: Method = player.getMethod("release")
         val setSurface: Method = player.getMethod("setSurface", Surface::class.java)
         val setMuted: Method? = opt("setMuted", BOOL)
+        val setVolume: Method? = opt("setVolume", Float::class.javaPrimitiveType!!)
         val maxSize: Method? = opt("setAutoMaxVideoSize", INT, INT)
         val autoQuality: Method? = opt("setAutoQualityMode", BOOL)
         val lowLatency: Method? = opt("setLiveLowLatencyEnabled", BOOL)

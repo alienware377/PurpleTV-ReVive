@@ -90,8 +90,18 @@ object AudioFilters {
     /** dB taken off after the limiter, per audio session, while an ad plays there (AdVolume). */
     private val adCut = HashMap<Int, Float>()
 
-    /** The limiter ceiling from the last apply, so setAdCut can send the same limiter. */
-    @Volatile private var ceilingNow: Float? = null
+    /** The limiter ceiling from the last apply per session, so setAdCut can send the same limiter. */
+    private val ceilings = java.util.concurrent.ConcurrentHashMap<Int, Float>()
+
+    /** Sessions of two-streams players, with the channel whose own filter settings they use. */
+    private val scopes = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /** [session] now plays [login]'s stream, or nothing of ours when [login] is null. */
+    fun scopeSession(session: Int, login: String?) {
+        if (session <= 0) return
+        if (login == null) scopes.remove(session) else scopes[session] = login
+        refresh()
+    }
 
     /**
      * True when this session's effect is running. Auto volume, the Compressor and the Limiter would
@@ -119,7 +129,7 @@ object AudioFilters {
             if ((adCut[session] ?: 0f) == cut) return
             if (cut == 0f) adCut.remove(session) else adCut[session] = cut
             (effects[session] as? DynamicsProcessing)?.let { dp ->
-                runCatching { dp.setLimiterAllChannelsTo(limiter(ceilingNow, cut)) }
+                runCatching { dp.setLimiterAllChannelsTo(limiter(ceilings[session], cut)) }
             }
         }
     }
@@ -169,6 +179,7 @@ object AudioFilters {
                 tracks.remove(session)
             }
             adCut.remove(session)
+            ceilings.remove(session)
             (effects.remove(session) as? DynamicsProcessing)?.let { runCatching { it.release() } }
         }
     }
@@ -219,7 +230,10 @@ object AudioFilters {
         if (i == 15) 20000f else kotlin.math.sqrt(EQ_HZ[i].toFloat() * EQ_HZ[i + 1]).toFloat()
     }
 
-    private fun apply(dp: DynamicsProcessing, session: Int) {
+    private fun apply(dp: DynamicsProcessing, session: Int) =
+        Settings.withFxScope(scopes[session]) { applyNow(dp, session) }
+
+    private fun applyNow(dp: DynamicsProcessing, session: Int) {
         val on = anyActive()
         dp.enabled = on
         if (!on) return
@@ -261,7 +275,7 @@ object AudioFilters {
             boost > 0f || makeup > 0f || gains.any { it > 0f } -> -0.5f
             else -> null
         }
-        ceilingNow = ceiling
+        if (ceiling != null) ceilings[session] = ceiling else ceilings.remove(session)
         dp.setLimiterAllChannelsTo(limiter(ceiling, adCut[session] ?: 0f))
         dp.setInputGainAllChannelsTo(boost)
     }

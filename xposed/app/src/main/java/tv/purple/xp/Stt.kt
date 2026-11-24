@@ -915,8 +915,9 @@ object Stt {
         SttPacks.engineReady(ctx) && SttPacks.modelReady(ctx) -> null
         StreamLang.waiting() -> null
         SttPacks.downloading() -> "Captions start when the download is done"
-        else -> (if (SttPacks.engineReady(ctx)) StreamLang.missingNote() else null)
-            ?: "Captions need a download first: Player, During ad breaks"
+        SttPacks.engineReady(ctx) -> StreamLang.missingNote()
+            ?: "To get captions, go to Twitch Settings > PurpleTV > Player and tap Download speech model"
+        else -> "To get captions, go to Twitch Settings > PurpleTV > Player and tap Download captions engine, then Download speech model"
     }
 
     /** What the menu and the download message say while the hooks wait (see [maybeHook]). */
@@ -2018,6 +2019,7 @@ object Stt {
      * when no other player is drawing.
      */
     internal fun mainPlayer(): Any? {
+        if (TwoStreams.isOpen()) return TwoStreams.captionPlayer()
         val pbyp = PbypWatch.player()
         val shown = PlayerStats.shownPlayer()?.takeIf { it !== pbyp }
         if (shown != null && RefreshButton.isClip(shown)) {

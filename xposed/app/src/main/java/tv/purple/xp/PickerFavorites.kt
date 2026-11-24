@@ -107,7 +107,7 @@ object PickerFavorites {
                 runCatching {
                     val cached = lastContainer?.get()
                     if (cached != null && cached.isAttachedToWindow && INJECTED.contains(cached)) return@addOnGlobalLayoutListener
-                    val container = findByEntry(root, "emote_picker") as? ViewGroup ?: return@addOnGlobalLayoutListener
+                    val container = findShown(root, "emote_picker") as? ViewGroup ?: return@addOnGlobalLayoutListener
                     // From 31.x a legacy emote_picker container is still inflated in the activity
                     // but never shown, while the real picker is a Compose sheet in its own window.
                     // Injecting into the hidden one looked like success and showed the user nothing.
@@ -119,6 +119,14 @@ object PickerFavorites {
             }
             log("PF global-layout listener attached to $what")
         }.onFailure { log("PF attachRoot error: $it") }
+    }
+
+    /** The first descendant named [entry] that can be seen; a hidden legacy copy may come first. */
+    private fun findShown(root: View, entry: String): View? {
+        if (root.visibility != View.VISIBLE) return null
+        if (Res.entry(root) == entry && root.isShown && root.width > 0 && root.height > 0) return root
+        if (root is ViewGroup) for (i in 0 until root.childCount) findShown(root.getChildAt(i), entry)?.let { return it }
+        return null
     }
 
     /** Depth-first search for the first descendant whose resource entry name == [entry]. */

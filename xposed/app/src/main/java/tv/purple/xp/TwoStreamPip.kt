@@ -139,6 +139,14 @@ object TwoStreamPip {
         log("PIP handed back to Twitch (${twitch.size} of its calls replayed, $held held while open)")
     }
 
+    /** Twitch's own stream into the small window, with the shape Twitch last asked for. */
+    fun enterForTwitch(a: Activity): Boolean {
+        if (!supported(a)) return false
+        return runCatching {
+            a.enterPictureInPictureMode(twitch.lastOrNull() ?: PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
+        }.onFailure { log("PIP enter for Twitch: $it") }.getOrDefault(false)
+    }
+
     /** Into the small window now. False when the phone has none or Android said no. */
     fun enterNow(a: Activity): Boolean {
         if (!supported(a)) return false

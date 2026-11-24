@@ -74,61 +74,114 @@ object Settings {
     private val revCounter = java.util.concurrent.atomic.AtomicInteger(0)
     val rev: Int get() = revCounter.get()
 
+    // ---- filters per stream ----
+
+    /**
+     * While a channel's scope is set on this thread, video and audio filter settings read and write
+     * that channel's own copy. A value it has no copy of yet reads the shared one, so a stream starts
+     * out with the filters already set up. The copies stay on this device: "dual_ui_" keys are not synced.
+     */
+    private val fxScope = ThreadLocal<String?>()
+    @Volatile private var fxUsed = false
+    private const val FX_PREFIX = "dual_ui_fx_"
+
+    fun <T> withFxScope(scope: String?, block: () -> T): T {
+        val before = fxScope.get()
+        setFxScope(scope)
+        try { return block() } finally { fxScope.set(before) }
+    }
+
+    /** For a panel that stays open: everything on this thread uses [scope] until it is cleared. */
+    fun setFxScope(scope: String?) {
+        if (scope != null) fxUsed = true
+        fxScope.set(scope)
+    }
+
+    fun inFxScope(): Boolean = fxUsed && fxScope.get() != null
+
+    private fun isFx(k: String) = (k.startsWith("vf_") && !k.startsWith("vf_ui_") && !k.startsWith("vf_tip") && k != "vf_force_gl") ||
+        (k.startsWith("af_") && !k.startsWith("af_ui_"))
+
+    /** The key of the channel's own copy, or null outside a scope or for any other setting. */
+    private fun scoped(key: String): String? {
+        if (!fxUsed) return null
+        val s = fxScope.get() ?: return null
+        return if (isFx(key)) "$FX_PREFIX${s}_$key" else null
+    }
+
+    /** The key to read: the channel's copy when it has one. */
+    private fun readKey(p: android.content.SharedPreferences, key: String): String =
+        scoped(key)?.takeIf { p.contains(it) } ?: key
+
     fun get(key: String, def: Boolean = true): Boolean {
         val c = appCtx ?: return def
         return runCatching {
-            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(key, def)
+            val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            p.getBoolean(readKey(p, key), def)
         }.getOrDefault(def)
     }
 
     fun set(key: String, value: Boolean) {
         val c = appCtx ?: return
+        val own = scoped(key)
         runCatching {
             c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putBoolean(key, value).apply()
+                .edit().putBoolean(own ?: key, value).apply()
         }
         revCounter.incrementAndGet()
-        SettingsSync.changed(key)
+        if (own == null) SettingsSync.changed(key)
     }
 
     fun getInt(key: String, def: Int): Int {
         val c = appCtx ?: return def
         return runCatching {
-            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(key, def)
+            val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            p.getInt(readKey(p, key), def)
         }.getOrDefault(def)
     }
 
     fun setInt(key: String, value: Int) {
         val c = appCtx ?: return
+        val own = scoped(key)
         runCatching {
             c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putInt(key, value).apply()
+                .edit().putInt(own ?: key, value).apply()
         }
         revCounter.incrementAndGet()
-        SettingsSync.changed(key)
+        if (own == null) SettingsSync.changed(key)
     }
 
     fun getString(key: String, def: String = ""): String {
         val c = appCtx ?: return def
         return runCatching {
-            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, def) ?: def
+            val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            p.getString(readKey(p, key), def) ?: def
         }.getOrDefault(def)
     }
 
     fun setString(key: String, value: String) {
         val c = appCtx ?: return
+        val own = scoped(key)
         runCatching {
             c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(key, value).apply()
+                .edit().putString(own ?: key, value).apply()
         }
         revCounter.incrementAndGet()
-        SettingsSync.changed(key)
+        if (own == null) SettingsSync.changed(key)
     }
 
     /** Every stored setting, for [SettingsSync]. */
-    fun all(): Map<String, *> = appCtx?.let { c ->
-        runCatching { c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).all }.getOrNull()
-    } ?: emptyMap<String, Any>()
+    fun all(): Map<String, *> {
+        val base = appCtx?.let { c ->
+            runCatching { c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).all }.getOrNull()
+        } ?: return emptyMap<String, Any>()
+        val s = (if (fxUsed) fxScope.get() else null) ?: return base
+        // In a channel's scope its own copies stand in for the shared values.
+        val prefix = "$FX_PREFIX${s}_"
+        val out = HashMap<String, Any?>(base)
+        for ((k, v) in base) if (k.startsWith(prefix)) out[k.removePrefix(prefix)] = v
+        return out
+    }
 
     /**
      * Make the settings whose keys pass [mine] exactly [values]: written, replaced, or removed when
@@ -141,16 +194,17 @@ object Settings {
         val c = appCtx ?: return emptySet()
         return runCatching {
             val p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val cur = p.all
+            val cur = all()
             val e = p.edit()
             val changed = HashSet<String>()
-            for (k in cur.keys) if (mine(k) && k !in values) { e.remove(k); changed += k }
+            for (k in cur.keys) if (mine(k) && k !in values) { e.remove(scoped(k) ?: k); changed += k }
             for ((k, v) in values) {
                 if (!mine(k) || cur[k] == v) continue
+                val to = scoped(k) ?: k
                 when (v) {
-                    is Boolean -> e.putBoolean(k, v); is Int -> e.putInt(k, v); is Long -> e.putLong(k, v)
-                    is Float -> e.putFloat(k, v); is String -> e.putString(k, v)
-                    is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+                    is Boolean -> e.putBoolean(to, v); is Int -> e.putInt(to, v); is Long -> e.putLong(to, v)
+                    is Float -> e.putFloat(to, v); is String -> e.putString(to, v)
+                    is Set<*> -> e.putStringSet(to, v.filterIsInstance<String>().toSet())
                     else -> continue
                 }
                 changed += k

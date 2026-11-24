@@ -299,9 +299,38 @@ object FiltersPanel {
     }
 
     @SuppressLint("SetTextI18n")
-    fun show(anchor: View) {
+    private var scopedPanel: java.lang.ref.WeakReference<Dialog>? = null
+    private var scopedLogin: String? = null
+
+    /** Closes the panel open for [login], or for any channel with null, and leaves its scope. */
+    fun closeFor(login: String?) {
+        if (scopedLogin == null || (login != null && login != scopedLogin)) return
+        val d = scopedPanel?.get()
+        scopedPanel = null
+        scopedLogin = null
+        Settings.setFxScope(null)
+        runCatching { d?.dismiss() }
+    }
+
+    /** With [scope], the panel edits that channel's own filters on the two-streams screen. */
+    fun show(anchor: View, scope: String? = null) {
+        Settings.setFxScope(scope)
         val ctx = anchor.context
         val d = Dialog(ctx)
+        if (scope != null) {
+            scopedPanel = java.lang.ref.WeakReference(d)
+            scopedLogin = scope
+            d.setOnDismissListener {
+                // A preset reopens the panel: the old one's dismiss must not end the new one's scope.
+                if (scopedPanel?.get() === d) {
+                    scopedPanel = null
+                    scopedLogin = null
+                    Settings.setFxScope(null)
+                }
+                VideoFilters.refresh(anchor)
+                AudioFilters.refresh()
+            }
+        }
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         val landscape = ctx.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val changed = { VideoFilters.refresh(anchor) }
@@ -472,7 +501,7 @@ object FiltersPanel {
                 setOnClickListener {
                     val kind = if (audioPane.visibility == View.VISIBLE) FxPresets.Kind.AUDIO else FxPresets.Kind.VIDEO
                     // A preset can change anything in the tab: open the panel afresh to show it.
-                    FxPresets.show(ctx, kind) { d.dismiss(); changed(); AudioFilters.refresh(); show(anchor) }
+                    FxPresets.show(ctx, kind) { d.dismiss(); changed(); AudioFilters.refresh(); show(anchor, scope) }
                 }
             })
             addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))

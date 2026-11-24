@@ -73,7 +73,10 @@ object GlVideoFilter {
 
     private fun newPipe(real: SurfaceTexture): Pipe? {
         if (Looper.myLooper() !== Looper.getMainLooper()) return null
-        if (!Gl.ok || !VideoFilters.anyActive()) return null
+        if (!Gl.ok) return null
+        val pane = VideoFilters.paneFor(real)
+        if (pane != null) return if (Settings.withFxScope(VideoFilters.paneScope(pane)) { VideoFilters.anyActive() }) makePipe(pane, real) else null
+        if (!Settings.withFxScope(null) { VideoFilters.anyActive() }) return null
         val tv = findPlaybackView(real) ?: return null
         return makePipe(tv, real)
     }
@@ -83,7 +86,7 @@ object GlVideoFilter {
         synchronized(pipes) { pipes[real] = pipe }
         byView[tv] = pipe
         tv.addOnAttachStateChangeListener(pipe.attachListener)
-        pipe.params = Params.snapshot(tv)
+        pipe.params = Settings.withFxScope(VideoFilters.paneScope(tv)) { Params.snapshot(tv) }
         Gl.start(pipe)
         log("GL filter pipe started for ${tv.width}x${tv.height}")
         return pipe

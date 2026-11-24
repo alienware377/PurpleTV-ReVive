@@ -561,6 +561,14 @@ object PurpleMenu {
         Toggle("Show two streams button",
             "A button in the live player that opens a second live channel beside this one, each with its own chat, and keeps both playing in picture-in-picture when you leave the app",
             TwoStreams.KEY, def = true, done = true),
+        Toggle("Stacked chats",
+            "In a tall window, two streams puts each stream directly above its own full-width chat. Off shows both streams on top and the two chats side by side below them",
+            TwoStreamsRoot.KEY_STACKED, def = false, done = true),
+        Toggle("Keep the stream up in settings",
+            "Opening Twitch settings puts the stream in picture-in-picture, adds a settings button to the chat settings sheet, and brings the stream back when you leave settings",
+            SettingsPip.KEY, def = true, done = true),
+        Slide("Two streams chat size", "Makes the chats on the two streams screen smaller so more fits, in %",
+            TwoStreamsRoot.KEY_CHAT_SIZE, min = 60, max = 100, def = TwoStreamsRoot.CHAT_SIZE_DEF, step = 5, done = true),
         Toggle("Hide Unfollow button", "", "hide_unfollow_button", done = true),
         Toggle("Hide \"Follow/Subscribe\" button", "", "hide_fsb", done = true),
         Toggle("Hide \"Create clip button\"", "", "hide_player_create_clip_button", done = true),
@@ -734,6 +742,11 @@ object PurpleMenu {
         openPages.clear()
     }
 
+    /** The settings page in front of [a], if one is open. */
+    fun topPage(a: android.app.Activity): Dialog? = openPages.asReversed().firstNotNullOfOrNull { ref ->
+        ref.get()?.takeIf { it.isShowing && (it.ownerActivity == null || it.ownerActivity === a) }
+    }
+
     /** Closes the menu; back on the stream, the live captions show with a handle to drag them by. */
     private fun moveCaptions(ctx: Context) {
         if (!LiveCaptions.startMove()) { toast(ctx, "Turn live captions on first, then move them from here"); return }
@@ -745,7 +758,10 @@ object PurpleMenu {
         val dlg = Dialog(ctx, android.R.style.Theme_Material_NoActionBar)
         dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
         openPages.add(java.lang.ref.WeakReference(dlg))
-        dlg.setOnDismissListener { openPages.removeAll { it.get() == null || it.get() === dlg } }
+        dlg.setOnDismissListener {
+            openPages.removeAll { it.get() == null || it.get() === dlg }
+            InAppUpdate.pagesChanged()
+        }
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -781,6 +797,7 @@ object PurpleMenu {
         dlg.window?.setLayout(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         dlg.show()
+        InAppUpdate.pagesChanged()
     }
 
     private fun header(ctx: Context, title: String, onBack: () -> Unit): View =

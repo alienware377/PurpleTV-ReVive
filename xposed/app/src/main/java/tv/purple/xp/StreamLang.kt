@@ -171,7 +171,7 @@ object StreamLang {
 
     // ---- the channel being watched ----
 
-    private fun login(): String? = RefreshButton.playingLogin()?.lowercase(Locale.ROOT)
+    private fun login(): String? = (TwoStreams.captionLogin() ?: RefreshButton.playingLogin())?.lowercase(Locale.ROOT)
 
     private fun now() = SystemClock.uptimeMillis()
 
@@ -226,7 +226,7 @@ object StreamLang {
         val l = login() ?: return null
         if (!SttModels.auto() || heard.containsKey(l) || RefreshButton.clipHeard()) return null
         val began = now() - (seconds * 1000f).toLong()
-        return l.takeIf { began >= RefreshButton.playingSince() + SWITCH_MS }
+        return l.takeIf { began >= (TwoStreams.captionSince() ?: RefreshButton.playingSince()) + SWITCH_MS }
     }
 
     /**
@@ -294,14 +294,14 @@ object StreamLang {
             tipUntil = now() + TIP_MS
         }
         if (now() >= tipUntil) { tipLang = null; return null }
-        return "${own.label} has its own speech model, which gives much better captions. Download it under Player, During ad breaks"
+        return "${own.label} has its own speech model, which gives much better captions. To get it, go to Twitch Settings > PurpleTV > Player and tap Download speech model"
     }
 
     /** For the caption box when a download is missing in Auto: which language it is for, when that is known. */
     fun missingNote(): String? {
         if (!SttModels.auto()) return null
         val lang = lang(login()) ?: return null
-        return "Captions in ${SttModels.langName(lang, I18n.shownLang())} need a download first: Player, During ad breaks"
+        return "To get ${SttModels.langName(lang, I18n.shownLang())} captions, go to Twitch Settings > PurpleTV > Player and tap Download speech model"
     }
 
     /** One line for the test status command. */

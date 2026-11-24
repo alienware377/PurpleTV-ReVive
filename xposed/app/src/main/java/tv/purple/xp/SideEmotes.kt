@@ -153,6 +153,32 @@ object SideEmotes {
         return null
     }
 
+    /**
+     * Emotes for the message box of [channelId]'s chat, best matches first: this channel's, the
+     * global ones, then the account's Twitch emotes. [onReady] runs as missing pictures arrive.
+     */
+    fun suggest(channelId: String, prefix: String, limit: Int, onReady: () -> Unit): List<EmoteRepo.Sug> {
+        if (prefix.length < 2) return emptyList()
+        val p = prefix.lowercase()
+        val t = toggles()
+        val pins = Pins.all()
+        val found = HashMap<String, Pair<String, Int>>()
+        sets[channelId]?.let { s ->
+            for ((n, u) in s.urls) if (n.lowercase().contains(p) && t.allows(s.src[n], n, channel = true)) found[n] = u to 0
+        }
+        for ((n, u) in gUrls)
+            if (n !in found && n.lowercase().contains(p) && t.allows(gSrc[n], n, channel = false)) found[n] = u to 1
+        if (Settings.get(Settings.KEY_SRC_TWITCH))
+            for ((n, u) in EmoteRepo.twitch) if (n !in found && n.lowercase().contains(p)) found[n] = u to 2
+        val order = compareBy<Map.Entry<String, Pair<String, Int>>>(
+            { if (it.key in pins) -1 else it.value.second },
+            { if (it.key.lowercase().startsWith(p)) 0 else 1 },
+            { it.key.lowercase() },
+            { it.key })
+        return found.entries.sortedWith(order).take(limit)
+            .map { EmoteRepo.Sug(it.key, picture(it.value.first, onReady), pinned = it.key in pins) }
+    }
+
     /** A Twitch emote's picture address from its id, at the size the quality setting asks for. */
     fun twitchUrl(emoteId: String): String =
         "https://static-cdn.jtvnw.net/emoticons/v2/$emoteId/default/dark/${toggles().twitchSize}"
@@ -219,20 +245,25 @@ object SideEmotes {
      * already set (EmoteRepo's emote height, and the width that keeps its shape) and are shared:
      * callers scale it while drawing and never change them.
      */
-    fun picture(url: String, onReady: () -> Unit): Drawable? {
+    fun picture(url: String, onReady: () -> Unit): Drawable? = load(url, url, 0, onReady)
+
+    /** A chat GIF, decoded [height] px tall rather than at the emote size. Otherwise as [picture]. */
+    fun gif(url: String, height: Int, onReady: () -> Unit): Drawable? = load(url, "$url#$height", height, onReady)
+
+    private fun load(url: String, key: String, height: Int, onReady: () -> Unit): Drawable? {
         if (url.isEmpty()) return null
-        cache.get(url)?.let { return it.d }
-        if (url in gone) return null
-        failedAt[url]?.let { if (SystemClock.uptimeMillis() - it < PICTURE_RETRY_MS) return null }
+        cache.get(key)?.let { return it.d }
+        if (key in gone) return null
+        failedAt[key]?.let { if (SystemClock.uptimeMillis() - it < PICTURE_RETRY_MS) return null }
         synchronized(pictureLock) {
             // A download stores its picture before it takes the lock to call its waiters, so a
             // second look here cannot miss one that finished just now.
-            cache.get(url)?.let { return it.d }
-            val list = pictureWaiters[url]
+            cache.get(key)?.let { return it.d }
+            val list = pictureWaiters[key]
             if (list != null) { if (onReady !in list) list.add(onReady); return null }
-            pictureWaiters[url] = ArrayList<() -> Unit>(2).apply { add(onReady) }
+            pictureWaiters[key] = ArrayList<() -> Unit>(2).apply { add(onReady) }
         }
-        pics.execute { fetchPicture(url) }
+        pics.execute { fetchPicture(url, key, height) }
         return null
     }
 
@@ -242,21 +273,21 @@ object SideEmotes {
         synchronized(pictureLock) { for (l in pictureWaiters.values) l.remove(onReady) }
     }
 
-    private fun fetchPicture(url: String) {
+    private fun fetchPicture(url: String, key: String, height: Int) {
         var d: Drawable? = null
         try {
             val bytes = EmoteRepo.httpBytes(url)
-            val pic = decode(bytes) ?: error("could not decode")
+            val pic = decode(bytes, height) ?: error("could not decode")
             d = pic
-            cache.put(url, Pic(pic, costOf(pic, bytes.size)))
-            failedAt.remove(url)
+            cache.put(key, Pic(pic, costOf(pic, bytes.size)))
+            failedAt.remove(key)
         } catch (t: Throwable) {
             val msg = t.message.orEmpty()
-            if (msg.startsWith("HTTP 404") || msg.startsWith("HTTP 410")) gone.add(url)
-            else failedAt[url] = SystemClock.uptimeMillis()
+            if (msg.startsWith("HTTP 404") || msg.startsWith("HTTP 410")) gone.add(key)
+            else failedAt[key] = SystemClock.uptimeMillis()
             log("SE picture failed: ${t.javaClass.simpleName}")
         }
-        val ready = synchronized(pictureLock) { pictureWaiters.remove(url) } ?: return
+        val ready = synchronized(pictureLock) { pictureWaiters.remove(key) } ?: return
         if (d == null || ready.isEmpty()) return
         main.post { for (cb in ready) runCatching { cb() }.onFailure { log("SE picture callback failed: $it") } }
     }
@@ -267,8 +298,8 @@ object SideEmotes {
      * decoded into ordinary memory rather than graphics memory: a graphics-only bitmap draws
      * nothing (or throws) on a software canvas, and a chat row can end up drawn on one.
      */
-    private fun decode(bytes: ByteArray): Drawable? {
-        val h = EmoteRepo.emoteHeight().coerceAtLeast(16)
+    private fun decode(bytes: ByteArray, height: Int = 0): Drawable? {
+        val h = (if (height > 0) height else EmoteRepo.emoteHeight()).coerceAtLeast(16)
         val res = Resources.getSystem()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val d = runCatching {

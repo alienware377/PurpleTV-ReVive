@@ -80,6 +80,8 @@ object Channels {
         val replay = Res.id(ctx, "chomments_coordinator_layout").takeIf { it != 0 }?.let { root.findViewById<android.view.View>(it) }
         liveShown = live?.isShown == true
         replayShown = replay?.isShown == true
+        // The two-streams screen picks which channel's emotes are loaded for its own picker.
+        if (TwoStreams.isOpen()) return
         val now = EmoteRepo.currentChannel()
         if (liveShown && !replayShown) liveId?.let { if (it != now) EmoteRepo.loadChannelAsync(it, liveName) }
         else if (replayShown && !liveShown) replayId?.let { if (it != now) EmoteRepo.loadChannelAsync(it, null) }

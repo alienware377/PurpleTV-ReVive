@@ -155,9 +155,16 @@ object EmoteAutocomplete {
      *  emote picker can insert an emote into it (mirrors the native picker's own behaviour). */
     @Volatile private var lastInput: java.lang.ref.WeakReference<EditText>? = null
 
+    /** A message box of ours that the emote picker writes to while it is open for that box. */
+    @Volatile private var boxTarget: java.lang.ref.WeakReference<EditText>? = null
+
+    fun useBox(box: EditText?) { boxTarget = box?.let { java.lang.ref.WeakReference(it) } }
+
+    fun box(): EditText? = boxTarget?.get()
+
     /** Insert "<name> " at the cursor of the current chat input (insert only, never sends). */
     fun insertEmote(name: String): Boolean {
-        val input = lastInput?.get() ?: return false
+        val input = box() ?: lastInput?.get() ?: return false
         return runCatching {
             val ed = input.text ?: return false
             val pos = input.selectionStart.coerceIn(0, ed.length)
@@ -178,7 +185,23 @@ object EmoteAutocomplete {
         runCatching { PickerFavorites.attachRoot(input) }.onFailure { log("AC PF attachRoot error: $it") }
         wireSettingsLongPress(input, ctx)
         applyNavbarInset(input)
+        wireStrip(input, ctx) { word, redraw ->
+            val sugs = EmoteRepo.suggest(word, 30)
+            // Pictures still missing for what is shown: fetch those first, and redraw the list as
+            // they land (unless a finger is on it, which a redraw would cancel).
+            val missing = sugs.filter { it.drawable == null }.map { it.name }
+            if (missing.isNotEmpty()) EmoteRepo.wantPictures(missing, redraw)
+            sugs
+        }
+    }
 
+    /** The same suggestion list on a message box of our own, with its own source of emotes. */
+    fun attachBox(input: EditText, suggest: (String, () -> Unit) -> List<EmoteRepo.Sug>) {
+        if (!WIRED.add(input)) return
+        wireStrip(input, input.context, suggest)
+    }
+
+    private fun wireStrip(input: EditText, ctx: Context, suggest: (String, () -> Unit) -> List<EmoteRepo.Sug>) {
         var popup: PopupWindow? = null
 
         // Auto-dismiss the strip a few seconds after the last keystroke. The keyboard is
@@ -218,16 +241,12 @@ object EmoteAutocomplete {
                     val cur = input.selectionStart.coerceIn(0, text.length)
                     val (word, start, end) = wordAround(text, cur)
                     if (word.length < MIN_LEN) { popup?.dismiss(); return@Runnable }
-                    val sugs = EmoteRepo.suggest(word, 30)
-                    if (sugs.isEmpty()) { popup?.dismiss(); return@Runnable }
-                    popup?.dismiss()
-                    // Pictures still missing for what is shown: fetch those first, and redraw the
-                    // list as they land (unless a finger is on it, which a redraw would cancel).
-                    val missing = sugs.filter { it.drawable == null }.map { it.name }
-                    if (missing.isNotEmpty()) EmoteRepo.wantPictures(missing) {
+                    val sugs = suggest(word) {
                         handler.removeCallbacks(pictureRedraw)
                         handler.postDelayed(pictureRedraw, 250)
                     }
+                    if (sugs.isEmpty()) { popup?.dismiss(); return@Runnable }
+                    popup?.dismiss()
                     popup = showStrip(input, ctx, sugs, { name ->
                         replaceWord(input, start, end, name)
                     }, { handler.post(refresh) }, {
@@ -243,7 +262,9 @@ object EmoteAutocomplete {
         // Also dismiss immediately when the input loses focus (switching fields / leaving chat).
         // Creates no window, so it cannot reintroduce the old kb-tracker's black-player regression.
         runCatching {
-            input.setOnFocusChangeListener { _, hasFocus ->
+            val before = input.onFocusChangeListener
+            input.setOnFocusChangeListener { v, hasFocus ->
+                before?.onFocusChange(v, hasFocus)
                 if (!hasFocus) { handler.removeCallbacks(autoDismiss); runCatching { popup?.dismiss() } }
             }
         }

@@ -42,10 +42,10 @@ class I18nTest {
     /** Auto's caption box notes and menu line, with a language name or a list in them. */
     @Test fun autoNotesAreTranslated() {
         Locale.setDefault(Locale.forLanguageTag("es"))
-        assertEquals("Los subtítulos en Español necesitan una descarga primero: Reproductor, Durante las pausas publicitarias",
-            I18n.t("Captions in Spanish need a download first: Player, During ad breaks"))
-        assertEquals("Hay un modelo de voz propio para Japonés, que da subtítulos mucho mejores. Descárgalo en Reproductor, Durante las pausas publicitarias",
-            I18n.t("Japanese has its own speech model, which gives much better captions. Download it under Player, During ad breaks"))
+        assertEquals("Para ver subtítulos en Español: Configuración de Twitch > PurpleTV > Reproductor y toca «Descargar modelo de voz»",
+            I18n.t("To get Spanish captions, go to Twitch Settings > PurpleTV > Player and tap Download speech model"))
+        assertEquals("Hay un modelo de voz propio para Japonés, que da subtítulos mucho mejores. Para obtenerlo: Configuración de Twitch > PurpleTV > Reproductor y toca «Descargar modelo de voz»",
+            I18n.t("Japanese has its own speech model, which gives much better captions. To get it, go to Twitch Settings > PurpleTV > Player and tap Download speech model"))
         val line = I18n.t("Auto: each stream uses the speech model for its language. Downloaded: Inglés, Japonés. " +
             "The all-languages model (Whisper base) finds a stream's language as it starts, and hears languages that have no model of their own. " +
             "Tap to download a language")

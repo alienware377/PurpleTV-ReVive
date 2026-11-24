@@ -214,6 +214,11 @@ object PlayerStats {
 
     private fun describe(): String {
         val pl = shown?.get() ?: RefreshButton.currentPlayer() ?: return "No player yet"
+        return describe(pl)
+    }
+
+    /** The stats text for any IVS player, also used on the two-streams screen. */
+    fun describe(pl: Any): String {
         val q = call(pl, "getQuality")
         val st = call(pl, "getStatistics")
         val w = q?.let { call(it, "getWidth") } as? Int ?: 0

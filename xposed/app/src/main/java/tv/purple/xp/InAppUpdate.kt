@@ -160,8 +160,13 @@ object InAppUpdate {
 
     private fun dp(ctx: Context, v: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt()
 
+    /** A settings page opened or closed: keep the bar on whichever screen is in front. */
+    fun pagesChanged() { if (downloading) current?.get()?.let { showBar(it) } }
+
     private fun showBar(a: Activity) {
-        val content = a.findViewById<ViewGroup>(android.R.id.content) as? FrameLayout ?: return
+        // Settings pages are windows of their own and would cover a bar drawn on the app.
+        val page = PurpleMenu.topPage(a)
+        val content = (page?.findViewById<View>(android.R.id.content) ?: a.findViewById<View>(android.R.id.content)) as? FrameLayout ?: return
         bar?.get()?.let { if (it.parent === content) { updateBar(); return } else (it.parent as? ViewGroup)?.removeView(it) }
         val box = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
@@ -177,8 +182,11 @@ object InAppUpdate {
                 progressTintList = android.content.res.ColorStateList.valueOf(FilterIcons.PURPLE)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 6f)).apply { topMargin = dp(a, 4f) })
         }
+        // On a settings page the top is the title, so the bar sits low, above the navigation bar.
         content.addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(a, 30f) })
+            (if (page != null) Gravity.BOTTOM else Gravity.TOP) or Gravity.CENTER_HORIZONTAL).apply {
+            if (page != null) bottomMargin = dp(a, 64f) else topMargin = dp(a, 30f)
+        })
         bar = WeakReference(box)
         updateBar()
     }

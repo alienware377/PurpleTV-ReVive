@@ -1,8 +1,10 @@
 package tv.purple.xp
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
@@ -21,6 +23,7 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.text.style.ImageSpan
@@ -29,6 +32,7 @@ import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.URLSpan
 import android.util.TypedValue
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -44,6 +48,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.PopupMenu
 import android.widget.TextView
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -82,6 +87,18 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         /** New lines are added to the list at most this often: a busy chat sends dozens a second. */
         const val BATCH_MS = 150L
         const val MAX_LENGTH = 500
+        /** How tall a GIF is drawn in a chat line. */
+        const val GIF_DP = 72f
+        /** Below this pane width only the channel points button stays next to the message box. */
+        const val TIGHT_DP = 340f
+        const val POINTS_MS = 15_000L
+        const val BANNER_FIRST_MS = 2_000L
+        const val BANNER_RETRY_MS = 3_000L
+        const val BANNER_POLL_MS = 30_000L
+        const val BANNER_HYPE_MS = 10_000L
+        const val BANNER_TURN_MS = 7_000L
+        const val KEY_SEND_TIP = "dual_send_tip_dismissed"
+        private var tipPane: java.lang.ref.WeakReference<DualChatPane>? = null
         /** How long one of our own lines waits for Twitch's answer before none is matched to it. */
         const val ANSWER_MS = 10_000L
         /** Missing badges are asked for again this often. TwitchBadges repeats a request only after
@@ -115,6 +132,8 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         /** Blacklist word separators, as Blacklist splits a message. */
         val SPLIT = Regex("[\\s,.!?-]+")
         const val WORD_CHAR = "[\\p{L}\\p{N}_]"
+        /** The emote id in a Twitch picture address; other providers' emotes have no Twitch card. */
+        val TWITCH_EMOTE = Regex("static-cdn\\.jtvnw\\.net/emoticons/v2/([^/]+)/")
     }
 
     /** One chat line as it arrived. [text] is the action's own words on a /me line. */
@@ -137,6 +156,7 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         val tint: Int = 0,
         val replyTo: String? = null,
         val replyBody: String? = null,
+        val gifs: List<GifRange> = emptyList(),
     ) {
         var deleted = false
         var built: CharSequence? = null
@@ -158,6 +178,9 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
     private val unconfirmed = ArrayDeque<Pair<Line, Long>>()
     /** The line under the finger when it last went down, for long-press copy. */
     private var pressed: Line? = null
+    private val cardKey = "ptv_vc_${System.identityHashCode(this)}"
+    /** The line the next message answers, while the reply bar is up. */
+    private var replying: Line? = null
     private var seq = 0L
     private var started = false
     private var stoppedByDetach = false
@@ -282,17 +305,289 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         isFocusable = false
         background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
         setOnClickListener { send() }
+        setOnLongClickListener { showSendMenu(); true }
     }
+
+    // ---- pinned messages, hype train and drops, in one thin line above the chat ----
+
+    private var banners: List<DualBanners.Item> = emptyList()
+    private val closedBanners = HashSet<String>()
+    private var bannerAt = 0
+    private var bannerOpen = false
+    private var bannerGen = 0
+
+    private val bannerTag = TextView(ctx).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(LINK)
+        isSingleLine = true
+        setPadding(0, 0, dp(6f), 0)
+    }
+    private val bannerText = TextView(ctx).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setTextColor(TEXT)
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+    }
+    private val bannerBar = object : LinearLayout(ctx) {
+        val line = android.graphics.Paint().apply { color = PURPLE }
+        var ratio: Float? = null
+        override fun dispatchDraw(canvas: Canvas) {
+            super.dispatchDraw(canvas)
+            ratio?.let { canvas.drawRect(0f, height - dp(2f).toFloat(), width * it, height.toFloat(), line) }
+        }
+    }.apply {
+        orientation = HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(10f), dp(3f), dp(2f), dp(3f))
+        setBackgroundColor(FIELD)
+        visibility = View.GONE
+        setOnClickListener { bannerOpen = !bannerOpen; showBanner() }
+        addView(bannerTag, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(bannerText, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(ImageView(ctx).apply {
+            setImageDrawable(DualIcons.Close())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+            contentDescription = I18n.t("Close")
+            background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+            setOnClickListener { closeBanner() }
+        }, LayoutParams(dp(24f), dp(24f)))
+    }
+
+    private fun visibleBanners() = banners.filter { it.id !in closedBanners }
+
+    private fun showBanner() {
+        val list = visibleBanners()
+        if (list.isEmpty() || compact) { bannerBar.visibility = View.GONE; return }
+        val b = list[bannerAt.mod(list.size)]
+        bannerTag.text = when (b.kind) {
+            DualBanners.Kind.HYPE -> I18n.t("Hype Train level ${b.level}")
+            DualBanners.Kind.PINNED -> I18n.t("Pinned")
+            DualBanners.Kind.DROPS -> I18n.t("Drops")
+        }
+        bannerText.text = b.text
+        bannerText.maxLines = if (bannerOpen) 5 else 1
+        bannerBar.ratio = b.progress
+        bannerBar.visibility = View.VISIBLE
+        bannerBar.invalidate()
+    }
+
+    private fun closeBanner() {
+        val list = visibleBanners()
+        if (list.isEmpty()) return
+        closedBanners.add(list[bannerAt.mod(list.size)].id)
+        bannerOpen = false
+        showBanner()
+    }
+
+    /** More than one banner: they take turns, unless one is opened to be read. */
+    private val bannerTurn: Runnable = object : Runnable {
+        override fun run() {
+            if (!started) return
+            if (!bannerOpen && visibleBanners().size > 1) { bannerAt++; showBanner() }
+            main.postDelayed(this, BANNER_TURN_MS)
+        }
+    }
+
+    private val bannerPoll: Runnable = object : Runnable {
+        override fun run() {
+            if (!started) return
+            val id = channelId
+            if (id.isNullOrEmpty() || !isShown) { main.postDelayed(this, BANNER_RETRY_MS); return }
+            val my = ++bannerGen
+            val app = context.applicationContext ?: context
+            Thread({
+                val raw = runCatching { EmoteRepo.gqlPost(EmoteRepo.authToken(app), DualBanners.body(id)) }.getOrNull()
+                val got = raw?.let { DualBanners.parse(it, System.currentTimeMillis()) }
+                main.post {
+                    if (!started || my != bannerGen) return@post
+                    if (got != null) { banners = got; showBanner() }
+                    val hype = got?.any { it.kind == DualBanners.Kind.HYPE } == true
+                    main.postDelayed(this, if (hype) BANNER_HYPE_MS else BANNER_POLL_MS)
+                }
+            }, "ptv-dual-banners").apply { isDaemon = true }.start()
+        }
+    }
+
+    /** Asks the screen for Twitch's emote picker ("emotes") or rewards panel ("points"). */
+    var onSheet: ((String) -> Unit)? = null
+
+    val box: EditText get() = input
+
+    private fun iconButton(icon: Drawable, label: String, onTap: () -> Unit) = ImageView(context).apply {
+        setImageDrawable(icon)
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
+        contentDescription = I18n.t(label)
+        isFocusable = false
+        background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+        setOnClickListener { onTap() }
+    }
+
+    private val pointsBtn = TextView(ctx).apply {
+        setTextColor(TEXT)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER_VERTICAL
+        isSingleLine = true
+        compoundDrawablePadding = dp(3f)
+        setCompoundDrawables(DualIcons.Points().apply { setBounds(0, 0, dp(24f), dp(24f)) }, null, null, null)
+        setPadding(dp(4f), 0, dp(6f), 0)
+        contentDescription = I18n.t("Channel points")
+        background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+        setOnClickListener { onSheet?.invoke("points") }
+    }
+    private val emoteBtn = iconButton(DualIcons.Smile(), "Emotes") { onSheet?.invoke("emotes") }
+    private val menuBtn = iconButton(DualIcons.More(), "Chat settings") { openChatMenu() }
 
     private val inputRow = LinearLayout(ctx).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8f), dp(6f), dp(4f), dp(6f))
+        setPadding(dp(6f), dp(6f), dp(4f), dp(6f))
+        addView(pointsBtn, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40f)).apply { rightMargin = dp(2f) })
         addView(input, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(sendBtn, LayoutParams(dp(40f), dp(40f)).apply { leftMargin = dp(4f) })
+        addView(emoteBtn, LayoutParams(dp(36f), dp(36f)).apply { leftMargin = dp(2f) })
+        addView(menuBtn, LayoutParams(dp(30f), dp(36f)))
+        addView(sendBtn, LayoutParams(dp(38f), dp(40f)))
+    }
+
+    /** Too narrow for every button: emotes and the menu move to a long press on Send. */
+    private var tight = false
+    private var sendTip: View? = null
+
+    private val pointsTick: Runnable = object : Runnable {
+        override fun run() {
+            ChannelPoints.balance(login)?.let { b ->
+                val t = TwoStreamsRoot.count(b)
+                if (pointsBtn.text?.toString() != t) pointsBtn.text = t
+            }
+            if (started) main.postDelayed(this, POINTS_MS)
+        }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val now = w in 1 until dp(TIGHT_DP)
+        if (now == tight) return
+        tight = now
+        post {
+            val v = if (tight) View.GONE else View.VISIBLE
+            emoteBtn.visibility = v
+            menuBtn.visibility = v
+            if (tight) showSendTip() else removeSendTip()
+        }
+    }
+
+    private fun showSendMenu() {
+        removeSendTip(true)
+        val pm = PopupMenu(ContextThemeWrapper(context, android.R.style.Theme_Material), sendBtn, Gravity.END)
+        pm.menu.add(0, 1, 0, I18n.t("Emotes"))
+        pm.menu.add(0, 2, 1, I18n.t("Chat settings"))
+        pm.setOnMenuItemClickListener {
+            when (it.itemId) { 1 -> onSheet?.invoke("emotes"); 2 -> openChatMenu() }
+            true
+        }
+        pm.show()
+    }
+
+    /** Once ever, on a device where the buttons really are tucked away. */
+    private fun showSendTip() {
+        // One bubble is enough: it is about both panes' Send buttons.
+        if (Settings.get(KEY_SEND_TIP, false) || sendTip != null || compact || tipPane?.get()?.sendTip != null) return
+        val frame = list.parent as? FrameLayout ?: return
+        val bubble = DualIcons.DownBubble(0xF2241B31.toInt(), PURPLE, dp(12f).toFloat(), dp(1.5f).toFloat(), dp(8f).toFloat())
+        val tip = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = bubble
+            setPadding(dp(12f), dp(8f), dp(4f), dp(8f) + dp(8f))
+            elevation = dp(6f).toFloat()
+            addView(TextView(context).apply {
+                text = I18n.t("Hold Send for emotes and the chat menu")
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            }, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(context).apply {
+                text = "\u2715"
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                gravity = Gravity.CENTER
+                contentDescription = I18n.t("Dismiss tip")
+                setPadding(dp(8f), dp(2f), dp(8f), dp(2f))
+                setOnClickListener { removeSendTip(true) }
+            })
+        }
+        frame.addView(tip, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM).apply { leftMargin = dp(6f); rightMargin = dp(4f) })
+        tip.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            val a = IntArray(2).also { sendBtn.getLocationInWindow(it) }
+            val b = IntArray(2).also { v.getLocationInWindow(it) }
+            val x = (a[0] - b[0] + sendBtn.width / 2).toFloat()
+            if (bubble.arrowX != x) { bubble.arrowX = x; bubble.invalidateSelf() }
+        }
+        sendTip = tip
+        tipPane = java.lang.ref.WeakReference(this)
+    }
+
+    private fun removeSendTip(forGood: Boolean = false) {
+        if (forGood && !Settings.get(KEY_SEND_TIP, false)) Settings.set(KEY_SEND_TIP, true)
+        sendTip?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        sendTip = null
+    }
+
+    private fun openChatMenu() {
+        val act = host() ?: return
+        val id = channelId
+        if (id.isNullOrEmpty()) { toast(context, "Not connected to chat yet"); return }
+        if (!DualCards.chatSettings(act, id, isMod())) toast(context, "Could not open this")
+    }
+
+    fun hideKeys() = hideKeyboard()
+
+    fun focusBox() {
+        input.requestFocus()
+        runCatching {
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    /** The screen this pane is on; the pane's own context may be a scaled wrapper around it. */
+    private fun host(): Activity? {
+        var c: Context? = context
+        while (c is ContextWrapper) {
+            if (c is Activity) return c
+            c = c.baseContext
+        }
+        return null
     }
 
     private val inputLine = View(ctx).apply { setBackgroundColor(LINE) }
+
+    private val replyText = TextView(ctx).apply {
+        setTextColor(MUTED)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+        isSingleLine = true
+        ellipsize = TextUtils.TruncateAt.END
+    }
+
+    private val replyBar = LinearLayout(ctx).apply {
+        orientation = HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(12f), 0, dp(4f), 0)
+        setBackgroundColor(FIELD)
+        visibility = View.GONE
+        addView(replyText, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(ImageView(ctx).apply {
+            setImageDrawable(DualIcons.Close())
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+            contentDescription = I18n.t("Cancel reply")
+            background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+            setOnClickListener { cancelReply() }
+        }, LayoutParams(dp(32f), dp(32f)))
+    }
 
     /** Hide the message box: picture-in-picture, or a pane too small to type in. */
     var compact: Boolean = false
@@ -302,7 +597,8 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             val vis = if (v) View.GONE else View.VISIBLE
             inputRow.visibility = vis
             inputLine.visibility = vis
-            if (v) { hideKeyboard(); showPill(false) }
+            if (v) { cancelReply(); hideKeyboard(); showPill(false) }
+            showBanner()
         }
 
     init {
@@ -319,9 +615,9 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         })
         // Not by position: a flush during the hold can drop old lines and shift every position,
         // while the list keeps the one it saw at touch-down.
-        list.setOnItemLongClickListener { _, _, _, _ ->
+        list.setOnItemLongClickListener { _, row, _, _ ->
             val l = pressed ?: return@setOnItemLongClickListener false
-            copyLine(l)
+            showLineMenu(row, l)
             true
         }
         val frame = FrameLayout(ctx).apply {
@@ -329,9 +625,12 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             addView(pill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(8f) })
         }
+        addView(bannerBar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(frame, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addView(inputLine, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1f)))
+        addView(replyBar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(inputRow, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        EmoteAutocomplete.attachBox(input) { word, redraw -> SideEmotes.suggest(channelId.orEmpty(), word, 30, redraw) }
     }
 
     // ---- lifecycle ----
@@ -357,6 +656,12 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
                 .apply { isDaemon = true }.start()
         }
         updateHint()
+        main.removeCallbacks(pointsTick)
+        main.post(pointsTick)
+        main.removeCallbacks(bannerPoll)
+        main.removeCallbacks(bannerTurn)
+        main.postDelayed(bannerPoll, BANNER_FIRST_MS)
+        main.postDelayed(bannerTurn, BANNER_TURN_MS)
         log("DC chat started for $login")
     }
 
@@ -365,10 +670,16 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         if (!started) return
         started = false
         SideEmotes.unpin(channelId.orEmpty())
+        DualCards.forget(cardKey)
         DualIrc.leave(login, irc)
         SideEmotes.drop(onPicture)
         main.removeCallbacks(flush)
         main.removeCallbacks(badgeRetry)
+        main.removeCallbacks(pointsTick)
+        main.removeCallbacks(bannerPoll)
+        main.removeCallbacks(bannerTurn)
+        bannerGen++
+        removeSendTip()
         flushQueued = false
         pending.clear()
         unconfirmed.clear()
@@ -487,7 +798,8 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             header = header,
             tint = tint,
             replyTo = m.tag("reply-parent-display-name") ?: m.tag("reply-parent-user-login"),
-            replyBody = m.tag("reply-parent-msg-body")))
+            replyBody = m.tag("reply-parent-msg-body"),
+            gifs = if (body == null) IrcParse.gifRanges(m.tag("gifs"), text) else emptyList()))
         return true
     }
 
@@ -499,6 +811,9 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         if (!m.text.isNullOrEmpty() && chat(m, header, NOTICE_TINT)) return
         header?.let { addSystem(it, NOTICE_TINT) }
     }
+
+    /** A line from the two-streams screen itself, such as a raid moving this pane. */
+    fun notice(text: String) = addSystem(text, NOTICE_TINT)
 
     private fun addSystem(text: String, tint: Int = 0) {
         add(Line(++seq, text, system = true, tint = tint))
@@ -783,7 +1098,19 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             if (r.start < 0 || r.end > text.length || r.start >= r.end) continue
             val d = SideEmotes.picture(SideEmotes.twitchUrl(r.id), onPicture)
             if (d == null) { waitingNow = true; continue }
-            sb.setSpan(EmoteSpan(d, emotePx), start + r.start, start + r.end, EXCL)
+            sb.setSpan(EmoteSpan(d, emotePx, id = r.id, word = text.substring(r.start, r.end)), start + r.start, start + r.end, EXCL)
+        }
+        // A GIF stands in for its title in the text, and until it is here the title shows.
+        for (g in l.gifs) {
+            if (g.end > text.length || g.start >= g.end) continue
+            val tall = dp(GIF_DP)
+            val d = SideEmotes.gif(g.url, tall, onPicture)
+            if (d == null) { waitingNow = true; continue }
+            val b = d.bounds
+            val room = max(dp(120f), list.width - dp(24f))
+            val h = if (b.height() > 0 && b.width().toLong() * tall / b.height() > room)
+                (room.toLong() * b.height() / b.width()).toInt().coerceAtLeast(1) else tall
+            sb.setSpan(EmoteSpan(d, h, gif = g), start + g.start, start + g.end, EXCL)
         }
         // 7TV, BTTV and FFZ go by word; on our own lines also the account's Twitch emotes, which
         // IRC never sends back to us with their ids.
@@ -797,13 +1124,14 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             while (j < text.length && text[j] != ' ') j++
             while (ri < l.emotes.size && l.emotes[ri].end <= i) ri++
             val onTwitchEmote = ri < l.emotes.size && l.emotes[ri].start < j
-            if (!onTwitchEmote && j - i <= 100) {
+            val onGif = l.gifs.any { it.start < j && it.end > i }
+            if (!onTwitchEmote && !onGif && j - i <= 100) {
                 val w = text.substring(i, j)
                 val url = (if (l.own) EmoteRepo.twitch[w] else null) ?: SideEmotes.urlOf(cid, w)
                 if (url != null) {
                     val d = SideEmotes.picture(url, onPicture)
                     if (d == null) waitingNow = true
-                    else sb.setSpan(EmoteSpan(d, emotePx), start + i, start + j, EXCL)
+                    else sb.setSpan(EmoteSpan(d, emotePx, id = TWITCH_EMOTE.find(url)?.groupValues?.get(1), word = w), start + i, start + j, EXCL)
                 }
             }
             i = j
@@ -1001,18 +1329,51 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             toast(context, if (connected) "Log in to Twitch to chat" else "Not connected to chat yet")
             return
         }
-        if (!DualIrc.send(login, text)) {
+        val parent = replying?.takeIf { !text.startsWith("/") }
+        if (!DualIrc.send(login, text, parent?.id)) {
             toast(context, "Message not sent, try again in a moment")
             return
         }
         input.setText("")
+        cancelReply()
         // Any other command gets its answer from Twitch as a notice line.
         if (text.startsWith("/") && !isMe) return
-        addOwn(if (isMe) text.substring(3).trim() else text, isMe)
+        addOwn(if (isMe) text.substring(3).trim() else text, isMe, parent)
+    }
+
+    private fun startReply(l: Line) {
+        if (compact || l.id == null || !input.isEnabled) return
+        replying = l
+        val who = l.display?.takeIf { it.isNotEmpty() } ?: l.login.orEmpty()
+        replyText.text = I18n.t("Replying to @$who") + ": " + l.text
+        replyBar.visibility = View.VISIBLE
+        input.requestFocus()
+        runCatching {
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun cancelReply() {
+        replying = null
+        replyBar.visibility = View.GONE
+    }
+
+    /** Long press on a line. */
+    private fun showLineMenu(anchor: View, l: Line) {
+        val pm = PopupMenu(ContextThemeWrapper(context, android.R.style.Theme_Material), anchor, Gravity.END)
+        if (!l.system && l.id != null && !compact && input.isEnabled) pm.menu.add(0, 1, 0, I18n.t("Reply"))
+        pm.menu.add(0, 2, 1, I18n.t("Copy message"))
+        if (!l.system && l.login != null && l.userId != null) pm.menu.add(0, 3, 2, I18n.t("View profile"))
+        pm.setOnMenuItemClickListener {
+            when (it.itemId) { 1 -> startReply(l); 2 -> copyLine(l); 3 -> openUser(l.login.orEmpty(), l) }
+            true
+        }
+        pm.show()
     }
 
     /** Twitch does not send our own lines back, so they are added here, dressed from USERSTATE. */
-    private fun addOwn(text: String, action: Boolean) {
+    private fun addOwn(text: String, action: Boolean, parent: Line? = null) {
         if (text.isEmpty()) return
         val st = DualIrc.userState(login)
         val self = DualIrc.selfLogin().orEmpty()
@@ -1023,7 +1384,9 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
             color = st?.tag("color"),
             badges = IrcParse.badges(st?.tag("badges")),
             action = action,
-            own = true)
+            own = true,
+            replyTo = parent?.let { it.display?.takeIf { d -> d.isNotEmpty() } ?: it.login },
+            replyBody = parent?.text)
         add(l)
         unconfirmed.addLast(l to SystemClock.uptimeMillis())
         if (unconfirmed.size > 10) unconfirmed.removeFirst()
@@ -1059,10 +1422,55 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         }
     }
 
+    private fun isMod(): Boolean {
+        val st = DualIrc.userState(login) ?: return false
+        return st.tag("mod") == "1" || IrcParse.badges(st.tag("badges")).any { it.first == "moderator" || it.first == "broadcaster" }
+    }
+
+    /** Twitch's viewer card for [who]; a mention when it can not be opened. */
+    private fun openUser(who: String, l: Line?) {
+        val act = host()
+        val cid = channelId
+        val uid = l?.userId
+        if (act == null || cid.isNullOrEmpty() || uid.isNullOrEmpty()) { mention(who); return }
+        val me = ownId.orEmpty()
+        val ok = DualCards.viewer(act, cardKey, cid, uid, who, me, isMod(), me == cid, l.id.orEmpty(), l.text) { mention(it) }
+        if (!ok) mention(who)
+    }
+
+    /** Twitch's emote or GIF card, or our own preview for an emote Twitch has no card for. */
+    private fun openPicture(row: RowView, span: EmoteSpan) {
+        val act = host() ?: return
+        val l = row.line
+        span.gif?.let { g ->
+            val title = l?.text?.let { t -> t.substring(g.start.coerceAtMost(t.length), g.end.coerceAtMost(t.length)) }.orEmpty()
+                .trim('[', ']', ' ')
+            DualCards.gif(act, g.id, g.url, title, l?.id, l?.userId, l?.login, l?.display, channelId)
+            return
+        }
+        val id = span.id
+        if (id != null && DualCards.emote(act, id, channelId.orEmpty(), login, l?.id, l?.userId)) return
+        span.word?.let { w -> runCatching { EmoteHooks.showEmotePreview(rootView, w) } }
+    }
+
+    /** Test hook: opens a real card as a tap on the newest chatter's line would. */
+    fun devCard(kind: String) {
+        val act = host() ?: return
+        val l = items.lastOrNull { !it.system && it.login != null && it.userId != null }
+        when (kind) {
+            "viewer" -> l?.let { openUser(it.login.orEmpty(), it) }
+            "emote" -> log("DC emote card: ${DualCards.emote(act, "25", channelId.orEmpty(), login, l?.id, l?.userId)}")
+            "chat" -> log("DC chat settings: ${DualCards.chatSettings(act, channelId.orEmpty(), isMod())}")
+            "picker" -> onSheet?.invoke("emotes")
+            "points" -> onSheet?.invoke("points")
+        }
+    }
+
     private fun onTap(row: RowView, target: Any) {
         when (target) {
             is BadgeSpan -> BadgeInfo.show(row, BadgeInfo.Hit(target.title.ifBlank { null }, target.src, target.url))
-            is NameMark -> mention(target.login)
+            is EmoteSpan -> openPicture(row, target)
+            is NameMark -> openUser(target.login, row.line)
             is URLSpan -> runCatching { target.onClick(row) }.onFailure { toast(context, "Could not open the link") }
         }
     }
@@ -1143,6 +1551,7 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
                 return lx >= min(a, b) && lx <= max(a, b)
             }
             if (BadgeInfo.enabled()) cs.getSpans(from, to, BadgeSpan::class.java).firstOrNull { within(it) }?.let { return it }
+            cs.getSpans(from, to, EmoteSpan::class.java).firstOrNull { within(it) }?.let { return it }
             cs.getSpans(from, to, NameMark::class.java).firstOrNull { within(it) }?.let { return it }
             cs.getSpans(from, to, URLSpan::class.java).firstOrNull { within(it) }?.let { return it }
             return null
@@ -1192,7 +1601,8 @@ class DualChatPane(ctx: Context, val login: String) : LinearLayout(ctx) {
         }
     }
 
-    private class EmoteSpan(d: Drawable, height: Int) : PicSpan(d, height, 0)
+    private class EmoteSpan(d: Drawable, height: Int, val id: String? = null, val word: String? = null,
+                            val gif: GifRange? = null) : PicSpan(d, height, 0)
 
     /** A badge: Twitch's, or a third-party one from BadgeRepo. Tapping it opens the badge sheet. */
     private class BadgeSpan(d: Drawable, height: Int, gap: Int, val title: String, val src: String, val url: String) :

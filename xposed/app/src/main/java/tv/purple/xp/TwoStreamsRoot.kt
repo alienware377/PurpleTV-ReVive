@@ -3,6 +3,8 @@ package tv.purple.xp
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.content.res.Configuration
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,12 +13,14 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.text.TextUtils
 import android.view.ContextThemeWrapper
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -25,7 +29,10 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.PopupWindow
+import android.widget.SeekBar
 import android.widget.TextView
 import java.lang.ref.WeakReference
 import java.text.DecimalFormat
@@ -53,7 +60,8 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
     interface Ui {
         fun back()
         fun tapPlayer(i: Int)
-        fun sound(i: Int)
+        /** A stream was started again with its own Play button. */
+        fun played()
         fun swap(i: Int)
         fun watch(i: Int)
         fun dismiss(i: Int)
@@ -68,10 +76,13 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
         var capH = 0
         var compact: Boolean? = null
         var paused = false
+        var volume = 100
+        var raids: DualRaids.Sub? = null
+        /** Paused with its own button: it stays paused when the app comes back to the front. */
+        var heldByUser = false
     }
 
     private val slots = arrayOfNulls<Slot>(2)
-    private var audible = 0
     private var pip = false
     private var lastInsets: WindowInsets? = null
     private val safe = Rect()
@@ -89,6 +100,30 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
     private var downAt = 0L
     private var downOn = -1
     private var backDown = false
+    /** The stream whose emote picker or rewards panel is open, or -1. */
+    private var sheetOwner = -1
+    /** The stream the captions follow when one was picked, or -1 for the louder one. */
+    private var captionPick = -1
+    @Volatile private var captionName: String? = null
+    @Volatile private var captionFrom = 0L
+    private val sheetHost = FrameLayout(act).apply {
+        id = View.generateViewId()
+        setBackgroundColor(BG)
+        isClickable = true
+        visibility = View.GONE
+    }
+    private val sheetClose = ImageView(act).apply {
+        setImageDrawable(DualIcons.ChevronDown())
+        scaleType = ImageView.ScaleType.FIT_CENTER
+        contentDescription = I18n.t("Close")
+        background = GradientDrawable().apply {
+            setColor(HEADER_BG)
+            val r = 10 * resources.displayMetrics.density
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        }
+        visibility = View.GONE
+        setOnClickListener { closeSheet() }
+    }
 
     init {
         tag = ROOT_TAG
@@ -96,42 +131,114 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
         isClickable = true
         isFocusable = true
         isFocusableInTouchMode = true
+        // Without a touch screen in use, Android would wash the whole focused screen in its accent colour.
+        defaultFocusHighlightEnabled = false
         // The first stream stays on the left whatever the language; the strips mirror themselves.
         layoutDirection = View.LAYOUT_DIRECTION_LTR
+        addView(sheetHost)
+        addView(sheetClose)
     }
 
     // ---- streams ----
 
     /** Put [login] in place [i], letting go of whatever played there before. */
-    fun show(i: Int, login: String) {
+    fun show(i: Int, login: String, raidId: String? = null, carryVolume: Int? = null,
+             startPaused: Boolean = false, heldByUser: Boolean = false) {
         slots[i]?.let { drop(it) }
         val ctx = context
-        val player = DualPlayer(ctx, login)
-        val chat = DualChatPane(ctx, login)
+        val player = DualPlayer(ctx, login, raidId)
+        val chat = DualChatPane(scaled(ctx), login)
         val header = DualHeader(ctx, i, ui)
         val s = Slot(login, player, chat, header)
+        s.volume = Settings.getInt(VOLUME_KEY + login, carryVolume ?: 100).coerceIn(0, 100)
         slots[i] = s
         addView(player)
         addView(header)
         addView(chat)
         header.bind(player.info)
-        header.setAudible(i == audible)
+        header.setLevel(s.volume)
+        header.onStacked = { on -> Settings.set(KEY_STACKED, on); requestLayout() }
+        chat.onSheet = { kind -> if (slots[i] === s) openSheet(i, kind) }
+        player.onControl = { key, v -> if (slots[i] === s) control(i, s, key, v) }
+        header.onVolume = { p, done -> if (slots[i] === s) setVolume(i, p, done) }
         player.onInfo = { inf -> if (slots[i] === s) onInfo(i, s, inf) }
-        player.setAudible(i == audible)
+        player.setVolumePercent(s.volume)
+        if (startPaused) {
+            s.paused = true
+            s.heldByUser = heldByUser
+            player.pause()
+        }
         player.start()
         chat.start()
         updateKeepOn()
+        updateCaptions()
         requestLayout()
     }
 
+    // ---- captions: one recognizer, on one of the two streams ----
+
+    private fun captionIndex(): Int {
+        if (captionPick in 0..1 && slots[captionPick] != null) return captionPick
+        val a = slots[0] ?: return 1
+        val b = slots[1] ?: return 0
+        return if (b.volume > a.volume) 1 else 0
+    }
+
+    private fun updateCaptions() {
+        val l = slots[captionIndex()]?.login
+        if (l != captionName) {
+            captionName = l
+            captionFrom = android.os.SystemClock.uptimeMillis()
+        }
+    }
+
+    fun pickCaptions(i: Int) {
+        captionPick = i
+        updateCaptions()
+    }
+
+    fun captionPlayer(): Any? = slots[captionIndex()]?.player?.ivsPlayer
+    fun captionLogin(): String? = captionName
+    fun captionSince(): Long = captionFrom
+    fun captionView(): DualPlayer? = if (inPip()) null else slots[captionIndex()]?.player
+
     private fun onInfo(i: Int, s: Slot, inf: DualPlayer.Info) {
         s.header.bind(inf)
-        inf.id?.takeIf { it != s.channelId }?.let { s.channelId = it; s.chat.setChannelId(it) }
+        inf.id?.takeIf { it != s.channelId }?.let { id ->
+            s.channelId = id
+            s.chat.setChannelId(id)
+            s.raids?.let { DualRaids.remove(it) }
+            s.raids = DualRaids.Sub(id) { login, name, raidId -> if (slots[i] === s) raided(i, s, login, name, raidId) }
+                .also { DualRaids.add(context, it) }
+        }
         if (inf.state != s.state) {
             s.state = inf.state
-            s.player.setAudible(i == audible)
             updateKeepOn()
         }
+        updatePoints(s)
+    }
+
+    /** The channel in this pane raided [login]: the pane goes along, unless the other one is there already. */
+    private fun raided(i: Int, s: Slot, login: String, name: String, raidId: String) {
+        val text = I18n.t("Raid: moving to $name")
+        if (slots[1 - i]?.login == login || s.login == login) { s.chat.notice(text); return }
+        show(i, login, raidId, s.volume, s.paused, s.heldByUser)
+        slots[i]?.chat?.notice(text)
+    }
+
+    fun devCard(i: Int, kind: String) { slots.getOrNull(i)?.chat?.devCard(kind) }
+
+    /** Test hook: what a real raid does to pane [i] when it leaves, without joining anything. */
+    fun devRaid(i: Int, login: String) {
+        val s = slots.getOrNull(i) ?: return
+        raided(i, s, login, login, "dev")
+    }
+
+    /** Bonus chests are claimed for a channel while its pane is really playing. */
+    private fun updatePoints(s: Slot) {
+        val id = s.channelId
+        val on = !s.paused && id != null && (s.state == DualPlayer.State.PLAYING || s.state == DualPlayer.State.BUFFERING)
+        if (on && id != null) ChannelPoints.watch(s.login, id) else ChannelPoints.unwatch(s.login)
     }
 
     /**
@@ -144,8 +251,129 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
         if (keepScreenOn != want) keepScreenOn = want
     }
 
+    /** A tap on the video shows or hides that stream's controls. */
+    fun tapControls(i: Int) {
+        for (k in 0..1) if (k != i) slots[k]?.player?.takeIf { !it.isPausedNow }?.hideControls()
+        slots.getOrNull(i)?.player?.toggleControls()
+    }
+
+    private fun control(i: Int, s: Slot, key: String, v: View) {
+        when (key) {
+            "play" -> {
+                if (s.player.isPausedNow) { s.heldByUser = false; s.paused = false; s.player.resume(); ui.played() }
+                else { s.heldByUser = true; s.paused = true; s.player.pause() }
+                updatePoints(s)
+                updateKeepOn()
+            }
+            "refresh" -> s.player.retry()
+            "quality" -> showQualities(s, v)
+            "captions" -> {
+                pickCaptions(i)
+                toast(context, I18n.t("Captions follow ${s.player.info.displayName ?: s.login}"))
+            }
+            "filters" -> FiltersPanel.show(v, s.login)
+            "stats" -> s.player.toggleStats()
+            "clip" -> ClipSave.start(context, s.channelId, s.login)
+            "share" -> runCatching {
+                act.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "https://www.twitch.tv/${s.login}"), null))
+            }.onFailure { log("TS share: $it") }
+            "sleep" -> SleepTimer.choose(act)
+        }
+    }
+
+    private fun showQualities(s: Slot, anchor: View) {
+        val list = s.player.qualities()
+        if (list.isEmpty()) { toast(context, "Not playing yet"); return }
+        val now = s.player.currentQuality()
+        val pm = PopupMenu(ContextThemeWrapper(context, android.R.style.Theme_Material), anchor)
+        pm.menu.add(1, 0, 0, I18n.t("Auto")).isChecked = now == null
+        list.forEachIndexed { k, (name, _) -> pm.menu.add(1, k + 1, k + 1, name).isChecked = name == now }
+        pm.menu.setGroupCheckable(1, true, true)
+        pm.setOnMenuItemClickListener {
+            s.player.chooseQuality(if (it.itemId == 0) null else list[it.itemId - 1].second)
+            true
+        }
+        pm.show()
+    }
+
+    /** The chats draw at their own, smaller density, so more fits in a pane. */
+    private fun scaled(base: Context): Context {
+        val pct = Settings.getInt(KEY_CHAT_SIZE, CHAT_SIZE_DEF).coerceIn(60, 100)
+        if (pct == 100) return base
+        val cfg = Configuration(base.resources.configuration)
+        cfg.densityDpi = cfg.densityDpi * pct / 100
+        return ContextThemeWrapper(base, base.theme).apply { applyOverrideConfiguration(cfg) }
+    }
+
+    /** Twitch's own emote picker or rewards panel for stream [i], over the chats. */
+    private fun openSheet(i: Int, kind: String) {
+        val s = slots[i] ?: return
+        val id = s.channelId
+        if (id == null) { toast(context, "Not connected to chat yet"); return }
+        closeSheet()
+        val name = s.player.info.displayName ?: s.login
+        s.chat.hideKeys()
+        EmoteRepo.loadChannelAsync(id, s.login)
+        val ok = if (kind == "points") DualCards.openPoints(act, sheetHost.id, id, s.login, name)
+        else {
+            EmoteAutocomplete.useBox(s.chat.box)
+            PickerFavorites.attachRoot(s.chat.box)
+            DualCards.openEmotes(act, sheetHost.id, id, s.login, name) { action, code ->
+                when (action) {
+                    "emote_selected" -> code?.let { EmoteAutocomplete.insertEmote(it) }
+                    "delete" -> PickerBackspace.backspace(s.chat.box)
+                    "show_keyboard" -> { closeSheet(); s.chat.focusBox() }
+                }
+            }
+        }
+        if (!ok) {
+            DualCards.closeSheet(act)
+            EmoteAutocomplete.useBox(null)
+            toast(context, "Could not open this")
+            return
+        }
+        sheetOwner = i
+        sheetHost.visibility = View.VISIBLE
+        sheetClose.visibility = View.VISIBLE
+        sheetHost.bringToFront()
+        sheetClose.bringToFront()
+        requestLayout()
+    }
+
+    /** True when a panel was open and is now closed. */
+    fun closeSheet(): Boolean {
+        if (sheetOwner < 0) return false
+        sheetOwner = -1
+        DualCards.closeSheet(act)
+        EmoteAutocomplete.useBox(null)
+        sheetHost.visibility = View.GONE
+        sheetClose.visibility = View.GONE
+        requestLayout()
+        return true
+    }
+
+    /** Over both chats, tall enough to use even when the chats are short. */
+    private fun placeSheet() {
+        val own = frames[sheetOwner * 3 + 2]
+        val other = frames[(1 - sheetOwner) * 3 + 2]
+        val chatTop = if (shape.startsWith("stacked") || other.isEmpty) own.top else min(own.top, other.top)
+        val top = max(safe.top + dp(36), min(chatTop, safe.bottom - dp(SHEET_MIN_DP)))
+        place(sheetHost, Rect(safe.left, top, safe.right, safe.bottom))
+        // A handle centred on the panel's top edge, clear of each stream's own close button.
+        val hw = dp(64)
+        val hh = dp(24)
+        if (sheetClose.paddingLeft != dp(20)) sheetClose.setPadding(dp(20), dp(3), dp(20), dp(3))
+        place(sheetClose, Rect(safe.centerX() - hw / 2, top - hh, safe.centerX() + hw / 2, top))
+    }
+
     private fun drop(s: Slot) {
+        if (sheetOwner >= 0 && slots[sheetOwner] === s) closeSheet()
+        FiltersPanel.closeFor(s.login)
         s.player.onInfo = null
+        s.raids?.let { DualRaids.remove(it) }
+        s.raids = null
+        ChannelPoints.unwatch(s.login)
         runCatching { s.player.release() }.onFailure { log("TS player release: $it") }
         runCatching { s.chat.stop() }.onFailure { log("TS chat stop: $it") }
         s.header.closeMenu()
@@ -165,26 +393,38 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
 
     fun login(i: Int): String? = slots.getOrNull(i)?.login
 
-    /** Only stream [i] is heard; -1 for none. */
-    fun setAudible(i: Int) {
-        audible = i
-        for (k in 0..1) slots[k]?.let { it.player.setAudible(k == i); it.header.setAudible(k == i) }
+    /** Stream [i]'s volume, kept per channel once [save] says the slider has been let go. */
+    fun setVolume(i: Int, percent: Int, save: Boolean) {
+        val s = slots.getOrNull(i) ?: return
+        val p = percent.coerceIn(0, 100)
+        s.volume = p
+        s.player.setVolumePercent(p)
+        s.header.setLevel(p)
+        updateCaptions()
+        if (save) Settings.setInt(VOLUME_KEY + s.login, p)
     }
 
+    fun openVolume(i: Int) { slots.getOrNull(i)?.header?.openVolume() }
+
     fun pauseAll() {
-        for (s in slots) s?.let { it.paused = true; runCatching { it.player.pause() } }
+        for (s in slots) s?.let { it.paused = true; runCatching { it.player.pause() }; updatePoints(it) }
         updateKeepOn()
     }
 
     fun resumeAll() {
-        for (s in slots) s?.let { it.paused = false; runCatching { it.player.resume() } }
+        for (s in slots) s?.let {
+            if (it.heldByUser) return@let
+            it.paused = false
+            runCatching { it.player.resume() }
+            updatePoints(it)
+        }
         updateKeepOn()
     }
 
     fun setPip(on: Boolean) {
         if (pip == on) return
         pip = on
-        if (on) closeMenus()
+        if (on) { closeMenus(); closeSheet() }
         requestLayout()
     }
 
@@ -232,7 +472,7 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
             val s = slots[k] ?: continue
             val inf = s.player.info
             out += "${if (k == 0) "A" else "B"} ${s.login}: ${inf.state}${inf.message?.let { " ($it)" } ?: ""}, " +
-                "heard ${k == audible}, player ${s.player.width}x${s.player.height}, header ${s.header.width}x${s.header.height}, " +
+                "volume ${s.volume}, player ${s.player.width}x${s.player.height}, header ${s.header.width}x${s.header.height}, " +
                 "chat ${s.chat.width}x${s.chat.height}${if (s.compact == true) " compact" else ""}, cap ${s.capW}x${s.capH}, " +
                 "id ${s.channelId ?: "-"}, viewers ${inf.viewers ?: "-"}"
         }
@@ -265,7 +505,9 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
             pipFrames(w, h)
         } else {
             measureSafe(w, h)
-            if (safe.width() > tallNoIme) columns() else rows()
+            val tall = safe.width() <= tallNoIme
+            for (s in slots) s?.header?.setTall(tall, stacked())
+            if (!tall) columns() else if (stacked()) stackedRows() else rows()
         }
         for (k in 0..1) {
             val s = slots[k] ?: continue
@@ -283,6 +525,7 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
             val compact = small || (!ime && frames[k * 3 + 2].height() < dp(120))
             if (s.compact != compact) { s.compact = compact; s.chat.compact = compact }
         }
+        if (sheetOwner >= 0 && !small) placeSheet()
         ui.laidOut()
     }
 
@@ -405,6 +648,47 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
         shape = if (side) "rows, players side by side" else "rows"
     }
 
+    private fun stacked() = Settings.get(KEY_STACKED, false)
+
+    /**
+     * Tall, with stacked chats: each stream directly above its own full-width chat. While typing,
+     * the players sit side by side on top and the chat being typed in takes the rest.
+     */
+    private fun stackedRows() {
+        val gap = dp(2)
+        val hh = dp(HEADER_DP)
+        val w = safe.width()
+        val typing = if (ime) slots.indexOfFirst { it?.chat?.hasFocus() == true } else -1
+        if (typing >= 0) {
+            val colW = (w - gap) / 2
+            val ph = max(0, min(colW * 9 / 16, max(safe.height() - hh - dp(96), dp(MIN_PLAYER_DP))))
+            frames[0].set(safe.left, safe.top, safe.left + colW, safe.top + ph)
+            frames[3].set(safe.left + colW + gap, safe.top, safe.right, safe.top + ph)
+            val hb = min(safe.bottom, safe.top + ph + hh)
+            frames[typing * 3 + 1].set(safe.left, safe.top + ph, safe.right, hb)
+            frames[typing * 3 + 2].set(safe.left, hb, safe.right, max(hb, safe.bottom))
+            shape = "stacked, typing in ${typing + 1}"
+            return
+        }
+        val block = (safe.height() - gap) / 2
+        val ph = max(0, min(w * 9 / 16, max(block - hh - dp(MIN_STACKED_CHAT_DP), dp(MIN_PLAYER_DP))))
+        for (k in 0..1) {
+            val y0 = safe.top + k * (block + gap)
+            val y1 = if (k == 0) y0 + block else safe.bottom
+            val hb = min(y1, y0 + ph + hh)
+            frames[k * 3].set(safe.left, y0, safe.right, y0 + ph)
+            frames[k * 3 + 1].set(safe.left, y0 + ph, safe.right, hb)
+            frames[k * 3 + 2].set(safe.left, hb, safe.right, max(hb, y1))
+        }
+        shape = "stacked"
+    }
+
+    /** The setting can change on Twitch's settings page, with this screen waiting underneath. */
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus) requestLayout()
+    }
+
     /** Picture-in-picture: the two players fill the small window, stacked unless it is wide. */
     private fun pipFrames(w: Int, h: Int) {
         if (w > h * 1.2f) {
@@ -431,7 +715,7 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = ev.x; downY = ev.y; downAt = ev.eventTime
-                // A press on the player's "Tap to try again" label only retries; the sound stays put.
+                // A press on the player's "Tap to try again" label only retries.
                 val k = playerAt(ev.x, ev.y)
                 downOn = if (k >= 0 && onPlayerControl(k, ev.x, ev.y)) -1 else k
             }
@@ -465,6 +749,7 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
         val p = slots[k]?.player ?: return false
         val lx = x - p.left
         val ly = y - p.top
+        if (p.isControlAt(lx, ly)) return true
         for (j in 0 until p.childCount) {
             val c = p.getChildAt(j)
             if (c.visibility == View.VISIBLE && c.isClickable && lx >= c.left && lx < c.right && ly >= c.top && ly < c.bottom) return true
@@ -528,6 +813,14 @@ internal class TwoStreamsRoot(private val act: Activity, private val ui: Ui) : F
 
     companion object {
         const val ROOT_TAG = "ptv_dual_root"
+        /** Kept on this device only: dual_ui_ settings are left out of settings sync. */
+        const val VOLUME_KEY = "dual_ui_vol_"
+        const val KEY_STACKED = "dual_stacked_chats"
+        const val KEY_CHAT_SIZE = "dual_chat_size"
+        const val CHAT_SIZE_DEF = 85
+        const val SHEET_MIN_DP = 320
+        /** Enough for a few lines above the message box. */
+        const val MIN_STACKED_CHAT_DP = 120
         const val BG = 0xFF0E0E10.toInt()
         const val HEADER_BG = 0xFF1F1F23.toInt()
         const val TEXT = 0xFFEFEFF1.toInt()
@@ -575,13 +868,19 @@ internal class DualHeader(ctx: Context, private val index: Int, private val ui: 
         includeFontPadding = false
     }
     private val speaker = DualIcons.Speaker()
-    private val sound = button(speaker) { ui.sound(index) }
+    private val sound = button(speaker) { showVolume() }
     private val swap = button(DualIcons.Swap()) { ui.swap(index) }
     private val watch = button(DualIcons.Expand()) { ui.watch(index) }
     private val close = button(DualIcons.Close()) { ui.dismiss(index) }
     private val more = button(DualIcons.More()) { showMore() }
-    private val line = Paint().apply { color = FilterIcons.PURPLE }
-    private var audible = false
+    /** Called with the new volume, and whether the slider has been let go. */
+    var onVolume: ((Int, Boolean) -> Unit)? = null
+    var onStacked: ((Boolean) -> Unit)? = null
+    private var tall = false
+    private var stackedOn = false
+    private var level = 100
+    private var beforeMute = 100
+    private var volumePopup: WeakReference<PopupWindow>? = null
     private var four = true
     private var label = ""
     private var menu: WeakReference<PopupMenu>? = null
@@ -625,18 +924,94 @@ internal class DualHeader(ctx: Context, private val index: Int, private val ui: 
         describe()
     }
 
-    fun setAudible(on: Boolean) {
-        if (audible == on) return
-        audible = on
-        speaker.on = on
+    /** In a tall window the menu button stays, as it holds the stacked chats switch. */
+    fun setTall(isTall: Boolean, stacked: Boolean) {
+        stackedOn = stacked
+        if (tall == isTall) return
+        tall = isTall
+        requestLayout()
+    }
+
+    fun setLevel(p: Int) {
+        if (level == p) return
+        level = p
+        if (p > 0) beforeMute = p
+        speaker.loudness = p
         describe()
-        invalidate()
+    }
+
+    fun openVolume() = showVolume()
+
+    /** A small slider under the speaker button, with the volume as a number. */
+    private fun showVolume() {
+        closeMenu()
+        val ctx = context
+        val icon = DualIcons.Speaker().apply { loudness = this@DualHeader.level }
+        val number = TextView(ctx).apply {
+            setTextColor(TwoStreamsRoot.TEXT)
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            text = "${this@DualHeader.level}%"
+        }
+        val bar = SeekBar(ctx).apply {
+            max = 100
+            progress = this@DualHeader.level
+            progressTintList = ColorStateList.valueOf(FilterIcons.PURPLE)
+            thumbTintList = ColorStateList.valueOf(FilterIcons.PURPLE)
+            contentDescription = I18n.t("Volume") + if (label.isEmpty()) "" else " ($label)"
+        }
+        fun show(p: Int) { icon.loudness = p; number.text = "$p%" }
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
+                show(p)
+                if (fromUser) onVolume?.invoke(p, false)
+            }
+            override fun onStartTrackingTouch(s: SeekBar) {}
+            override fun onStopTrackingTouch(s: SeekBar) { onVolume?.invoke(s.progress, true) }
+        })
+        val mute = ImageView(ctx).apply {
+            setImageDrawable(icon)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            val ip = dp(7)
+            setPadding(ip, ip, ip, ip)
+            isClickable = true
+            isFocusable = true
+            background = RippleDrawable(ColorStateList.valueOf(0x40FFFFFF), null, null)
+            contentDescription = I18n.t("Volume")
+            setOnClickListener {
+                val p = if (this@DualHeader.level > 0) 0 else beforeMute.coerceAtLeast(1)
+                bar.progress = p
+                onVolume?.invoke(p, true)
+            }
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(8), 0)
+            background = GradientDrawable().apply {
+                setColor(0xF21F1F23.toInt())
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), FilterIcons.PURPLE)
+            }
+            addView(mute, LinearLayout.LayoutParams(dp(36), dp(36)))
+            addView(bar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(number, LinearLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val room = (parent as? View)?.width?.takeIf { it > 0 } ?: width
+        val pw = PopupWindow(box, min(dp(260), max(dp(160), min(room, width) - dp(8))), dp(48), true).apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            elevation = dp(8).toFloat()
+        }
+        pw.showAsDropDown(sound, 0, dp(2), Gravity.END)
+        volumePopup = WeakReference(pw)
     }
 
     /** Spoken names for every button; the channel name tells the two strips apart. */
     private fun describe() {
         val who = if (label.isEmpty()) "" else " ($label)"
-        sound.contentDescription = I18n.t(if (audible) "Turn sound off" else "Turn sound on") + who
+        sound.contentDescription = I18n.t("Volume") + who + " $level%"
         swap.contentDescription = I18n.t("Change channel") + who
         watch.contentDescription = I18n.t("Watch in Twitch") + who
         close.contentDescription = I18n.t("Close this stream") + who
@@ -648,8 +1023,9 @@ internal class DualHeader(ctx: Context, private val index: Int, private val ui: 
         val pm = PopupMenu(ContextThemeWrapper(context, android.R.style.Theme_Material), more)
         pm.menu.add(0, 1, 0, I18n.t("Change channel"))
         pm.menu.add(0, 2, 1, I18n.t("Watch in Twitch"))
+        if (tall) pm.menu.add(0, 3, 2, I18n.t("Stacked chats")).apply { isCheckable = true; isChecked = stackedOn }
         pm.setOnMenuItemClickListener {
-            when (it.itemId) { 1 -> ui.swap(index); 2 -> ui.watch(index) }
+            when (it.itemId) { 1 -> ui.swap(index); 2 -> ui.watch(index); 3 -> onStacked?.invoke(!stackedOn) }
             true
         }
         pm.show()
@@ -659,6 +1035,8 @@ internal class DualHeader(ctx: Context, private val index: Int, private val ui: 
     fun closeMenu() {
         menu?.get()?.dismiss()
         menu = null
+        volumePopup?.get()?.dismiss()
+        volumePopup = null
     }
 
     override fun onDetachedFromWindow() {
@@ -678,7 +1056,7 @@ internal class DualHeader(ctx: Context, private val index: Int, private val ui: 
         val gap = dp(6)
         val textStart = pad + dotS + gap
         val minName = dp(64)
-        val wantFour = w - textStart - minName >= 4 * dp(36)
+        val wantFour = !tall && w - textStart - minName >= 4 * dp(36)
         if (wantFour != four) {
             four = wantFour
             val v = if (four) View.VISIBLE else View.GONE
@@ -728,12 +1106,6 @@ internal class DualHeader(ctx: Context, private val index: Int, private val ui: 
         v.layout(ll, t, max(ll, rr), max(t, b))
     }
 
-    /** A purple line under the stream being heard, so it is clear which chat goes with the sound. */
-    override fun dispatchDraw(canvas: Canvas) {
-        super.dispatchDraw(canvas)
-        if (audible) canvas.drawRect(0f, height - dp(2).toFloat(), width.toFloat(), height.toFloat(), line)
-    }
-
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 }
 
@@ -749,27 +1121,25 @@ internal object DualIcons {
         }
     }
 
-    /** A speaker: filled with sound waves while heard, an outline with a cross while muted. */
+    /** A speaker: two sound waves above 50%, one at 50% or less, an outline with a cross at 0. */
     class Speaker : FilterIcons.Icon() {
-        var on = false
+        var loudness = 100
             set(v) {
                 if (field == v) return
                 field = v
-                color = if (v) Color.WHITE else TwoStreamsRoot.DIM
+                color = if (v > 0) Color.WHITE else TwoStreamsRoot.DIM
                 invalidateSelf()
             }
-
-        init { color = TwoStreamsRoot.DIM }
 
         override fun paint(c: Canvas, s: Float) {
             val body = Path().apply {
                 moveTo(s * 0.14f, s * 0.38f); lineTo(s * 0.30f, s * 0.38f); lineTo(s * 0.50f, s * 0.20f)
                 lineTo(s * 0.50f, s * 0.80f); lineTo(s * 0.30f, s * 0.62f); lineTo(s * 0.14f, s * 0.62f); close()
             }
-            if (on) {
+            if (loudness > 0) {
                 c.drawPath(body, fill)
                 c.drawArc(RectF(s * 0.44f, s * 0.36f, s * 0.72f, s * 0.64f), -50f, 100f, false, stroke)
-                c.drawArc(RectF(s * 0.40f, s * 0.27f, s * 0.86f, s * 0.73f), -50f, 100f, false, stroke)
+                if (loudness > 50) c.drawArc(RectF(s * 0.40f, s * 0.27f, s * 0.86f, s * 0.73f), -50f, 100f, false, stroke)
             } else {
                 c.drawPath(body, stroke)
                 c.drawLine(s * 0.64f, s * 0.40f, s * 0.84f, s * 0.60f, stroke)
@@ -816,6 +1186,76 @@ internal object DualIcons {
     }
 
     /** Three dots: the menu that holds the buttons a narrow strip has no room for. */
+    /** Points down: closes a panel that came up from below. */
+    class ChevronDown : FilterIcons.Icon() {
+        override fun paint(c: Canvas, s: Float) {
+            c.drawLine(s * 0.2f, s * 0.36f, s * 0.5f, s * 0.66f, stroke)
+            c.drawLine(s * 0.5f, s * 0.66f, s * 0.8f, s * 0.36f, stroke)
+        }
+    }
+
+    /** A cog: Twitch's main settings. */
+    class Gear : FilterIcons.Icon() {
+        override fun paint(c: Canvas, s: Float) {
+            c.drawCircle(s * 0.5f, s * 0.5f, s * 0.13f, stroke)
+            c.drawCircle(s * 0.5f, s * 0.5f, s * 0.29f, stroke)
+            for (k in 0 until 8) {
+                c.save()
+                c.rotate(k * 45f, s * 0.5f, s * 0.5f)
+                c.drawLine(s * 0.5f, s * 0.21f, s * 0.5f, s * 0.11f, stroke)
+                c.restore()
+            }
+        }
+    }
+
+    /** A channel points coin. */
+    class Points : FilterIcons.Icon() {
+        override fun paint(c: Canvas, s: Float) {
+            c.drawCircle(s * 0.5f, s * 0.5f, s * 0.34f, stroke)
+            c.drawArc(RectF(s * 0.34f, s * 0.34f, s * 0.66f, s * 0.66f), 180f, 90f, false, stroke)
+        }
+    }
+
+    /** A smiling face: the emote picker. */
+    class Smile : FilterIcons.Icon() {
+        override fun paint(c: Canvas, s: Float) {
+            c.drawCircle(s * 0.5f, s * 0.5f, s * 0.34f, stroke)
+            c.drawCircle(s * 0.39f, s * 0.42f, s * 0.04f, fill)
+            c.drawCircle(s * 0.61f, s * 0.42f, s * 0.04f, fill)
+            c.drawArc(RectF(s * 0.34f, s * 0.36f, s * 0.66f, s * 0.68f), 25f, 130f, false, stroke)
+        }
+    }
+
+    /** A rounded box with its arrow pointing down at the button under it. */
+    class DownBubble(private val bg: Int, private val edge: Int, private val r: Float, private val w: Float,
+                     private val arrow: Float) : Drawable() {
+        var arrowX = 0f
+        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bg; style = Paint.Style.FILL }
+        private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = edge; style = Paint.Style.STROKE; strokeWidth = w }
+
+        override fun draw(c: Canvas) {
+            val b = bounds
+            val box = RectF(b.left + w, b.top + w, b.right - w, b.bottom - arrow - w)
+            val p = Path().apply {
+                addRoundRect(box, r, r, Path.Direction.CW)
+                val t = Path().apply {
+                    moveTo(arrowX - arrow, box.bottom - 1f)
+                    lineTo(arrowX, b.bottom.toFloat() - w)
+                    lineTo(arrowX + arrow, box.bottom - 1f)
+                    close()
+                }
+                op(t, Path.Op.UNION)
+            }
+            c.drawPath(p, fillPaint)
+            c.drawPath(p, line)
+        }
+
+        override fun setAlpha(alpha: Int) { fillPaint.alpha = alpha; line.alpha = alpha }
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) { fillPaint.colorFilter = cf; line.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
     class More : FilterIcons.Icon() {
         override fun paint(c: Canvas, s: Float) {
             for (k in 0..2) c.drawCircle(s * 0.5f, s * (0.26f + k * 0.24f), s * 0.07f, fill)

@@ -44,6 +44,7 @@ object DualUsher {
     data class Access(
         val value: String, val signature: String, val forbidden: String?, val id: String?, val login: String,
         val displayName: String?, val live: Boolean, val title: String?, val viewers: Int?, val game: String?,
+        val streamId: String? = null,
     )
 
     /** Twitch answered, and there is no channel by that name (data.user is null). */
@@ -78,6 +79,7 @@ object DualUsher {
             title = stream?.str("title"),
             viewers = stream?.int("viewersCount"),
             game = stream?.obj("game")?.str("displayName"),
+            streamId = stream?.idStr("id"),
         )
     }
 
@@ -96,7 +98,8 @@ object DualUsher {
      * and session in the same places. Without one, the parameters every Twitch live request sends
      * are used, in Twitch's order.
      */
-    fun usherUrl(template: String?, login: String, a: Access, nowMs: Long, sessionHex: String, appVersion: String): String {
+    fun usherUrl(template: String?, login: String, a: Access, nowMs: Long, sessionHex: String, appVersion: String,
+                 raidId: String? = null): String {
         val path = "/api/channel/hls/" + enc(login.trim().lowercase()) + ".m3u8"
         val token = "token=" + enc(a.value)
         val sig = "sig=" + enc(a.signature)
@@ -118,6 +121,7 @@ object DualUsher {
             }
             if (!hasBuster) out.add(buster)
             if (!hasSession) out.add(session)
+            raidId?.let { out.add("raid_id=" + enc(it)) }
             return copied.first + path + "?" + out.joinToString("&")
         }
         val out = arrayListOf(
@@ -127,6 +131,7 @@ object DualUsher {
         )
         if (appVersion.isNotBlank()) out.add("app_version=" + enc(appVersion.trim()))
         out.add("include_unavailable=true")
+        raidId?.let { out.add("raid_id=" + enc(it)) }
         return USHER + path + "?" + out.joinToString("&")
     }
 

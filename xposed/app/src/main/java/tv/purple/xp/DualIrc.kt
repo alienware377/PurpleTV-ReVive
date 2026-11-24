@@ -128,13 +128,14 @@ object DualIrc {
     /**
      * Send [text] to [channel] as the signed-in account. "/me ..." is sent as an action. False
      * when reading anonymously, not joined yet, or over Twitch's rate limit. Twitch does not echo
-     * our own lines back, so the caller shows a sent line itself.
+     * our own lines back, so the caller shows a sent line itself. [replyTo] makes it a reply to
+     * that message id.
      */
-    fun send(channel: String, text: String): Boolean {
+    fun send(channel: String, text: String, replyTo: String? = null): Boolean {
         val ch = IrcParse.cleanChannel(channel) ?: return false
-        val line = IrcParse.privmsg(ch, text) ?: return false
+        val line = IrcParse.privmsg(ch, text, replyTo) ?: return false
         if (!canSend() || ch !in live) return false
-        if (Settings.get(KEY_DRY_RUN, false)) { log("IRC send to #$ch blocked (dry run, nothing sent)"); return true }
+        if (Settings.get(KEY_DRY_RUN, false)) { log("IRC send to #$ch blocked (dry run, nothing sent)${if (replyTo != null) ", a reply" else ""}"); return true }
         if (!allowSend()) { log("IRC send to #$ch held back: rate limit"); return false }
         val s = ws ?: return false
         return s.send(line)
